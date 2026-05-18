@@ -2,11 +2,11 @@ import { Link, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import {
   LayoutDashboard, Users, UserSearch, Zap, Ticket, Megaphone,
-  Settings, ScrollText, Wifi, ChevronRight, X, Radio, Signal
+  Settings, ScrollText, Wifi, ChevronRight, X, Radio, Signal, UserCog
 } from 'lucide-react';
 
 const navItems = [
-  { label: 'Dashboard', icon: LayoutDashboard, path: '/' },
+  { label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard' },
   { label: 'Clientes', icon: Users, path: '/clients' },
   { label: 'Prospectos', icon: UserSearch, path: '/prospects' },
   { label: 'Planos', icon: Zap, path: '/plans' },
@@ -16,6 +16,7 @@ const navItems = [
   { label: 'RADIUS Monitor', icon: Radio, path: '/radius', highlight: true },
   { label: 'Monitor de APs', icon: Signal, path: '/ap-monitor', highlight: true },
   { label: 'Logs', icon: ScrollText, path: '/logs' },
+  { label: 'Usuários', icon: UserCog, path: '/users' },
   { label: 'Configurações', icon: Settings, path: '/settings' },
 ];
 

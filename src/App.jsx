@@ -21,6 +21,7 @@ import RadiusMonitor from '@/pages/RadiusMonitor';
 import APMonitor from '@/pages/APMonitor';
 import HotspotPlans from '@/pages/HotspotPlans';
 import HotspotLogin from '@/pages/HotspotLogin';
+import UsersPage from '@/pages/Users';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -61,6 +62,7 @@ const AuthenticatedApp = () => {
         <Route path="/ap-monitor" element={<APMonitor />} />
         <Route path="/logs" element={<Logs />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/users" element={<UsersPage />} />
       </Route>
 
       <Route path="*" element={<PageNotFound />} />
