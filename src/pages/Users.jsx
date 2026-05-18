@@ -114,6 +114,17 @@ export default function UsersPage() {
     }
   };
 
+  const handleResetDefault = async () => {
+    if (!window.confirm('Resetar usuário demo@spedynet.com.br com senha "admin"?')) return;
+    try {
+      const res = await base44.functions.invoke('resetDefaultUser', {});
+      toast.success(`Usuário ${res.email} criado/atualizado com senha: admin`);
+      load();
+    } catch (err) {
+      toast.error(`Erro: ${err.message}`);
+    }
+  };
+
   return (
     <div className="p-6 max-w-4xl mx-auto">
       {/* Header */}
@@ -127,6 +138,9 @@ export default function UsersPage() {
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={load} className="gap-1.5 border-border">
             <RefreshCw className="w-3.5 h-3.5" /> Atualizar
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleResetDefault} className="gap-1.5 border-border">
+            <RefreshCw className="w-3.5 h-3.5" /> Resetar Demo
           </Button>
           <Button size="sm" onClick={() => setShowCreate(true)} className="gap-1.5">
             <Plus className="w-3.5 h-3.5" /> Criar Usuário
