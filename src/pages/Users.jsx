@@ -115,10 +115,10 @@ export default function UsersPage() {
   };
 
   const handleResetDefault = async () => {
-    if (!window.confirm('Resetar usuário demo@spedynet.com.br com senha "admin"?')) return;
+    if (!window.confirm('Resetar usuário demo@spedynet.com.br com senha "Admin12345"?')) return;
     try {
       const res = await base44.functions.invoke('resetDefaultUser', {});
-      toast.success(`Usuário ${res.email} criado/atualizado com senha: admin`);
+      toast.success(`Usuário ${res.email} criado/atualizado com senha: Admin12345`);
       load();
     } catch (err) {
       toast.error(`Erro: ${err.message}`);

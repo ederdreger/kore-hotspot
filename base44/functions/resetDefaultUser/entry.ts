@@ -6,7 +6,7 @@ Deno.serve(async (req) => {
     
     // This function can be called without auth for initial setup
     const defaultEmail = 'demo@spedynet.com.br';
-    const defaultPassword = 'admin';
+    const defaultPassword = 'Admin12345';
 
     // Check if default user already exists
     const existingUsers = await base44.asServiceRole.entities.User.filter({ email: defaultEmail });
