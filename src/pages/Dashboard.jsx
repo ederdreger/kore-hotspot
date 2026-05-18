@@ -3,9 +3,12 @@ import { base44 } from '@/api/base44Client';
 import StatCard from '@/components/ui/StatCard';
 import StatusBadge from '@/components/ui/StatusBadge';
 import { Users, UserSearch, Zap, Ticket, Wifi, Activity, Clock, TrendingUp, AlertCircle, CheckCircle } from 'lucide-react';
-import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import ConversionFunnelChart from '@/components/charts/ConversionFunnelChart';
+import BandwidthByPlanChart from '@/components/charts/BandwidthByPlanChart';
+import HotspotHeatmap from '@/components/charts/HotspotHeatmap';
 
 const trafficData = [
   { time: '00:00', download: 120, upload: 45 },
@@ -130,6 +133,15 @@ export default function Dashboard() {
           )}
         </div>
       </div>
+
+      {/* Advanced Charts Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <ConversionFunnelChart prospects={prospects} clients={clients} />
+        <BandwidthByPlanChart plans={plans} clients={clients} />
+      </div>
+
+      {/* Heatmap full width */}
+      <HotspotHeatmap clients={clients} prospects={prospects} />
 
       {/* Online Users + Recent Logs */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
