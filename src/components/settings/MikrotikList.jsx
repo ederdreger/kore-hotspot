@@ -46,7 +46,7 @@ export default function MikrotikList() {
     setForm({
       name: mt.name || '',
       host: mt.host || '',
-      port: mt.port || '8728',
+      port: mt.port || '22',
       user: mt.user || 'admin',
       password: mt.password || '',
       hotspot_interface: mt.hotspot_interface || 'ether1',
