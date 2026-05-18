@@ -9,17 +9,8 @@ import APRegisterModal from '@/components/ap/APRegisterModal';
 import { Wifi, RefreshCw, Plus, MapPin, Trash2, Edit2, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
-// Default APs with real urban addresses (demo data)
-const DEFAULT_APS = [
-  { id: 'ap1', name: 'AP-PraçaCentral-01', street: 'Praça Dr. Bozano', number: 's/n', neighborhood: 'Centro', city: 'Maringá', reference: 'Poste próximo ao coreto', ip: '10.0.1.1', band: '2.4GHz', channel: 6,   clients: 28, maxClients: 30, signalAvg: -58, noise: -92, txPower: 20, utilization: 93, uptime: '12d 4h', status: 'overloaded', ssid: 'KoreHotspot', notes: '' },
-  { id: 'ap2', name: 'AP-RuaXV-01',        street: 'Rua XV de Novembro', number: '340', neighborhood: 'Centro', city: 'Maringá', reference: 'Fachada do Correios', ip: '10.0.1.2', band: '5GHz',   channel: 36, clients: 14, maxClients: 30, signalAvg: -62, noise: -95, txPower: 23, utilization: 47, uptime: '12d 4h', status: 'ok', ssid: 'KoreHotspot', notes: '' },
-  { id: 'ap3', name: 'AP-AveColombó-01',   street: 'Av. Colombo', number: '5900', neighborhood: 'Zona 7', city: 'Maringá', reference: 'Poste em frente UEM portão 1', ip: '10.0.1.3', band: '2.4GHz', channel: 6,   clients: 22, maxClients: 30, signalAvg: -71, noise: -88, txPower: 20, utilization: 73, uptime: '8d 2h',  status: 'interference', ssid: 'KoreHotspot', notes: '' },
-  { id: 'ap4', name: 'AP-PraçaItália-01',  street: 'Praça Itália', number: 's/n', neighborhood: 'Zona 3', city: 'Maringá', reference: 'Palmeira central', ip: '10.0.1.4', band: '5GHz',   channel: 44, clients: 8,  maxClients: 30, signalAvg: -55, noise: -96, txPower: 20, utilization: 27, uptime: '5d 11h', status: 'ok', ssid: 'KoreHotspot', notes: '' },
-  { id: 'ap5', name: 'AP-AveAngelo-01',    street: 'Av. Ângelo Moreira', number: '200', neighborhood: 'Zona 3', city: 'Maringá', reference: 'Esquina com R. Santos Dumont', ip: '10.0.1.5', band: '2.4GHz', channel: 11, clients: 19, maxClients: 30, signalAvg: -64, noise: -90, txPower: 23, utilization: 63, uptime: '12d 4h', status: 'ok', ssid: 'KoreHotspot', notes: '' },
-  { id: 'ap6', name: 'AP-RuaBrasil-01',    street: 'Rua Brasil', number: '1200', neighborhood: 'Vila Nova', city: 'Maringá', reference: 'Farmácia Droga Raia', ip: '10.0.1.6', band: '5GHz',   channel: 36, clients: 31, maxClients: 30, signalAvg: -60, noise: -94, txPower: 20, utilization: 88, uptime: '3d 7h',  status: 'overloaded', ssid: 'KoreHotspot', notes: '' },
-  { id: 'ap7', name: 'AP-PraçaXimenes-01', street: 'Praça Dep. Ximenes', number: 's/n', neighborhood: 'Vila Nova', city: 'Maringá', reference: 'Banco de concreto ao centro', ip: '10.0.1.7', band: '2.4GHz', channel: 1,   clients: 5,  maxClients: 25, signalAvg: -78, noise: -86, txPower: 26, utilization: 20, uptime: '12d 4h', status: 'weak_signal', ssid: 'KoreHotspot', notes: '' },
-  { id: 'ap8', name: 'AP-AveItaipu-01',    street: 'Av. Itaipu', number: '450', neighborhood: 'Jardim Alvorada', city: 'Maringá', reference: 'Poste frente à UPA', ip: '10.0.1.8', band: '5GHz',   channel: 149, clients: 3, maxClients: 25, signalAvg: -82, noise: -85, txPower: 26, utilization: 12, uptime: '12d 4h', status: 'weak_signal', ssid: 'KoreHotspot', notes: '' },
-];
+// No demo data — start empty for real cadastros
+const DEFAULT_APS = [];
 
 export default function APMonitor() {
   const [aps, setAPs] = useState(DEFAULT_APS);
@@ -198,8 +189,23 @@ export default function APMonitor() {
         <APAlertPanel overloaded={overloaded} interference={interference} weakSignal={weakSignal} aps={aps} onChangeChannel={handleChangeChannel} />
       )}
 
+      {/* Empty state */}
+      {aps.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-20 bg-card border border-dashed border-border rounded-xl gap-4">
+          <Wifi className="w-12 h-12 text-muted-foreground/30" />
+          <div className="text-center">
+            <p className="text-sm font-semibold text-foreground">Nenhum AP cadastrado</p>
+            <p className="text-xs text-muted-foreground mt-1">Clique em "Cadastrar AP" para adicionar o primeiro equipamento.</p>
+          </div>
+          <Button size="sm" onClick={() => { setEditingAP(null); setShowRegister(true); }} className="gap-1.5">
+            <Plus className="w-3.5 h-3.5" />
+            Cadastrar primeiro AP
+          </Button>
+        </div>
+      )}
+
       {/* Map view */}
-      {view === 'map' && (
+      {aps.length > 0 && view === 'map' && (
         <div className="grid grid-cols-1 xl:grid-cols-5 gap-4">
           <div className="xl:col-span-3">
             <APHeatmapGrid aps={aps} loading={loading} selectedAP={selectedAP} onSelectAP={setSelectedAP} onEditAP={handleEdit} />
@@ -211,7 +217,7 @@ export default function APMonitor() {
       )}
 
       {/* List view — grouped by neighborhood */}
-      {view === 'list' && (
+      {aps.length > 0 && view === 'list' && (
         <div className="space-y-4">
           {Object.entries(byNeighborhood).map(([nbh, apList]) => (
             <div key={nbh} className="bg-card border border-border rounded-xl overflow-hidden">
@@ -273,7 +279,7 @@ export default function APMonitor() {
       )}
 
       {/* Load Balancer */}
-      <APLoadBalancer aps={aps} onBalance={handleBalanceAP} />
+      {aps.length > 0 && <APLoadBalancer aps={aps} onBalance={handleBalanceAP} />}
 
       {/* Action log */}
       {actionLog.length > 0 && (
