@@ -1,0 +1,40 @@
+{
+  "name": "Setting",
+  "type": "object",
+  "properties": {
+    "key": {
+      "type": "string",
+      "description": "Chave \u00fanica da configura\u00e7\u00e3o"
+    },
+    "value": {
+      "type": "string"
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "mikrotik",
+        "radius",
+        "ixc",
+        "hotspot",
+        "trial",
+        "smtp",
+        "system"
+      ],
+      "default": "system"
+    },
+    "label": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "is_secret": {
+      "type": "boolean",
+      "default": false
+    }
+  },
+  "required": [
+    "key",
+    "category"
+  ]
+}
