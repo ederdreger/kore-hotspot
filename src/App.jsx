@@ -20,6 +20,7 @@ import CaptivePortal from '@/pages/CaptivePortal';
 import RadiusMonitor from '@/pages/RadiusMonitor';
 import APMonitor from '@/pages/APMonitor';
 import HotspotPlans from '@/pages/HotspotPlans';
+import HotspotLogin from '@/pages/HotspotLogin';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -45,6 +46,7 @@ const AuthenticatedApp = () => {
     <Routes>
       {/* Captive Portal — standalone (no layout) */}
       <Route path="/captive-portal" element={<CaptivePortal />} />
+      <Route path="/hotspot-login" element={<HotspotLogin />} />
 
       {/* Admin App with Layout */}
       <Route element={<AppLayout />}>
