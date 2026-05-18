@@ -1,4 +1,40 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+import { Client } from 'npm:ssh2@1.16.0';
+
+function sshExec(host, port, username, password, command) {
+  return new Promise((resolve, reject) => {
+    const conn = new Client();
+    let output = '';
+    const timer = setTimeout(() => {
+      conn.destroy();
+      reject(new Error('Timeout SSH ao conectar em ' + host + ':' + port));
+    }, 10000);
+
+    conn.on('ready', () => {
+      conn.exec(command, (err, stream) => {
+        if (err) { clearTimeout(timer); conn.end(); return reject(err); }
+        stream.on('data', d => { output += d.toString(); });
+        stream.stderr.on('data', () => {});
+        stream.on('close', () => { clearTimeout(timer); conn.end(); resolve(output.trim()); });
+      });
+    });
+
+    conn.on('error', err => { clearTimeout(timer); reject(err); });
+
+    conn.connect({ host, port: parseInt(port) || 22, username, password, readyTimeout: 8000 });
+  });
+}
+
+// Parse RouterOS print output into key-value object
+function parsePrint(output) {
+  const result = {};
+  const lines = output.split('\n');
+  for (const line of lines) {
+    const match = line.match(/^\s*([\w-]+):\s*(.+)$/);
+    if (match) result[match[1]] = match[2].trim();
+  }
+  return result;
+}
 
 Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
@@ -6,42 +42,27 @@ Deno.serve(async (req) => {
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body = await req.json().catch(() => ({}));
-  const { host, port = '8728', user: mtUser = 'admin', password = '' } = body;
+  const { host, port = '22', user: sshUser = 'admin', password = '' } = body;
 
   if (!host) return Response.json({ error: 'host é obrigatório' }, { status: 400 });
 
-  // MikroTik REST API: port 80 (HTTP) or 443 (HTTPS)
-  // Ports 8728/8729 are RouterOS API (binary), not REST
-  // Port 8778 may be custom REST — try it first, fall back to 80
-  const restPort = (port === '8728' || port === '8729') ? '80' : port;
-  const baseUrl = `http://${host}:${restPort}`;
-  const auth = 'Basic ' + btoa(`${mtUser}:${password}`);
-  const headers = { 'Authorization': auth, 'Content-Type': 'application/json' };
-  const timeout = AbortSignal.timeout(6000);
-
-  async function mkGet(path) {
-    const res = await fetch(`${baseUrl}/rest${path}`, { headers, signal: AbortSignal.timeout(6000) });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return res.json();
-  }
-
   try {
-    const [resources, hotspotActive] = await Promise.allSettled([
-      mkGet('/system/resource'),
-      mkGet('/ip/hotspot'),
-    ]);
+    // Fetch system resources and hotspot active users in sequence
+    const resOutput = await sshExec(host, port, sshUser, password,
+      '/system resource print');
+    const res = parsePrint(resOutput);
 
-
-    const res = resources.status === 'fulfilled' ? resources.value : null;
-    if (!res) throw new Error('Não foi possível obter recursos do sistema');
-
-    const hotspots = hotspotActive.status === 'fulfilled' ? hotspotActive.value : [];
-
-    // Active hotspot users
     let activeUsers = 0;
+    let hotspotCount = 0;
     try {
-      const activeRes = await mkGet('/ip/hotspot/active');
-      activeUsers = Array.isArray(activeRes) ? activeRes.length : 0;
+      const hotOutput = await sshExec(host, port, sshUser, password,
+        '/ip hotspot active print count-only');
+      activeUsers = parseInt(hotOutput) || 0;
+    } catch (_) {}
+    try {
+      const hotspotList = await sshExec(host, port, sshUser, password,
+        '/ip hotspot print count-only');
+      hotspotCount = parseInt(hotspotList) || 0;
     } catch (_) {}
 
     return Response.json({
@@ -53,16 +74,18 @@ Deno.serve(async (req) => {
       board_name: res['board-name'] || null,
       version: res['version'] || null,
       active_users: activeUsers,
-      hotspot_count: Array.isArray(hotspots) ? hotspots.length : 0,
+      hotspot_count: hotspotCount,
     });
   } catch (err) {
     let msg = err.message;
-    if (msg.includes('timed out') || msg.includes('timeout')) {
-      msg = `Timeout ao conectar em ${host}:${restPort} — verifique se o IP é acessível pela internet e se a porta REST está aberta`;
+    if (msg.includes('Timeout') || msg.includes('timeout')) {
+      msg = `Timeout SSH em ${host}:${port} — verifique se a porta SSH está aberta e acessível`;
     } else if (msg.includes('refused') || msg.includes('ECONNREFUSED')) {
-      msg = `Conexão recusada em ${host}:${restPort} — verifique a porta REST API do MikroTik (padrão: 80)`;
-    } else if (msg.includes('network') || msg.includes('ENETUNREACH')) {
-      msg = `IP ${host} inacessível — o servidor está na internet? IPs privados (192.168.x, 10.x) não são acessíveis remotamente`;
+      msg = `Conexão SSH recusada em ${host}:${port} — verifique se o SSH está ativo no MikroTik`;
+    } else if (msg.includes('Authentication') || msg.includes('auth')) {
+      msg = `Falha de autenticação SSH — verifique usuário e senha`;
+    } else if (msg.includes('ENETUNREACH') || msg.includes('network')) {
+      msg = `IP ${host} inacessível — verifique se o endereço é acessível pela internet`;
     }
     return Response.json({ error: msg }, { status: 200 });
   }

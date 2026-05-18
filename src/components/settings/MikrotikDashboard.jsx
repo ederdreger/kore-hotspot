@@ -41,8 +41,8 @@ export default function MikrotikDashboard({ mikrotik, onClose }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [tests, setTests] = useState([
-    { id: 'ping', label: 'Ping / Conectividade', status: 'idle', detail: null },
-    { id: 'api', label: 'API MikroTik (porta ' + mikrotik.port + ')', status: 'idle', detail: null },
+    { id: 'ping', label: 'Conectividade SSH', status: 'idle', detail: null },
+    { id: 'api', label: 'Autenticação SSH (porta ' + (mikrotik.port || '22') + ')', status: 'idle', detail: null },
     { id: 'hotspot', label: 'Hotspot Ativo', status: 'idle', detail: null },
     { id: 'users', label: 'Usuários Conectados', status: 'idle', detail: null },
   ]);
@@ -130,7 +130,7 @@ export default function MikrotikDashboard({ mikrotik, onClose }) {
             </div>
             <div>
               <h3 className="font-semibold text-foreground text-sm">{mikrotik.name}</h3>
-              <p className="text-xs font-mono text-muted-foreground">{mikrotik.host}:{mikrotik.port}</p>
+              <p className="text-xs font-mono text-muted-foreground">{mikrotik.host}:{mikrotik.port || '22'} · SSH</p>
             </div>
             {/* Status pill */}
             <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${

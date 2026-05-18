@@ -3,11 +3,11 @@ import { base44 } from '@/api/base44Client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Plus, Pencil, Trash2, Server, Eye, EyeOff, CheckCircle, RefreshCw, X, Wifi, LayoutDashboard } from 'lucide-react';
+import { Plus, Pencil, Trash2, Server, Eye, EyeOff, CheckCircle, RefreshCw, X, Wifi, LayoutDashboard, Radio, Terminal } from 'lucide-react';
 import { toast } from 'sonner';
 import MikrotikDashboard from './MikrotikDashboard';
 
-const EMPTY = { name: '', host: '', port: '8728', user: 'admin', password: '', hotspot_interface: 'ether1', hotspot_network: '192.168.1.0/24' };
+const EMPTY = { name: '', host: '', port: '22', user: 'admin', password: '', hotspot_interface: 'ether1', hotspot_network: '192.168.1.0/24' };
 
 export default function MikrotikList() {
   const [mikrotiks, setMikrotiks] = useState([]);
@@ -18,6 +18,7 @@ export default function MikrotikList() {
   const [saving, setSaving] = useState(false);
   const [showPass, setShowPass] = useState(false);
   const [viewingMt, setViewingMt] = useState(null);
+  const [provisioning, setProvisioning] = useState(null); // _id of mt being provisioned
 
   const load = async () => {
     setLoading(true);
@@ -70,6 +71,29 @@ export default function MikrotikList() {
     load();
   };
 
+  const handleProvision = async (mt) => {
+    setProvisioning(mt._id);
+    try {
+      const res = await base44.functions.invoke('mikrotikProvision', {
+        host: mt.host,
+        port: mt.port,
+        user: mt.user,
+        password: mt.password,
+        hotspot_interface: mt.hotspot_interface,
+        hotspot_network: mt.hotspot_network,
+      });
+      if (res.data?.success) {
+        toast.success(`RADIUS configurado em ${mt.name} com sucesso!`);
+      } else {
+        toast.error(`Erro: ${res.data?.error || 'Falha no provisionamento'}`);
+      }
+    } catch (err) {
+      toast.error(`Erro de conexão: ${err.message}`);
+    } finally {
+      setProvisioning(null);
+    }
+  };
+
   const handleDelete = async (mt) => {
     await base44.entities.Setting.delete(mt._id);
     toast.info(`${mt.name} removido`);
@@ -79,7 +103,7 @@ export default function MikrotikList() {
   const fields = [
     { key: 'name', label: 'Nome / Identificação', placeholder: 'Ex: Praça Central AP01' },
     { key: 'host', label: 'Host / IP', placeholder: '192.168.88.1' },
-    { key: 'port', label: 'Porta API', placeholder: '8728' },
+    { key: 'port', label: 'Porta SSH', placeholder: '22' },
     { key: 'user', label: 'Usuário', placeholder: 'admin' },
     { key: 'hotspot_interface', label: 'Interface Hotspot', placeholder: 'ether1' },
     { key: 'hotspot_network', label: 'Rede Hotspot', placeholder: '192.168.1.0/24' },
@@ -126,6 +150,16 @@ export default function MikrotikList() {
               <div className="flex items-center gap-1 flex-shrink-0">
                 <button onClick={() => setViewingMt(mt)} className="p-1.5 rounded-lg hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors" title="Dashboard">
                   <LayoutDashboard className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => handleProvision(mt)}
+                  disabled={provisioning === mt._id}
+                  className="p-1.5 rounded-lg hover:bg-success/10 text-muted-foreground hover:text-success transition-colors disabled:opacity-50"
+                  title="Provisionar RADIUS via SSH"
+                >
+                  {provisioning === mt._id
+                    ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    : <Radio className="w-3.5 h-3.5" />}
                 </button>
                 <button onClick={() => openEdit(mt)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-primary transition-colors" title="Editar">
                   <Pencil className="w-3.5 h-3.5" />
