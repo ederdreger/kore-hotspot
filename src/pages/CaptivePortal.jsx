@@ -3,8 +3,9 @@ import { base44 } from '@/api/base44Client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Wifi, User, Mail, Phone, CreditCard, CheckCircle, Clock, ArrowRight, Loader2, AlertCircle, Shield } from 'lucide-react';
+import { Wifi, User, Mail, Phone, CreditCard, CheckCircle, Clock, ArrowRight, Loader2, Shield } from 'lucide-react';
 import { toast } from 'sonner';
+import AnimatedBackground from '@/components/captive/AnimatedBackground';
 
 const TRIAL_MINUTES = 30;
 
@@ -66,14 +67,15 @@ export default function CaptivePortal() {
 
   return (
     <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4 relative overflow-hidden">
-      {/* Background decoration */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-primary/5 rounded-full blur-3xl" />
-        <div className="absolute bottom-1/4 right-1/4 w-64 h-64 bg-info/5 rounded-full blur-3xl" />
-        <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-primary/30 to-transparent" />
+      {/* Animated particle network background */}
+      <AnimatedBackground />
+      {/* Subtle gradient overlays on top of canvas */}
+      <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 1 }}>
+        <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent" />
+        <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-primary/20 to-transparent" />
       </div>
 
-      <div className="w-full max-w-md relative z-10">
+      <div className="w-full max-w-md relative" style={{ zIndex: 2 }}>
         {/* Logo */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary/10 border border-primary/30 mb-4 glow-cyan">

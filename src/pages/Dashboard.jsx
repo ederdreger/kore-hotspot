@@ -10,23 +10,8 @@ import ConversionFunnelChart from '@/components/charts/ConversionFunnelChart';
 import BandwidthByPlanChart from '@/components/charts/BandwidthByPlanChart';
 import HotspotHeatmap from '@/components/charts/HotspotHeatmap';
 
-const trafficData = [
-  { time: '00:00', download: 120, upload: 45 },
-  { time: '04:00', download: 80, upload: 30 },
-  { time: '08:00', download: 250, upload: 90 },
-  { time: '12:00', download: 380, upload: 140 },
-  { time: '16:00', download: 420, upload: 160 },
-  { time: '20:00', download: 510, upload: 200 },
-  { time: '23:59', download: 300, upload: 110 },
-];
-
-const onlineUsers = [
-  { name: 'João Silva', ip: '192.168.1.101', mac: '00:11:22:33:44:55', plan: '50MB', time: '2h 15m', status: 'active' },
-  { name: 'Maria Santos', ip: '192.168.1.102', mac: '00:11:22:33:44:56', plan: '100MB', time: '45m', status: 'active' },
-  { name: 'Trial-001', ip: '192.168.1.150', mac: '00:11:22:33:44:57', plan: 'Trial', time: '18m', status: 'trial' },
-  { name: 'Carlos Lima', ip: '192.168.1.103', mac: '00:11:22:33:44:58', plan: '50MB', time: '5h 02m', status: 'active' },
-  { name: 'Trial-002', ip: '192.168.1.151', mac: '00:11:22:33:44:59', plan: 'Trial', time: '5m', status: 'trial' },
-];
+const trafficData = [];
+const onlineUsers = [];
 
 export default function Dashboard() {
   const [clients, setClients] = useState([]);
@@ -154,23 +139,30 @@ export default function Dashboard() {
               <span className="text-xs text-success font-medium">{onlineUsers.length} online</span>
             </div>
           </div>
-          <div className="space-y-2">
-            {onlineUsers.map((u, i) => (
-              <div key={i} className="flex items-center justify-between p-2.5 rounded-lg bg-secondary/50 hover:bg-secondary transition-colors">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className={`w-2 h-2 rounded-full flex-shrink-0 ${u.status === 'trial' ? 'bg-warning animate-pulse' : 'bg-success animate-pulse'}`} />
-                  <div className="min-w-0">
-                    <p className="text-xs font-medium text-foreground truncate">{u.name}</p>
-                    <p className="text-[10px] font-mono text-muted-foreground">{u.ip}</p>
+          {onlineUsers.length > 0 ? (
+            <div className="space-y-2">
+              {onlineUsers.map((u, i) => (
+                <div key={i} className="flex items-center justify-between p-2.5 rounded-lg bg-secondary/50 hover:bg-secondary transition-colors">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className={`w-2 h-2 rounded-full flex-shrink-0 ${u.status === 'trial' ? 'bg-warning animate-pulse' : 'bg-success animate-pulse'}`} />
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-foreground truncate">{u.name}</p>
+                      <p className="text-[10px] font-mono text-muted-foreground">{u.ip}</p>
+                    </div>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <StatusBadge status={u.status} />
+                    <p className="text-[10px] text-muted-foreground mt-0.5">{u.time}</p>
                   </div>
                 </div>
-                <div className="text-right flex-shrink-0">
-                  <StatusBadge status={u.status} />
-                  <p className="text-[10px] text-muted-foreground mt-0.5">{u.time}</p>
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center h-32 text-muted-foreground">
+              <Wifi className="w-8 h-8 mb-2 opacity-30" />
+              <p className="text-xs">Nenhum usuário online no momento</p>
+            </div>
+          )}
         </div>
 
         {/* Recent Logs */}
