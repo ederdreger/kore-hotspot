@@ -17,28 +17,33 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const checkUserAuth = async () => {
+    setIsLoadingAuth(true);
+    // Safety timeout — never block forever
+    const timeout = setTimeout(() => {
+      setIsLoadingAuth(false);
+      setAuthChecked(true);
+    }, 4000);
+
     try {
-      setIsLoadingAuth(true);
-      const isAuthed = await base44.auth.isAuthenticated();
-      if (isAuthed) {
-        const currentUser = await base44.auth.me();
-        setUser(currentUser);
-        setIsAuthenticated(true);
-      } else {
-        setIsAuthenticated(false);
-        setAuthError({ type: 'auth_required', message: 'Authentication required' });
-      }
+      const currentUser = await base44.auth.me();
+      clearTimeout(timeout);
+      setUser(currentUser);
+      setIsAuthenticated(true);
     } catch (error) {
-      console.error('Auth check failed:', error);
-      setIsAuthenticated(false);
-      // Don't block the app for unknown errors
-      if (error?.status === 403) {
-        if (error?.data?.extra_data?.reason === 'user_not_registered') {
+      clearTimeout(timeout);
+      const status = error?.status || error?.response?.status;
+      if (status === 403) {
+        const reason = error?.data?.extra_data?.reason || error?.response?.data?.extra_data?.reason;
+        if (reason === 'user_not_registered') {
           setAuthError({ type: 'user_not_registered', message: 'User not registered' });
         } else {
           setAuthError({ type: 'auth_required', message: 'Authentication required' });
         }
+      } else if (status === 401) {
+        setAuthError({ type: 'auth_required', message: 'Authentication required' });
       }
+      // For unknown errors, don't set authError — just render the app
+      setIsAuthenticated(false);
     } finally {
       setIsLoadingAuth(false);
       setAuthChecked(true);
