@@ -23,6 +23,7 @@ import HotspotPlans from '@/pages/HotspotPlans';
 import HotspotLogin from '@/pages/HotspotLogin';
 import UsersPage from '@/pages/Users';
 
+// AuthenticatedApp: All admin routes are protected by ProtectedRoute
 const AuthenticatedApp = () => {
   return (
     <Routes>
