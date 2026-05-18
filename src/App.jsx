@@ -1,7 +1,7 @@
 import { Toaster } from "@/components/ui/toaster"
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
-import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
@@ -46,7 +46,6 @@ const AuthenticatedApp = () => {
     <Routes>
       {/* Captive Portal — standalone (no layout) */}
       <Route path="/captive-portal" element={<CaptivePortal />} />
-      <Route path="/hotspot-login" element={<HotspotLogin />} />
 
       {/* Admin App with Layout */}
       <Route element={<AppLayout />}>
@@ -73,7 +72,13 @@ function App() {
     <AuthProvider>
       <QueryClientProvider client={queryClientInstance}>
         <Router>
-          <AuthenticatedApp />
+          <Routes>
+            {/* Rotas públicas — sem autenticação */}
+            <Route path="/hotspot-login" element={<HotspotLogin />} />
+            <Route path="/captive-portal" element={<CaptivePortal />} />
+            {/* Rotas do admin — com autenticação */}
+            <Route path="/*" element={<AuthenticatedApp />} />
+          </Routes>
         </Router>
         <Toaster />
       </QueryClientProvider>
