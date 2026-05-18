@@ -2,7 +2,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import {
   LayoutDashboard, Users, UserSearch, Zap, Ticket, Megaphone,
-  Settings, ScrollText, Wifi, ChevronRight, X
+  Settings, ScrollText, Wifi, ChevronRight, X, Radio
 } from 'lucide-react';
 
 const navItems = [
@@ -12,6 +12,7 @@ const navItems = [
   { label: 'Planos', icon: Zap, path: '/plans' },
   { label: 'Vouchers', icon: Ticket, path: '/vouchers' },
   { label: 'Campanhas', icon: Megaphone, path: '/campaigns' },
+  { label: 'RADIUS Monitor', icon: Radio, path: '/radius', highlight: true },
   { label: 'Logs', icon: ScrollText, path: '/logs' },
   { label: 'Configurações', icon: Settings, path: '/settings' },
 ];
@@ -62,6 +63,8 @@ export default function Sidebar({ open, onClose }) {
                   "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 group",
                   active
                     ? "bg-primary/10 text-primary border border-primary/20 glow-cyan"
+                    : item.highlight && !active
+                    ? "text-primary/80 hover:text-primary hover:bg-primary/5 border border-primary/10"
                     : "text-muted-foreground hover:text-foreground hover:bg-secondary"
                 )}
               >
