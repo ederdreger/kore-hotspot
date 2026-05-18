@@ -2,6 +2,7 @@ import React, { createContext, useState, useContext, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
 
 const AuthContext = createContext();
+const TOKEN_KEY = 'kore_admin_session';
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
@@ -16,54 +17,54 @@ export const AuthProvider = ({ children }) => {
     checkUserAuth();
   }, []);
 
+  const getToken = () => localStorage.getItem(TOKEN_KEY);
+
   const checkUserAuth = async () => {
     setIsLoadingAuth(true);
-    // Safety timeout — never block forever
-    const timeout = setTimeout(() => {
-      setIsLoadingAuth(false);
-      setAuthChecked(true);
-    }, 4000);
-
+    setAuthError(null);
     try {
-      const currentUser = await base44.auth.me();
-      clearTimeout(timeout);
-      setUser(currentUser);
+      const token = getToken();
+      if (!token) {
+        setIsAuthenticated(false);
+        setUser(null);
+        return;
+      }
+      const res = await base44.functions.invoke('adminAuth', { action: 'validate', token });
+      setUser(res.data.user);
       setIsAuthenticated(true);
     } catch (error) {
-      clearTimeout(timeout);
-      const status = error?.status || error?.response?.status;
-      if (status === 403) {
-        const reason = error?.data?.extra_data?.reason || error?.response?.data?.extra_data?.reason;
-        if (reason === 'user_not_registered') {
-          setAuthError({ type: 'user_not_registered', message: 'User not registered' });
-        } else {
-          setAuthError({ type: 'auth_required', message: 'Authentication required' });
-        }
-      } else if (status === 401) {
-        setAuthError({ type: 'auth_required', message: 'Authentication required' });
-      }
-      // For unknown errors, don't set authError — just render the app
+      localStorage.removeItem(TOKEN_KEY);
+      setUser(null);
       setIsAuthenticated(false);
+      setAuthError({ type: 'auth_required', message: 'Authentication required' });
     } finally {
       setIsLoadingAuth(false);
       setAuthChecked(true);
     }
   };
 
+  const login = async (email, password) => {
+    const res = await base44.functions.invoke('adminAuth', { action: 'login', email, password });
+    localStorage.setItem(TOKEN_KEY, res.data.token);
+    setUser(res.data.user);
+    setIsAuthenticated(true);
+    setAuthError(null);
+    return res.data.user;
+  };
+
   const checkAppState = checkUserAuth;
 
   const navigateToLogin = () => {
-    base44.auth.redirectToLogin(window.location.href);
+    window.location.href = '/login';
   };
 
-  const logout = (shouldRedirect = true) => {
+  const logout = async (shouldRedirect = true) => {
+    const token = getToken();
+    localStorage.removeItem(TOKEN_KEY);
     setUser(null);
     setIsAuthenticated(false);
-    if (shouldRedirect) {
-      base44.auth.logout(window.location.href);
-    } else {
-      base44.auth.logout();
-    }
+    if (token) await base44.functions.invoke('adminAuth', { action: 'logout', token }).catch(() => null);
+    if (shouldRedirect) window.location.href = '/login';
   };
 
   return (
@@ -75,10 +76,12 @@ export const AuthProvider = ({ children }) => {
       authError,
       appPublicSettings,
       authChecked,
+      login,
       logout,
       navigateToLogin,
       checkUserAuth,
-      checkAppState
+      checkAppState,
+      getToken
     }}>
       {children}
     </AuthContext.Provider>

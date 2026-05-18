@@ -1,12 +1,13 @@
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { LogIn, Mail, Lock, Loader2 } from "lucide-react";
 import AuthLayout from "@/components/AuthLayout";
+import { useAuth } from "@/lib/AuthContext";
 
 export default function Login() {
+  const { login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -17,10 +18,10 @@ export default function Login() {
     setError("");
     setLoading(true);
     try {
-      await base44.auth.loginViaEmailPassword(email, password);
+      await login(email, password);
       window.location.href = "/";
     } catch (err) {
-      setError(err.message || "Invalid email or password");
+      setError(err?.response?.data?.error || err.message || "E-mail ou senha inválidos");
     } finally {
       setLoading(false);
     }

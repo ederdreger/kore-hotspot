@@ -1,0 +1,43 @@
+{
+  "name": "AdminUser",
+  "type": "object",
+  "properties": {
+    "email": {
+      "type": "string",
+      "format": "email"
+    },
+    "full_name": {
+      "type": "string"
+    },
+    "password_hash": {
+      "type": "string"
+    },
+    "role": {
+      "type": "string",
+      "enum": [
+        "admin",
+        "manager",
+        "user",
+        "inactive"
+      ],
+      "default": "user"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "inactive"
+      ],
+      "default": "active"
+    },
+    "last_login": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "email",
+    "password_hash",
+    "role"
+  ]
+}

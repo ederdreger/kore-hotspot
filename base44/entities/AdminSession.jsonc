@@ -1,0 +1,29 @@
+{
+  "name": "AdminSession",
+  "type": "object",
+  "properties": {
+    "token": {
+      "type": "string"
+    },
+    "admin_user_id": {
+      "type": "string"
+    },
+    "email": {
+      "type": "string",
+      "format": "email"
+    },
+    "role": {
+      "type": "string"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "token",
+    "admin_user_id",
+    "email",
+    "expires_at"
+  ]
+}

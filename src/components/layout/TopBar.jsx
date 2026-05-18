@@ -1,6 +1,7 @@
-import { Menu, Bell, Wifi, Activity } from 'lucide-react';
+import { Menu, Bell, Wifi, Activity, LogOut } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { useLocation } from 'react-router-dom';
+import { useAuth } from '@/lib/AuthContext';
 
 const routeLabels = {
   '/': 'Dashboard',
@@ -17,6 +18,7 @@ const routeLabels = {
 
 export default function TopBar({ onMenuClick }) {
   const location = useLocation();
+  const { logout, user } = useAuth();
   const label = routeLabels[location.pathname] || 'Kore-HotSpot';
 
   return (
@@ -43,11 +45,14 @@ export default function TopBar({ onMenuClick }) {
           <span className="absolute top-1 right-1 w-1.5 h-1.5 bg-primary rounded-full" />
         </button>
 
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-secondary border border-border">
+        <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-secondary border border-border">
           <Activity className="w-3.5 h-3.5 text-primary" />
-          <span className="text-xs font-mono text-muted-foreground">MikroTik</span>
-          <Badge className="h-4 text-[9px] bg-success/20 text-success border-success/30 px-1">OK</Badge>
+          <span className="text-xs font-mono text-muted-foreground">{user?.email || 'Admin'}</span>
         </div>
+
+        <button onClick={() => logout(true)} className="p-2 text-muted-foreground hover:text-destructive transition-colors" title="Sair">
+          <LogOut className="w-4 h-4" />
+        </button>
       </div>
     </header>
   );
