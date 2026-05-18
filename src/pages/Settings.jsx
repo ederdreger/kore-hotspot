@@ -4,17 +4,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { Settings as SettingsIcon, Server, Shield, Database, Globe, Clock, Save, RefreshCw, Eye, EyeOff, CheckCircle, Wifi } from 'lucide-react';
+import { Server, Shield, Database, Globe, Save, RefreshCw, Eye, EyeOff, CheckCircle, Wifi } from 'lucide-react';
 import { toast } from 'sonner';
+import MikrotikList from '@/components/settings/MikrotikList';
 
 const defaultSettings = {
-  // MikroTik
-  mikrotik_host: '192.168.88.1',
-  mikrotik_port: '8728',
-  mikrotik_user: 'admin',
-  mikrotik_password: '',
-  mikrotik_hotspot_interface: 'ether1',
-  mikrotik_hotspot_network: '192.168.1.0/24',
   // RADIUS
   radius_host: '127.0.0.1',
   radius_port: '1812',
@@ -44,17 +38,7 @@ const defaultSettings = {
 };
 
 const sections = [
-  {
-    id: 'mikrotik', label: 'MikroTik', icon: Server, color: 'text-primary',
-    fields: [
-      { key: 'mikrotik_host', label: 'Host / IP' },
-      { key: 'mikrotik_port', label: 'Porta API' },
-      { key: 'mikrotik_user', label: 'Usuário' },
-      { key: 'mikrotik_password', label: 'Senha', secret: true },
-      { key: 'mikrotik_hotspot_interface', label: 'Interface Hotspot' },
-      { key: 'mikrotik_hotspot_network', label: 'Rede Hotspot' },
-    ]
-  },
+  { id: 'mikrotik', label: 'MikroTik', icon: Server, color: 'text-primary', custom: true },
   {
     id: 'radius', label: 'FreeRADIUS', icon: Shield, color: 'text-info',
     fields: [
@@ -176,18 +160,22 @@ export default function Settings() {
                 <p className="text-xs text-muted-foreground">Configurações de integração</p>
               </div>
             </div>
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" className="gap-2 border-border text-xs" onClick={() => handleTest(activeSection)}>
-                <CheckCircle className="w-3.5 h-3.5" />Testar
-              </Button>
-              <Button size="sm" onClick={handleSave} disabled={saving} className="bg-primary text-primary-foreground gap-2 text-xs">
-                {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-                Salvar
-              </Button>
-            </div>
+            {!activeS.custom && (
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" className="gap-2 border-border text-xs" onClick={() => handleTest(activeSection)}>
+                  <CheckCircle className="w-3.5 h-3.5" />Testar
+                </Button>
+                <Button size="sm" onClick={handleSave} disabled={saving} className="bg-primary text-primary-foreground gap-2 text-xs">
+                  {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                  Salvar
+                </Button>
+              </div>
+            )}
           </div>
 
-          {loading ? (
+          {activeS.custom ? (
+            <MikrotikList />
+          ) : loading ? (
             <div className="grid grid-cols-2 gap-4">
               {Array(6).fill(0).map((_, i) => <div key={i} className="h-16 bg-secondary rounded-lg animate-pulse" />)}
             </div>
