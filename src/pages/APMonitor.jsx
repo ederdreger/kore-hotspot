@@ -6,7 +6,7 @@ import APAlertPanel from '@/components/ap/APAlertPanel';
 import APLoadBalancer from '@/components/ap/APLoadBalancer';
 import APStatsBar from '@/components/ap/APStatsBar';
 import APRegisterModal from '@/components/ap/APRegisterModal';
-import { Wifi, RefreshCw, Plus, MapPin, Trash2, Edit2 } from 'lucide-react';
+import { Wifi, RefreshCw, Plus, MapPin, Trash2, Edit2, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 // Default APs with real urban addresses (demo data)
@@ -31,18 +31,35 @@ export default function APMonitor() {
   const [showRegister, setShowRegister] = useState(false);
   const [editingAP, setEditingAP] = useState(null);
   const [view, setView] = useState('map'); // 'map' | 'list'
+  const [pollError, setPollError] = useState(null);
+  const [usingSimulation, setUsingSimulation] = useState(false);
 
-  const refreshMetrics = useCallback(() => {
+  const refreshMetrics = useCallback(async () => {
     setLoading(true);
-    setAPs(prev => prev.map(ap => ({
-      ...ap,
-      signalAvg: Math.max(-95, Math.min(-45, ap.signalAvg + Math.round((Math.random() - 0.5) * 4))),
-      utilization: Math.min(100, Math.max(0, ap.utilization + Math.round((Math.random() - 0.5) * 8))),
-      clients: Math.max(0, ap.clients + Math.round((Math.random() - 0.5) * 2)),
-    })));
+    setPollError(null);
+    try {
+      const response = await base44.functions.invoke('mikrotikPoller', { aps });
+      const polled = response.data?.aps;
+      if (polled && polled.length > 0) {
+        setAPs(polled);
+        setUsingSimulation(false);
+      } else {
+        throw new Error('Resposta vazia da função de polling');
+      }
+    } catch (err) {
+      // Fallback: simulate small variations to keep UI alive
+      setPollError(err.message || 'Falha ao conectar aos equipamentos');
+      setUsingSimulation(true);
+      setAPs(prev => prev.map(ap => ({
+        ...ap,
+        signalAvg: Math.max(-95, Math.min(-45, ap.signalAvg + Math.round((Math.random() - 0.5) * 4))),
+        utilization: Math.min(100, Math.max(0, ap.utilization + Math.round((Math.random() - 0.5) * 8))),
+        clients: Math.max(0, ap.clients + Math.round((Math.random() - 0.5) * 2)),
+      })));
+    }
     setLastRefresh(new Date());
     setLoading(false);
-  }, []);
+  }, [aps]);
 
   useEffect(() => {
     if (!autoRefresh) return;
@@ -156,6 +173,22 @@ export default function APMonitor() {
           </Button>
         </div>
       </div>
+
+      {/* Connection status banner */}
+      {usingSimulation && (
+        <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-warning/30 bg-warning/10 text-warning text-xs">
+          <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+          <span className="font-medium">Modo simulação:</span>
+          <span className="text-warning/80 truncate">{pollError}</span>
+          <span className="ml-auto flex-shrink-0 text-warning/60">Verifique IP, usuário e senha nos secrets</span>
+        </div>
+      )}
+      {!usingSimulation && lastRefresh && aps.some(a => a.pollError) && (
+        <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-destructive/30 bg-destructive/10 text-destructive text-xs">
+          <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+          {aps.filter(a => a.pollError).length} AP(s) offline ou inacessíveis via API REST
+        </div>
+      )}
 
       {/* Stats bar */}
       <APStatsBar aps={aps} loading={loading} />
