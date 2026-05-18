@@ -50,7 +50,7 @@ const AuthenticatedApp = () => {
 
       {/* Admin App with Layout */}
       <Route element={<AppLayout />}>
-        <Route path="/" element={<Navigate to="/hotspot-login" replace />} />
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/clients" element={<Clients />} />
         <Route path="/prospects" element={<Prospects />} />
