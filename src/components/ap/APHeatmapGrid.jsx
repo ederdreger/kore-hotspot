@@ -1,11 +1,12 @@
-import { MapPin, Edit2 } from 'lucide-react';
+import { MapPin, Edit2, Wifi, Users, Signal } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
 const STATUS_CONFIG = {
-  ok:           { ring: '#00FF88', fill: '#00FF8820', label: 'OK' },
-  overloaded:   { ring: '#FF4444', fill: '#FF444420', label: 'Sobrecarregado' },
-  interference: { ring: '#FFB800', fill: '#FFB80020', label: 'Interferência' },
-  weak_signal:  { ring: '#A855F7', fill: '#A855F720', label: 'Sinal Fraco' },
-  offline:      { ring: '#555555', fill: '#55555520', label: 'Offline' },
+  ok:           { color: '#00FF88', label: 'OK',             bg: 'border-green-500/30 bg-green-500/5' },
+  overloaded:   { color: '#FF4444', label: 'Sobrecarregado', bg: 'border-red-500/30 bg-red-500/5' },
+  interference: { color: '#FFB800', label: 'Interferência',  bg: 'border-yellow-500/30 bg-yellow-500/5' },
+  weak_signal:  { color: '#A855F7', label: 'Sinal Fraco',    bg: 'border-purple-500/30 bg-purple-500/5' },
+  offline:      { color: '#555555', label: 'Offline',        bg: 'border-border bg-secondary/20' },
 };
 
 function SignalColor(dbm) {
@@ -15,27 +16,102 @@ function SignalColor(dbm) {
   return '#FF4444';
 }
 
-// Arrange APs into a smart grid based on neighborhood grouping
-function getGridPosition(index, total) {
-  const cols = Math.ceil(Math.sqrt(total));
-  const col = index % cols;
-  const row = Math.floor(index / cols);
-  const cellW = 90 / cols;
-  const cellH = 90 / Math.ceil(total / cols);
-  return {
-    x: 5 + col * cellW + cellW / 2,
-    y: 5 + row * cellH + cellH / 2,
-  };
+function UtilBar({ value }) {
+  const color = value > 85 ? '#FF4444' : value > 65 ? '#FFB800' : '#00FF88';
+  return (
+    <div className="w-full h-1.5 bg-secondary rounded-full overflow-hidden">
+      <div className="h-full rounded-full transition-all" style={{ width: `${Math.min(value, 100)}%`, background: color }} />
+    </div>
+  );
+}
+
+function APCard({ ap, selected, onSelect, onEdit }) {
+  const cfg = STATUS_CONFIG[ap.status] || STATUS_CONFIG.ok;
+  const sigColor = SignalColor(ap.signalAvg);
+  const loadPct = Math.round((ap.clients / ap.maxClients) * 100);
+
+  // Mini bar chart data: utilization, clients%, signal strength (normalized 0-100)
+  const signalNorm = Math.round(Math.max(0, Math.min(100, ((ap.signalAvg + 100) / 55) * 100)));
+  const chartData = [
+    { name: 'Util.', value: ap.utilization,  color: ap.utilization > 85 ? '#FF4444' : ap.utilization > 65 ? '#FFB800' : '#00FF88' },
+    { name: 'Client.', value: loadPct,        color: loadPct > 85 ? '#FF4444' : loadPct > 65 ? '#FFB800' : '#00E5FF' },
+    { name: 'Sinal',  value: signalNorm,      color: sigColor },
+  ];
+
+  return (
+    <div
+      onClick={() => onSelect(selected ? null : ap)}
+      className={`relative rounded-xl border p-3 cursor-pointer transition-all hover:scale-[1.02] ${cfg.bg} ${selected ? 'ring-2 ring-primary/60' : ''}`}
+      style={{ borderColor: selected ? cfg.color : undefined }}
+    >
+      {/* Edit button */}
+      {onEdit && (
+        <button
+          onClick={e => { e.stopPropagation(); onEdit(ap); }}
+          className="absolute top-2 right-2 p-1 rounded-md hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <Edit2 className="w-3 h-3" />
+        </button>
+      )}
+
+      {/* Header */}
+      <div className="flex items-start gap-2 mb-2 pr-5">
+        <div className="w-2 h-2 rounded-full mt-1.5 flex-shrink-0" style={{ background: cfg.color }} />
+        <div className="min-w-0">
+          <p className="text-xs font-bold text-foreground leading-tight truncate">{ap.name}</p>
+          <p className="text-[10px] text-muted-foreground truncate">
+            {ap.street}{ap.number ? `, ${ap.number}` : ''}
+          </p>
+          <p className="text-[10px] font-mono text-muted-foreground/70">{ap.ip} · CH{ap.channel}</p>
+        </div>
+      </div>
+
+      {/* Mini bar chart */}
+      <div className="h-16 w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={chartData} barSize={14} margin={{ top: 2, right: 4, left: -28, bottom: 0 }}>
+            <XAxis dataKey="name" tick={{ fontSize: 8, fill: 'hsl(215 20% 50%)' }} axisLine={false} tickLine={false} />
+            <YAxis domain={[0, 100]} hide />
+            <Tooltip
+              cursor={{ fill: 'hsl(220 20% 16%)' }}
+              contentStyle={{ background: 'hsl(220 24% 11%)', border: '1px solid hsl(220 18% 18%)', borderRadius: 6, fontSize: 10 }}
+              formatter={(val, name) => [`${val}%`, name]}
+            />
+            <Bar dataKey="value" radius={[3, 3, 0, 0]}>
+              {chartData.map((entry, i) => (
+                <Cell key={i} fill={entry.color} fillOpacity={0.85} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Footer metrics */}
+      <div className="flex items-center justify-between mt-1 pt-2 border-t border-border/50">
+        <span className="flex items-center gap-1 text-[10px]">
+          <Users className="w-3 h-3 text-muted-foreground" />
+          <span className="font-mono font-bold" style={{ color: loadPct > 85 ? '#FF4444' : '#00FF88' }}>{ap.clients}/{ap.maxClients}</span>
+        </span>
+        <span className="flex items-center gap-1 text-[10px]">
+          <Signal className="w-3 h-3 text-muted-foreground" />
+          <span className="font-mono font-bold" style={{ color: sigColor }}>{ap.signalAvg} dBm</span>
+        </span>
+        <span className="text-[10px] font-medium px-1.5 py-0.5 rounded" style={{ background: cfg.color + '20', color: cfg.color }}>
+          {cfg.label}
+        </span>
+      </div>
+    </div>
+  );
 }
 
 export default function APHeatmapGrid({ aps, loading, selectedAP, onSelectAP, onEditAP }) {
   if (loading) {
-    return <div className="bg-card border border-border rounded-xl h-96 animate-pulse" />;
+    return <div className="bg-card border border-border rounded-xl h-64 animate-pulse" />;
   }
 
   const ap = selectedAP;
 
-  // Build a neighborhood→aps map for visual grouping
+  // Group by neighborhood
   const byNeighborhood = aps.reduce((acc, a) => {
     const key = a.neighborhood || 'Sem Bairro';
     if (!acc[key]) acc[key] = [];
@@ -43,123 +119,61 @@ export default function APHeatmapGrid({ aps, loading, selectedAP, onSelectAP, on
     return acc;
   }, {});
 
-  // Assign positions: group by neighborhood in columns
-  const neighborhoods = Object.keys(byNeighborhood);
-  const positioned = [];
-  let globalIdx = 0;
-  neighborhoods.forEach((nbh, nbhIdx) => {
-    byNeighborhood[nbh].forEach((apItem, apIdx) => {
-      const cols = neighborhoods.length;
-      const colW = 88 / cols;
-      const apCount = byNeighborhood[nbh].length;
-      const rows = Math.ceil(apCount / 1);
-      const rowH = Math.min(80 / rows, 28);
-      positioned.push({
-        ...apItem,
-        px: 6 + nbhIdx * colW + colW / 2,
-        py: 12 + apIdx * rowH + rowH / 2,
-      });
-      globalIdx++;
-    });
-  });
-
-  // Fallback: simple grid if no neighborhood info
-  const withPos = aps.map((apItem, i) => {
-    const found = positioned.find(p => p.id === apItem.id);
-    if (found) return found;
-    const pos = getGridPosition(i, aps.length);
-    return { ...apItem, px: pos.x, py: pos.y };
-  });
-
   return (
     <div className="bg-card border border-border rounded-xl overflow-hidden">
       {/* Header */}
       <div className="px-5 py-4 border-b border-border flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h3 className="text-sm font-semibold text-foreground">Mapa de Calor — APs por Localização</h3>
-          <p className="text-xs text-muted-foreground">Agrupado por bairro/localidade · clique para detalhes</p>
+          <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+            <Wifi className="w-4 h-4 text-primary" />
+            Visão Geral — APs por Localização
+          </h3>
+          <p className="text-xs text-muted-foreground">Agrupado por bairro · clique no card para detalhes</p>
         </div>
         <div className="flex flex-wrap items-center gap-3 text-[10px]">
           {Object.entries(STATUS_CONFIG).map(([key, cfg]) => (
             <span key={key} className="flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full inline-block" style={{ background: cfg.ring }} />
+              <span className="w-2 h-2 rounded-full inline-block" style={{ background: cfg.color }} />
               {cfg.label}
             </span>
           ))}
         </div>
       </div>
 
-      {/* Map area */}
+      {/* Cards grid */}
       {aps.length === 0 ? (
-        <div className="flex flex-col items-center justify-center h-64 text-muted-foreground gap-2">
+        <div className="flex flex-col items-center justify-center h-48 text-muted-foreground gap-2">
           <MapPin className="w-10 h-10 opacity-20" />
           <p className="text-sm font-medium">Nenhum AP cadastrado</p>
           <p className="text-xs">Clique em "Cadastrar AP" para adicionar o primeiro equipamento</p>
         </div>
       ) : (
-        <div className="relative bg-secondary/10" style={{ paddingBottom: '65%' }}>
-          <svg className="absolute inset-0 w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">
-            {/* Background grid — represents urban blocks */}
-            {Array.from({ length: 10 }).map((_, i) => (
-              <line key={`v${i}`} x1={i * 10} y1={0} x2={i * 10} y2={100} stroke="hsl(220 18% 15%)" strokeWidth={0.2} />
-            ))}
-            {Array.from({ length: 10 }).map((_, i) => (
-              <line key={`h${i}`} x1={0} y1={i * 10} x2={100} y2={i * 10} stroke="hsl(220 18% 15%)" strokeWidth={0.2} />
-            ))}
-
-            {/* Neighborhood zone labels */}
-            {neighborhoods.map((nbh, nbhIdx) => {
-              const cols = neighborhoods.length;
-              const colW = 88 / cols;
-              const x = 6 + nbhIdx * colW + colW / 2;
-              return (
-                <text key={nbh} x={x} y={7} textAnchor="middle" fontSize={2.8} fill="hsl(215 20% 40%)" fontFamily="monospace">
-                  {nbh.length > 14 ? nbh.slice(0, 12) + '…' : nbh}
-                </text>
-              );
-            })}
-
-            {/* Neighborhood column dividers */}
-            {neighborhoods.length > 1 && neighborhoods.map((_, nbhIdx) => {
-              if (nbhIdx === 0) return null;
-              const cols = neighborhoods.length;
-              const colW = 88 / cols;
-              const x = 6 + nbhIdx * colW;
-              return (
-                <line key={`div${nbhIdx}`} x1={x} y1={8} x2={x} y2={96} stroke="hsl(220 18% 22%)" strokeWidth={0.5} strokeDasharray="2 2" />
-              );
-            })}
-
-            {/* AP nodes */}
-            {withPos.map(apItem => {
-              const cfg = STATUS_CONFIG[apItem.status] || STATUS_CONFIG.ok;
-              const sigColor = SignalColor(apItem.signalAvg);
-              const loadRatio = apItem.clients / apItem.maxClients;
-              const r = 5 + loadRatio * 4;
-              const isSelected = selectedAP?.id === apItem.id;
-              return (
-                <g key={apItem.id} transform={`translate(${apItem.px}, ${apItem.py})`} style={{ cursor: 'pointer' }} onClick={() => onSelectAP(isSelected ? null : apItem)}>
-                  {/* Coverage ripple */}
-                  <circle r={r + 8} fill={cfg.fill} stroke={cfg.ring} strokeWidth={0.3} strokeDasharray="2 2" opacity={0.4} />
-                  <circle r={r + 4} fill={cfg.fill} stroke={cfg.ring} strokeWidth={0.5} opacity={0.6} />
-                  {/* AP body */}
-                  <circle r={r} fill={isSelected ? cfg.ring + '50' : cfg.fill} stroke={cfg.ring} strokeWidth={isSelected ? 1.5 : 1} />
-                  {/* Client count */}
-                  <text y={1.5} textAnchor="middle" fontSize={3.2} fill={sigColor} fontWeight="bold">{apItem.clients}</text>
-                  {/* Name (street short) */}
-                  <text y={-r - 3} textAnchor="middle" fontSize={2.5} fill="hsl(210 40% 75%)" fontFamily="monospace">
-                    {(apItem.name || '').replace('AP-', '').slice(0, 12)}
-                  </text>
-                  {/* Channel */}
-                  <text y={r + 5} textAnchor="middle" fontSize={2.2} fill="hsl(215 20% 50%)">CH{apItem.channel}</text>
-                </g>
-              );
-            })}
-          </svg>
+        <div className="p-4 space-y-5 max-h-[520px] overflow-y-auto scrollbar-thin">
+          {Object.entries(byNeighborhood).map(([nbh, apList]) => (
+            <div key={nbh}>
+              <div className="flex items-center gap-2 mb-2">
+                <MapPin className="w-3 h-3 text-primary" />
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{nbh}</p>
+                <div className="flex-1 h-px bg-border" />
+                <span className="text-[10px] text-muted-foreground">{apList.length} AP{apList.length > 1 ? 's' : ''}</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {apList.map(apItem => (
+                  <APCard
+                    key={apItem.id}
+                    ap={apItem}
+                    selected={selectedAP?.id === apItem.id}
+                    onSelect={onSelectAP}
+                    onEdit={onEditAP}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
-      {/* Selected AP detail */}
+      {/* Selected AP detail panel */}
       {ap && (
         <div className="border-t border-border px-5 py-4 bg-secondary/20">
           <div className="flex items-start justify-between mb-3">
