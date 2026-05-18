@@ -6,18 +6,19 @@ import { Label } from '@/components/ui/label';
 import { Users, Plus, Trash2, RefreshCw, Shield, User, Mail, X, CheckCircle } from 'lucide-react';
 import { toast } from 'sonner';
 
-const ROLE_LABELS = { admin: 'Administrador', user: 'Usuário' };
+const ROLE_LABELS = { admin: 'Administrador', manager: 'Gerente', user: 'Usuário' };
 const ROLE_COLORS = {
   admin: 'bg-red-500/10 text-red-400 border border-red-500/20',
+  manager: 'bg-orange-500/10 text-orange-400 border border-orange-5000-500/20',
   user: 'bg-blue-500/10 text-blue-400 border border-blue-500/20',
 };
 
 export default function UsersPage() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [showInvite, setShowInvite] = useState(false);
-  const [form, setForm] = useState({ email: '', role: 'user' });
-  const [inviting, setInviting] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
+  const [form, setForm] = useState({ email: '', password: '', confirmPassword: '', role: 'user' });
+  const [creating, setCreating] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -28,20 +29,28 @@ export default function UsersPage() {
 
   useEffect(() => { load(); }, []);
 
-  const handleInvite = async (e) => {
+  const handleCreate = async (e) => {
     e.preventDefault();
-    if (!form.email) return;
-    setInviting(true);
+    if (!form.email || !form.password) return;
+    if (form.password !== form.confirmPassword) {
+      toast.error('As senhas não coincidem');
+      return;
+    }
+    setCreating(true);
     try {
-      await base44.users.inviteUser(form.email, form.role);
-      toast.success(`Convite enviado para ${form.email}`);
-      setShowInvite(false);
-      setForm({ email: '', role: 'user' });
+      await base44.auth.register({ email: form.email, password: form.password });
+      const newUser = await base44.entities.User.filter({ email: form.email });
+      if (newUser && newUser.length > 0) {
+        await base44.entities.User.update(newUser[0].id, { role: form.role });
+      }
+      toast.success(`Usuário ${form.email} criado com permissão ${form.role === 'admin' ? 'de Administrador' : form.role === 'manager' ? 'de Gerente' : 'de Usuário'}`);
+      setShowCreate(false);
+      setForm({ email: '', password: '', confirmPassword: '', role: 'user' });
       load();
     } catch (err) {
-      toast.error(`Erro ao convidar: ${err.message}`);
+      toast.error(`Erro ao criar: ${err.message}`);
     } finally {
-      setInviting(false);
+      setCreating(false);
     }
   };
 
@@ -59,8 +68,8 @@ export default function UsersPage() {
           <Button variant="outline" size="sm" onClick={load} className="gap-1.5 border-border">
             <RefreshCw className="w-3.5 h-3.5" /> Atualizar
           </Button>
-          <Button size="sm" onClick={() => setShowInvite(true)} className="gap-1.5">
-            <Plus className="w-3.5 h-3.5" /> Convidar Usuário
+          <Button size="sm" onClick={() => setShowCreate(true)} className="gap-1.5">
+            <Plus className="w-3.5 h-3.5" /> Criar Usuário
           </Button>
         </div>
       </div>
@@ -126,20 +135,20 @@ export default function UsersPage() {
         )}
       </div>
 
-      {/* Invite Modal */}
-      {showInvite && (
+      {/* Create User Modal */}
+      {showCreate && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
           <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-md">
             <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-border">
               <div className="flex items-center gap-2">
                 <Plus className="w-4 h-4 text-primary" />
-                <h3 className="font-semibold text-foreground text-sm">Convidar Usuário</h3>
+                <h3 className="font-semibold text-foreground text-sm">Criar Usuário</h3>
               </div>
-              <button onClick={() => setShowInvite(false)} className="text-muted-foreground hover:text-foreground">
+              <button onClick={() => setShowCreate(false)} className="text-muted-foreground hover:text-foreground">
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <form onSubmit={handleInvite} className="p-6 space-y-4">
+            <form onSubmit={handleCreate} className="p-6 space-y-4">
               <div>
                 <Label className="text-xs text-muted-foreground mb-1.5 block">E-mail</Label>
                 <Input
@@ -152,34 +161,62 @@ export default function UsersPage() {
                 />
               </div>
               <div>
-                <Label className="text-xs text-muted-foreground mb-1.5 block">Função / Permissão</Label>
-                <div className="grid grid-cols-2 gap-2">
-                  {[{ value: 'admin', label: 'Administrador', icon: Shield, color: 'text-red-400' },
-                    { value: 'user', label: 'Usuário', icon: User, color: 'text-blue-400' }].map(opt => (
+                <Label className="text-xs text-muted-foreground mb-1.5 block">Senha</Label>
+                <Input
+                  type="password"
+                  value={form.password}
+                  onChange={e => setForm({ ...form, password: e.target.value })}
+                  placeholder="••••••••"
+                  className="bg-input border-border h-9 text-sm"
+                  required
+                />
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground mb-1.5 block">Confirmar Senha</Label>
+                <Input
+                  type="password"
+                  value={form.confirmPassword}
+                  onChange={e => setForm({ ...form, confirmPassword: e.target.value })}
+                  placeholder="••••••••"
+                  className="bg-input border-border h-9 text-sm"
+                  required
+                />
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground mb-1.5 block">Nível de Permissão</Label>
+                <div className="space-y-2">
+                  {[
+                    { value: 'admin', label: 'Administrador', desc: 'Acesso total ao sistema', icon: Shield, color: 'text-red-400' },
+                    { value: 'manager', label: 'Gerente', desc: 'Gerencia clientes e planos', icon: Users, color: 'text-orange-400' },
+                    { value: 'user', label: 'Usuário', desc: 'Acesso básico de visualização', icon: User, color: 'text-blue-400' }
+                  ].map(opt => (
                     <button
                       key={opt.value}
                       type="button"
                       onClick={() => setForm({ ...form, role: opt.value })}
-                      className={`flex items-center gap-2 p-3 rounded-xl border text-sm font-medium transition-all ${
+                      className={`w-full flex items-center gap-3 p-3 rounded-xl border text-sm transition-all ${
                         form.role === opt.value
                           ? 'border-primary bg-primary/10 text-primary'
                           : 'border-border text-muted-foreground hover:border-primary/40 hover:text-foreground'
                       }`}
                     >
-                      <opt.icon className={`w-4 h-4 ${form.role === opt.value ? 'text-primary' : opt.color}`} />
-                      {opt.label}
+                      <div className="w-9 h-9 rounded-lg bg-secondary flex items-center justify-center flex-shrink-0">
+                        <opt.icon className={`w-4 h-4 ${form.role === opt.value ? 'text-primary' : opt.color}`} />
+                      </div>
+                      <div className="flex-1 text-left">
+                        <p className="font-medium">{opt.label}</p>
+                        <p className="text-xs opacity-70">{opt.desc}</p>
+                      </div>
+                      {form.role === opt.value && <CheckCircle className="w-4 h-4 text-primary" />}
                     </button>
                   ))}
                 </div>
               </div>
-              <p className="text-xs text-muted-foreground bg-secondary/50 rounded-lg p-3">
-                Um e-mail de convite será enviado. O usuário criará sua senha ao aceitar.
-              </p>
               <div className="flex justify-end gap-2 pt-1">
-                <Button type="button" variant="outline" size="sm" onClick={() => setShowInvite(false)} className="border-border">Cancelar</Button>
-                <Button type="submit" size="sm" disabled={inviting} className="gap-2">
-                  {inviting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />}
-                  Enviar Convite
+                <Button type="button" variant="outline" size="sm" onClick={() => setShowCreate(false)} className="border-border">Cancelar</Button>
+                <Button type="submit" size="sm" disabled={creating} className="gap-2">
+                  {creating ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />}
+                  Criar Usuário
                 </Button>
               </div>
             </form>
