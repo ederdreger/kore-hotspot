@@ -23,9 +23,6 @@ import HotspotPlans from '@/pages/HotspotPlans';
 import HotspotLogin from '@/pages/HotspotLogin';
 import UsersPage from '@/pages/Users';
 import Login from '@/pages/Login';
-import Register from '@/pages/Register';
-import ForgotPassword from '@/pages/ForgotPassword';
-import ResetPassword from '@/pages/ResetPassword';
 
 // AuthenticatedApp: All admin routes are protected by ProtectedRoute
 const AuthenticatedApp = () => {
@@ -66,9 +63,6 @@ function App() {
           <Routes>
             {/* Rotas públicas de autenticação */}
             <Route path="/login" element={<Login />} />
-            <Route path="/register" element={<Register />} />
-            <Route path="/forgot-password" element={<ForgotPassword />} />
-            <Route path="/reset-password" element={<ResetPassword />} />
             {/* Captive Portal e Hotspot Login — standalone */}
             <Route path="/hotspot-login" element={<HotspotLogin />} />
             <Route path="/captive-portal" element={<CaptivePortal />} />
