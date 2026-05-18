@@ -7,6 +7,7 @@ const routeLabels = {
   '/clients': 'Clientes',
   '/prospects': 'Prospectos',
   '/plans': 'Planos de Velocidade',
+  '/hotspot-plans': 'Gestão de Planos Hotspot',
   '/vouchers': 'Vouchers & Trial',
   '/campaigns': 'Campanhas',
   '/logs': 'Logs de Auditoria',

@@ -19,6 +19,7 @@ import Settings from '@/pages/Settings';
 import CaptivePortal from '@/pages/CaptivePortal';
 import RadiusMonitor from '@/pages/RadiusMonitor';
 import APMonitor from '@/pages/APMonitor';
+import HotspotPlans from '@/pages/HotspotPlans';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -37,6 +38,7 @@ const AuthenticatedApp = () => {
   if (authError) {
     if (authError.type === 'user_not_registered') return <UserNotRegisteredError />;
     if (authError.type === 'auth_required') { navigateToLogin(); return null; }
+    // For unknown errors, still render the app (don't block on network/unknown errors)
   }
 
   return (
@@ -50,6 +52,7 @@ const AuthenticatedApp = () => {
         <Route path="/clients" element={<Clients />} />
         <Route path="/prospects" element={<Prospects />} />
         <Route path="/plans" element={<Plans />} />
+        <Route path="/hotspot-plans" element={<HotspotPlans />} />
         <Route path="/vouchers" element={<Vouchers />} />
         <Route path="/campaigns" element={<Campaigns />} />
         <Route path="/radius" element={<RadiusMonitor />} />
