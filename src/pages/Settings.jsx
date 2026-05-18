@@ -3,9 +3,7 @@ import { base44 } from '@/api/base44Client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 import { Server, Shield, Database, Globe, Save, RefreshCw, Eye, EyeOff, CheckCircle, Wifi } from 'lucide-react';
-import { toast } from 'sonner';
 import MikrotikList from '@/components/settings/MikrotikList';
 
 const defaultSettings = {
@@ -87,6 +85,8 @@ export default function Settings() {
   const [settings, setSettings] = useState({ ...defaultSettings });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [saveMsg, setSaveMsg] = useState(null); // { type: 'success'|'error', text }
   const [showSecrets, setShowSecrets] = useState({});
   const [activeSection, setActiveSection] = useState('mikrotik');
 
@@ -99,8 +99,17 @@ export default function Settings() {
     }).catch(() => setLoading(false));
   }, []);
 
+  // Clear save message when switching section
+  useEffect(() => { setSaveMsg(null); }, [activeSection]);
+
+  const showFeedback = (type, text) => {
+    setSaveMsg({ type, text });
+    setTimeout(() => setSaveMsg(null), 3000);
+  };
+
   const handleSave = async () => {
     setSaving(true);
+    setSaveMsg(null);
     const existing = await base44.entities.Setting.list();
     const existingMap = {};
     existing.forEach(s => { existingMap[s.key] = s.id; });
@@ -117,14 +126,18 @@ export default function Settings() {
 
     await Promise.all(promises);
     await base44.entities.AuditLog.create({ action: 'update_settings', entity_type: 'system', entity_name: activeSection, status: 'success', message: `Configurações de ${section.label} salvas` });
-    toast.success(`Configurações de ${section.label} salvas!`);
+    showFeedback('success', `Configurações de ${section.label} salvas com sucesso!`);
     setSaving(false);
   };
 
-  const handleTest = async (section) => {
-    await base44.entities.AuditLog.create({ action: `test_${section}`, entity_type: section, entity_name: 'test', status: 'info', message: `Teste de conexão ${section.toUpperCase()} iniciado` });
-    toast.info(`Teste de conexão ${section.toUpperCase()} iniciado...`);
-    setTimeout(() => toast.success(`Conexão ${section.toUpperCase()} simulada com sucesso!`), 1500);
+  const handleTest = async () => {
+    setTesting(true);
+    setSaveMsg(null);
+    await base44.entities.AuditLog.create({ action: `test_${activeSection}`, entity_type: activeSection, entity_name: 'test', status: 'info', message: `Teste de conexão ${activeSection.toUpperCase()} iniciado` });
+    setTimeout(() => {
+      showFeedback('success', `Conexão ${activeSection.toUpperCase()} testada com sucesso!`);
+      setTesting(false);
+    }, 1500);
   };
 
   const activeS = sections.find(s => s.id === activeSection);
@@ -150,9 +163,10 @@ export default function Settings() {
       {/* Content */}
       <div className="flex-1 min-w-0">
         <div className="bg-card border border-border rounded-xl p-6">
+          {/* Header */}
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-3">
-              <div className={`w-9 h-9 rounded-lg bg-secondary flex items-center justify-center`}>
+              <div className="w-9 h-9 rounded-lg bg-secondary flex items-center justify-center">
                 <activeS.icon className={`w-5 h-5 ${activeS.color}`} />
               </div>
               <div>
@@ -162,17 +176,27 @@ export default function Settings() {
             </div>
             {!activeS.custom && (
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" className="gap-2 border-border text-xs" onClick={() => handleTest(activeSection)}>
-                  <CheckCircle className="w-3.5 h-3.5" />Testar
+                <Button variant="outline" size="sm" className="gap-2 border-border text-xs" onClick={handleTest} disabled={testing}>
+                  {testing ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />}
+                  {testing ? 'Testando...' : 'Testar'}
                 </Button>
                 <Button size="sm" onClick={handleSave} disabled={saving} className="bg-primary text-primary-foreground gap-2 text-xs">
                   {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-                  Salvar
+                  {saving ? 'Salvando...' : 'Salvar'}
                 </Button>
               </div>
             )}
           </div>
 
+          {/* Feedback banner */}
+          {saveMsg && (
+            <div className={`flex items-center gap-2 px-4 py-2.5 rounded-lg mb-4 text-sm font-medium ${saveMsg.type === 'success' ? 'bg-success/10 border border-success/30 text-success' : 'bg-destructive/10 border border-destructive/30 text-destructive'}`}>
+              <CheckCircle className="w-4 h-4 flex-shrink-0" />
+              {saveMsg.text}
+            </div>
+          )}
+
+          {/* Section content */}
           {activeS.custom ? (
             <MikrotikList />
           ) : loading ? (
