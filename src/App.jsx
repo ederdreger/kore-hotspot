@@ -33,7 +33,7 @@ const AuthenticatedApp = () => {
       {/* Admin App with Layout — all routes protected */}
       <Route element={<AppLayout />}>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
-        <Route element={<ProtectedRoute unauthenticatedElement={<Navigate to="/hotspot-login" replace />} />}>
+        <Route element={<ProtectedRoute unauthenticatedElement={<Navigate to="/login" replace />} />}>
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/clients" element={<Clients />} />
           <Route path="/prospects" element={<Prospects />} />
