@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
+import { useAuth } from '@/lib/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -10,6 +11,7 @@ import MikrotikDashboard from './MikrotikDashboard';
 const EMPTY = { name: '', host: '', port: '22', user: 'admin', password: '', hotspot_interface: 'ether1', hotspot_network: '192.168.1.0/24' };
 
 export default function MikrotikList() {
+  const { getToken } = useAuth();
   const [mikrotiks, setMikrotiks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -81,6 +83,7 @@ export default function MikrotikList() {
         password: mt.password,
         hotspot_interface: mt.hotspot_interface,
         hotspot_network: mt.hotspot_network,
+        token: getToken(),
       });
       if (res.data?.success) {
         toast.success(`RADIUS configurado em ${mt.name} com sucesso!`);

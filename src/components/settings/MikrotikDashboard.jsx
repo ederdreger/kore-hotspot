@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { base44 } from '@/api/base44Client';
+import { useAuth } from '@/lib/AuthContext';
 import { Button } from '@/components/ui/button';
 import {
   X, Server, Cpu, Clock, Wifi, Activity, RefreshCw, CheckCircle,
@@ -37,6 +38,7 @@ const TestRow = ({ label, status, detail }) => {
 };
 
 export default function MikrotikDashboard({ mikrotik, onClose }) {
+  const { getToken } = useAuth();
   const [metrics, setMetrics] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -58,6 +60,7 @@ export default function MikrotikDashboard({ mikrotik, onClose }) {
         port: mikrotik.port,
         user: mikrotik.user,
         password: mikrotik.password,
+        token: getToken(),
       });
       setMetrics(response.data);
     } catch (err) {

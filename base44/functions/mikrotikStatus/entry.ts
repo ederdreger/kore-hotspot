@@ -1,6 +1,21 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 import { Client } from 'npm:ssh2@1.16.0';
 
+async function requireAdmin(base44, token) {
+  if (!token) throw new Error('Sessão administrativa não enviada');
+  const sessions = await base44.asServiceRole.entities.AdminSession.filter({ token });
+  const session = sessions?.[0];
+  if (!session || new Date(session.expires_at) < new Date()) throw new Error('Sessão administrativa expirada');
+  const users = await base44.asServiceRole.entities.AdminUser.filter({ email: session.email });
+  const user = users?.[0];
+  if (!user || user.status === 'inactive' || user.role === 'inactive') throw new Error('Usuário administrativo inativo');
+  return user;
+}
+
+function normalizeHost(host) {
+  return String(host || '').trim().replace(/^ssh:\/\//i, '').replace(/^https?:\/\//i, '').split('/')[0].split(':')[0];
+}
+
 function sshExec(host, port, username, password, command) {
   return new Promise((resolve, reject) => {
     const conn = new Client();
@@ -19,14 +34,16 @@ function sshExec(host, port, username, password, command) {
       });
     });
 
+    conn.on('keyboard-interactive', (name, instructions, lang, prompts, finish) => finish([password]));
     conn.on('error', err => { clearTimeout(timer); reject(err); });
 
     conn.connect({
-      host,
+      host: normalizeHost(host),
       port: parseInt(port) || 22,
       username,
       password,
-      readyTimeout: 8000,
+      tryKeyboard: true,
+      readyTimeout: 12000,
       algorithms: {
         cipher: ['aes256-cbc', 'aes128-cbc'],
         serverHostKey: ['ssh-rsa', 'rsa-sha2-256', 'rsa-sha2-512', 'ecdsa-sha2-nistp256', 'ecdsa-sha2-nistp384', 'ecdsa-sha2-nistp521'],
@@ -55,29 +72,33 @@ function parsePrint(output) {
 
 Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
-  const user = await base44.auth.me();
-  if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
-
   const body = await req.json().catch(() => ({}));
-  const { host, port = '22', user: sshUser = 'admin', password = '' } = body;
+  const { host, port = '22', user: sshUser = 'admin', password = '', token } = body;
+
+  try {
+    await requireAdmin(base44, token);
+  } catch (error) {
+    return Response.json({ error: error.message }, { status: 401 });
+  }
 
   if (!host) return Response.json({ error: 'host é obrigatório' }, { status: 400 });
 
   try {
     // Fetch system resources and hotspot active users in sequence
-    const resOutput = await sshExec(host, port, sshUser, password,
+    const cleanHost = normalizeHost(host);
+    const resOutput = await sshExec(cleanHost, port, sshUser, password,
       '/system resource print');
     const res = parsePrint(resOutput);
 
     let activeUsers = 0;
     let hotspotCount = 0;
     try {
-      const hotOutput = await sshExec(host, port, sshUser, password,
+      const hotOutput = await sshExec(cleanHost, port, sshUser, password,
         '/ip hotspot active print count-only');
       activeUsers = parseInt(hotOutput) || 0;
     } catch (_) {}
     try {
-      const hotspotList = await sshExec(host, port, sshUser, password,
+      const hotspotList = await sshExec(cleanHost, port, sshUser, password,
         '/ip hotspot print count-only');
       hotspotCount = parseInt(hotspotList) || 0;
     } catch (_) {}
@@ -96,7 +117,7 @@ Deno.serve(async (req) => {
   } catch (err) {
     let msg = err.message;
     if (msg.includes('Timeout') || msg.includes('timeout')) {
-      msg = `Timeout SSH em ${host}:${port} — verifique se a porta SSH está aberta e acessível`;
+      msg = `Timeout SSH em ${normalizeHost(host)}:${port} — verifique NAT/firewall e se essa porta está acessível pela internet`;
     } else if (msg.includes('refused') || msg.includes('ECONNREFUSED')) {
       msg = `Conexão SSH recusada em ${host}:${port} — verifique se o SSH está ativo no MikroTik`;
     } else if (msg.includes('Authentication') || msg.includes('auth')) {

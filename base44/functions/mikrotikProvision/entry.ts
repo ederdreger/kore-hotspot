@@ -1,6 +1,21 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 import { Client } from 'npm:ssh2@1.16.0';
 
+async function requireAdmin(base44, token) {
+  if (!token) throw new Error('Sessão administrativa não enviada');
+  const sessions = await base44.asServiceRole.entities.AdminSession.filter({ token });
+  const session = sessions?.[0];
+  if (!session || new Date(session.expires_at) < new Date()) throw new Error('Sessão administrativa expirada');
+  const users = await base44.asServiceRole.entities.AdminUser.filter({ email: session.email });
+  const user = users?.[0];
+  if (!user || user.status === 'inactive' || user.role === 'inactive') throw new Error('Usuário administrativo inativo');
+  return user;
+}
+
+function normalizeHost(host) {
+  return String(host || '').trim().replace(/^ssh:\/\//i, '').replace(/^https?:\/\//i, '').split('/')[0].split(':')[0];
+}
+
 function sshExec(host, port, username, password, commands) {
   return new Promise((resolve, reject) => {
     const conn = new Client();
@@ -30,13 +45,15 @@ function sshExec(host, port, username, password, commands) {
     };
 
     conn.on('ready', () => runNext(null, commands, 0));
+    conn.on('keyboard-interactive', (name, instructions, lang, prompts, finish) => finish([password]));
     conn.on('error', err => { clearTimeout(timer); reject(err); });
     conn.connect({
-      host,
+      host: normalizeHost(host),
       port: parseInt(port) || 22,
       username,
       password,
-      readyTimeout: 8000,
+      tryKeyboard: true,
+      readyTimeout: 12000,
       algorithms: {
         cipher: ['aes256-cbc', 'aes128-cbc'],
         serverHostKey: ['ssh-rsa', 'rsa-sha2-256', 'rsa-sha2-512', 'ecdsa-sha2-nistp256', 'ecdsa-sha2-nistp384', 'ecdsa-sha2-nistp521'],
@@ -54,17 +71,21 @@ function sshExec(host, port, username, password, commands) {
 
 Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
-  const user = await base44.auth.me();
-  if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
-
   const body = await req.json().catch(() => ({}));
   const {
-    host, port = '22', user: sshUser = 'admin', password = '',
+    host, port = '22', user: sshUser = 'admin', password = '', token,
     hotspot_interface = 'ether1',
     hotspot_network = '192.168.1.0/24',
     // RADIUS config (read from Settings if not provided directly)
     radius_host, radius_secret,
   } = body;
+
+  let adminUser;
+  try {
+    adminUser = await requireAdmin(base44, token);
+  } catch (error) {
+    return Response.json({ error: error.message }, { status: 401 });
+  }
 
   if (!host) return Response.json({ error: 'host é obrigatório' }, { status: 400 });
 
@@ -92,7 +113,8 @@ Deno.serve(async (req) => {
   ];
 
   try {
-    const results = await sshExec(host, port, sshUser, password, commands);
+    const cleanHost = normalizeHost(host);
+    const results = await sshExec(cleanHost, port, sshUser, password, commands);
 
     // Log to AuditLog
     await base44.asServiceRole.entities.AuditLog.create({
@@ -101,7 +123,7 @@ Deno.serve(async (req) => {
       entity_name: host,
       status: 'success',
       message: `RADIUS provisionado via SSH no MikroTik ${host} — servidor: ${rHost}`,
-      performed_by: user.email,
+      performed_by: adminUser.email,
     }).catch(() => {});
 
     return Response.json({
@@ -122,7 +144,7 @@ Deno.serve(async (req) => {
       entity_name: host,
       status: 'error',
       message: `Erro ao provisionar RADIUS no MikroTik ${host}: ${msg}`,
-      performed_by: user.email,
+      performed_by: adminUser.email,
     }).catch(() => {});
 
     return Response.json({ success: false, error: msg }, { status: 200 });

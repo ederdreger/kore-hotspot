@@ -79,13 +79,24 @@ async function pollAP(ap) {
   }
 }
 
+async function requireAdmin(base44, token) {
+  if (!token) throw new Error('Sessão administrativa não enviada');
+  const sessions = await base44.asServiceRole.entities.AdminSession.filter({ token });
+  const session = sessions?.[0];
+  if (!session || new Date(session.expires_at) < new Date()) throw new Error('Sessão administrativa expirada');
+  return session;
+}
+
 Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
-  const user = await base44.auth.me();
-  if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
-
   const body = await req.json().catch(() => ({}));
-  const { aps } = body;
+  const { aps, token } = body;
+
+  try {
+    await requireAdmin(base44, token);
+  } catch (error) {
+    return Response.json({ error: error.message }, { status: 401 });
+  }
 
   if (!aps || !Array.isArray(aps) || aps.length === 0) {
     return Response.json({ error: "aps array required" }, { status: 400 });

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { base44 } from '@/api/base44Client';
+import { useAuth } from '@/lib/AuthContext';
 import APHeatmapGrid from '@/components/ap/APHeatmapGrid';
 import APChannelAnalyzer from '@/components/ap/APChannelAnalyzer';
 import APAlertPanel from '@/components/ap/APAlertPanel';
@@ -13,6 +14,7 @@ import { Button } from '@/components/ui/button';
 const DEFAULT_APS = [];
 
 export default function APMonitor() {
+  const { getToken } = useAuth();
   const [aps, setAPs] = useState(DEFAULT_APS);
   const [loading, setLoading] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(new Date());
@@ -29,7 +31,7 @@ export default function APMonitor() {
     setLoading(true);
     setPollError(null);
     try {
-      const response = await base44.functions.invoke('mikrotikPoller', { aps });
+      const response = await base44.functions.invoke('mikrotikPoller', { aps, token: getToken() });
       const polled = response.data?.aps;
       if (polled && polled.length > 0) {
         setAPs(polled);
