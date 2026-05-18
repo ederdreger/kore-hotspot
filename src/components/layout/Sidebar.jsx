@@ -2,7 +2,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import {
   LayoutDashboard, Users, UserSearch, Zap, Ticket, Megaphone,
-  Settings, ScrollText, Wifi, ChevronRight, X, Radio
+  Settings, ScrollText, Wifi, ChevronRight, X, Radio, Signal
 } from 'lucide-react';
 
 const navItems = [
@@ -13,6 +13,7 @@ const navItems = [
   { label: 'Vouchers', icon: Ticket, path: '/vouchers' },
   { label: 'Campanhas', icon: Megaphone, path: '/campaigns' },
   { label: 'RADIUS Monitor', icon: Radio, path: '/radius', highlight: true },
+  { label: 'Monitor de APs', icon: Signal, path: '/ap-monitor', highlight: true },
   { label: 'Logs', icon: ScrollText, path: '/logs' },
   { label: 'Configurações', icon: Settings, path: '/settings' },
 ];
