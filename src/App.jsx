@@ -24,6 +24,12 @@ import HotspotPlans from '@/pages/HotspotPlans';
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
 
+  if (authError) {
+    if (authError.type === 'user_not_registered') return <UserNotRegisteredError />;
+    if (authError.type === 'auth_required') { navigateToLogin(); return null; }
+    // For unknown/network errors, fall through and render the app anyway
+  }
+
   if (isLoadingPublicSettings || isLoadingAuth) {
     return (
       <div className="fixed inset-0 flex items-center justify-center bg-background">
@@ -33,12 +39,6 @@ const AuthenticatedApp = () => {
         </div>
       </div>
     );
-  }
-
-  if (authError) {
-    if (authError.type === 'user_not_registered') return <UserNotRegisteredError />;
-    if (authError.type === 'auth_required') { navigateToLogin(); return null; }
-    // For unknown errors, still render the app (don't block on network/unknown errors)
   }
 
   return (
