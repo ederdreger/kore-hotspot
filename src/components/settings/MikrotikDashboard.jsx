@@ -53,12 +53,11 @@ export default function MikrotikDashboard({ mikrotik, onClose }) {
     else setLoading(true);
 
     try {
-      const response = await base44.functions.invoke('mikrotikPoller', {
+      const response = await base44.functions.invoke('mikrotikStatus', {
         host: mikrotik.host,
         port: mikrotik.port,
         user: mikrotik.user,
         password: mikrotik.password,
-        action: 'status',
       });
       setMetrics(response.data);
     } catch (err) {
