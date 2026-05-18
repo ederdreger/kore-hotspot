@@ -12,9 +12,8 @@ function computeSuggestions(aps) {
     const targets = underloaded
       .filter(t => t.id !== src.id)
       .sort((a, b) => {
-        const bandBonus = (t) => t.band === src.band ? 0 : 5;
-        const dist = (t) => Math.hypot(t.location.x - src.location.x, t.location.y - src.location.y);
-        return (dist(a) + bandBonus(a)) - (dist(b) + bandBonus(b));
+        const bandBonus = (t) => t.band === src.band ? 0 : 10;
+        return (a.utilization + bandBonus(a)) - (b.utilization + bandBonus(b));
       });
 
     if (!targets.length) return;
