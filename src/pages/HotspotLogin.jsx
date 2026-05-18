@@ -142,7 +142,9 @@ export default function HotspotLogin() {
             <Wifi className="w-10 h-10 text-primary" />
             <div className="absolute -inset-1 rounded-2xl bg-primary/5 blur-xl" />
           </div>
-          <h1 className="text-3xl font-bold text-foreground tracking-tight">Kore<span className="text-primary">HotSpot</span></h1>
+          <h1 className="text-3xl font-bold tracking-tight">
+            <span style={{ color: '#e53e3e' }}>Kore</span><span style={{ color: '#a0aec0' }}>-HotSpot</span>
+          </h1>
           <p className="text-muted-foreground text-sm mt-1">Acesso à Internet</p>
         </div>
 
