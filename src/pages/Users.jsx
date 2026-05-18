@@ -3,9 +3,8 @@ import { base44 } from '@/api/base44Client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Users, Plus, Trash2, RefreshCw, Shield, User, Mail, X, CheckCircle, Edit2, LogOut, Eye, EyeOff, AlertTriangle } from 'lucide-react';
+import { Users, Plus, Trash2, RefreshCw, Shield, User, Mail, X, CheckCircle, Edit2, LogOut, Eye, EyeOff } from 'lucide-react';
 import { toast } from 'sonner';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 
 const ROLE_LABELS = { admin: 'Administrador', manager: 'Gerente', user: 'Usuário' };
 const ROLE_COLORS = {
@@ -23,8 +22,6 @@ export default function UsersPage() {
   const [form, setForm] = useState({ email: '', password: '', confirmPassword: '', role: 'user' });
   const [creating, setCreating] = useState(false);
   const [updating, setUpdating] = useState(false);
-  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
-  const [pendingAction, setPendingAction] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -44,17 +41,14 @@ export default function UsersPage() {
     }
     setCreating(true);
     try {
-      // Create user directly via service role (no OTP required)
-      const defaultPassword = form.password;
-      await base44.auth.register({ email: form.email, password: defaultPassword });
+      // Call backend function to create verified user
+      const response = await base44.functions.invoke('createVerifiedUser', { 
+        email: form.email, 
+        password: form.password,
+        role: form.role
+      });
       
-      // Fetch and update role
-      const newUser = await base44.entities.User.filter({ email: form.email });
-      if (newUser && newUser.length > 0) {
-        await base44.entities.User.update(newUser[0].id, { role: form.role });
-      }
-      
-      toast.success(`Usuário ${form.email} criado com permissão ${form.role === 'admin' ? 'de Administrador' : form.role === 'manager' ? 'de Gerente' : 'de Usuário'}`);
+      toast.success(`Usuário ${form.email} criado com sucesso`);
       setShowCreate(false);
       setForm({ email: '', password: '', confirmPassword: '', role: 'user' });
       load();
@@ -97,38 +91,28 @@ export default function UsersPage() {
     }
   };
 
-  const confirmAction = (action, user) => {
-    setPendingAction({ action, user });
-    setShowConfirmDialog(true);
-  };
-
-  const executeAction = async () => {
-    if (!pendingAction) return;
-    
-    const { action, user } = pendingAction;
-    
+  const handleDelete = async (user) => {
+    if (!window.confirm(`Excluir o usuário ${user.email}? Esta ação não pode ser desfeita.`)) return;
     try {
-      if (action === 'delete') {
-        await base44.entities.User.delete(user.id);
-        toast.success('Usuário excluído com sucesso');
-      } else if (action === 'toggleStatus') {
-        const newStatus = user.role === 'inactive' ? 'user' : 'inactive';
-        await base44.entities.User.update(user.id, { role: newStatus });
-        toast.success(newStatus === 'inactive' ? 'Usuário inativado' : 'Usuário reativado');
-      } else if (action === 'edit') {
-        handleEdit(user);
-      }
+      await base44.entities.User.delete(user.id);
+      toast.success('Usuário excluído com sucesso');
       load();
     } catch (err) {
-      toast.error(`Erro: ${err.message}`);
-    } finally {
-      setShowConfirmDialog(false);
-      setPendingAction(null);
+      toast.error(`Erro ao excluir: ${err.message}`);
     }
   };
 
-  const handleDelete = (user) => confirmAction('delete', user);
-  const handleToggleStatus = (user) => confirmAction('toggleStatus', user);
+  const handleToggleStatus = async (user) => {
+    const newStatus = user.role === 'inactive' ? 'user' : 'inactive';
+    if (!window.confirm(`${newStatus === 'inactive' ? 'Inativar' : 'Reativar'} o usuário ${user.email}?`)) return;
+    try {
+      await base44.entities.User.update(user.id, { role: newStatus });
+      toast.success(newStatus === 'inactive' ? 'Usuário inativado' : 'Usuário reativado');
+      load();
+    } catch (err) {
+      toast.error(`Erro: ${err.message}`);
+    }
+  };
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
@@ -397,32 +381,6 @@ export default function UsersPage() {
           </div>
         </div>
       )}
-
-      {/* Confirmation Dialog */}
-      <AlertDialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
-        <AlertDialogContent className="bg-card border border-border">
-          <AlertDialogHeader>
-            <AlertDialogTitle className="text-foreground flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5 text-warning" />
-              Confirmar Ação
-            </AlertDialogTitle>
-            <AlertDialogDescription className="text-muted-foreground">
-              {pendingAction?.action === 'delete' && (
-                <>Tem certeza que deseja <strong>excluir</strong> o usuário <span className="font-semibold text-foreground">{pendingAction.user?.email}</span>? Esta ação não pode ser desfeita.</>
-              )}
-              {pendingAction?.action === 'toggleStatus' && (
-                <>Tem certeza que deseja <strong>{pendingAction.user?.role === 'inactive' ? 'reativar' : 'inativar'}</strong> o usuário <span className="font-semibold text-foreground">{pendingAction.user?.email}</span>?</>
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel className="border-border">Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={executeAction} className="bg-primary hover:bg-primary/90">
-              Confirmar
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }
