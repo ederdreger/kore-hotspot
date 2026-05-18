@@ -3,8 +3,8 @@ import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import PageNotFound from './lib/PageNotFound';
-import { AuthProvider, useAuth } from '@/lib/AuthContext';
-import UserNotRegisteredError from '@/components/UserNotRegisteredError';
+import { AuthProvider } from '@/lib/AuthContext';
+import ProtectedRoute from '@/components/ProtectedRoute';
 import AppLayout from '@/components/layout/AppLayout';
 
 // Pages
@@ -24,13 +24,7 @@ import HotspotLogin from '@/pages/HotspotLogin';
 import UsersPage from '@/pages/Users';
 
 const AuthenticatedApp = () => {
-  const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
-
-  if (authError) {
-    if (authError.type === 'user_not_registered') return <UserNotRegisteredError />;
-    if (authError.type === 'auth_required') { navigateToLogin(); return null; }
-    // For unknown/network errors, fall through and render the app anyway
-  }
+  // Auth state is handled by ProtectedRoute
 
   if (isLoadingPublicSettings || isLoadingAuth) {
     return (
@@ -48,21 +42,23 @@ const AuthenticatedApp = () => {
       {/* Captive Portal — standalone (no layout) */}
       <Route path="/captive-portal" element={<CaptivePortal />} />
 
-      {/* Admin App with Layout */}
+      {/* Admin App with Layout — all routes protected */}
       <Route element={<AppLayout />}>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/clients" element={<Clients />} />
-        <Route path="/prospects" element={<Prospects />} />
-        <Route path="/plans" element={<Plans />} />
-        <Route path="/hotspot-plans" element={<HotspotPlans />} />
-        <Route path="/vouchers" element={<Vouchers />} />
-        <Route path="/campaigns" element={<Campaigns />} />
-        <Route path="/radius" element={<RadiusMonitor />} />
-        <Route path="/ap-monitor" element={<APMonitor />} />
-        <Route path="/logs" element={<Logs />} />
-        <Route path="/settings" element={<Settings />} />
-        <Route path="/users" element={<UsersPage />} />
+        <Route element={<ProtectedRoute unauthenticatedElement={<Navigate to="/hotspot-login" replace />} />}>
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/clients" element={<Clients />} />
+          <Route path="/prospects" element={<Prospects />} />
+          <Route path="/plans" element={<Plans />} />
+          <Route path="/hotspot-plans" element={<HotspotPlans />} />
+          <Route path="/vouchers" element={<Vouchers />} />
+          <Route path="/campaigns" element={<Campaigns />} />
+          <Route path="/radius" element={<RadiusMonitor />} />
+          <Route path="/ap-monitor" element={<APMonitor />} />
+          <Route path="/logs" element={<Logs />} />
+          <Route path="/settings" element={<Settings />} />
+          <Route path="/users" element={<UsersPage />} />
+        </Route>
       </Route>
 
       <Route path="*" element={<PageNotFound />} />
