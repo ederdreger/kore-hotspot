@@ -3,7 +3,7 @@ import { base44 } from '@/api/base44Client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Users, Plus, Trash2, RefreshCw, Shield, User, Mail, X, CheckCircle } from 'lucide-react';
+import { Users, Plus, Trash2, RefreshCw, Shield, User, Mail, X, CheckCircle, Edit2, LogOut, Eye, EyeOff } from 'lucide-react';
 import { toast } from 'sonner';
 
 const ROLE_LABELS = { admin: 'Administrador', manager: 'Gerente', user: 'Usuário' };
@@ -17,8 +17,11 @@ export default function UsersPage() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
+  const [editingUser, setEditingUser] = useState(null);
   const [form, setForm] = useState({ email: '', password: '', confirmPassword: '', role: 'user' });
   const [creating, setCreating] = useState(false);
+  const [updating, setUpdating] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -51,6 +54,60 @@ export default function UsersPage() {
       toast.error(`Erro ao criar: ${err.message}`);
     } finally {
       setCreating(false);
+    }
+  };
+
+  const handleEdit = (user) => {
+    setEditingUser(user);
+    setForm({ email: user.email, password: '', confirmPassword: '', role: user.role });
+    setShowEdit(true);
+  };
+
+  const handleUpdate = async (e) => {
+    e.preventDefault();
+    if (!editingUser) return;
+    if (form.password && form.password !== form.confirmPassword) {
+      toast.error('As senhas não coincidem');
+      return;
+    }
+    setUpdating(true);
+    try {
+      const updateData = { role: form.role };
+      if (form.password) {
+        await base44.auth.updateMe({ email: form.email, password: form.password });
+      }
+      await base44.entities.User.update(editingUser.id, updateData);
+      toast.success('Usuário atualizado com sucesso');
+      setShowEdit(false);
+      setEditingUser(null);
+      setForm({ email: '', password: '', confirmPassword: '', role: 'user' });
+      load();
+    } catch (err) {
+      toast.error(`Erro ao atualizar: ${err.message}`);
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const handleDelete = async (user) => {
+    if (!confirm(`Tem certeza que deseja excluir o usuário ${user.email}?`)) return;
+    try {
+      await base44.entities.User.delete(user.id);
+      toast.success('Usuário excluído com sucesso');
+      load();
+    } catch (err) {
+      toast.error(`Erro ao excluir: ${err.message}`);
+    }
+  };
+
+  const handleToggleStatus = async (user) => {
+    const newStatus = user.role === 'inactive' ? 'user' : 'inactive';
+    try {
+      await base44.entities.User.update(user.id, { role: newStatus });
+      toast.success(newStatus === 'inactive' ? 'Usuário inativado' : 'Usuário reativado');
+      load();
+    } catch (err) {
+      toast.error(`Erro: ${err.message}`);
     }
   };
 
@@ -123,17 +180,115 @@ export default function UsersPage() {
                     <Mail className="w-3 h-3 flex-shrink-0" /> {u.email}
                   </p>
                 </div>
-                <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${ROLE_COLORS[u.role] || ROLE_COLORS.user}`}>
-                  {ROLE_LABELS[u.role] || u.role}
+                <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${u.role === 'inactive' ? 'bg-gray-500/10 text-gray-400 border border-gray-500/20' : ROLE_COLORS[u.role] || ROLE_COLORS.user}`}>
+                  {u.role === 'inactive' ? 'Inativo' : ROLE_LABELS[u.role] || u.role}
                 </span>
                 <p className="text-xs text-muted-foreground hidden sm:block">
                   {u.created_date ? new Date(u.created_date).toLocaleDateString('pt-BR') : '—'}
                 </p>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => handleEdit(u)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-primary transition-colors" title="Editar">
+                    <Edit2 className="w-3.5 h-3.5" />
+                  </button>
+                  <button onClick={() => handleToggleStatus(u)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-warning transition-colors" title={u.role === 'inactive' ? 'Reativar' : 'Inativar'}>
+                    {u.role === 'inactive' ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                  </button>
+                  <button onClick={() => handleDelete(u)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-destructive transition-colors" title="Excluir">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
             ))}
           </div>
         )}
       </div>
+
+      {/* Edit User Modal */}
+      {showEdit && editingUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-md">
+            <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-border">
+              <div className="flex items-center gap-2">
+                <Edit2 className="w-4 h-4 text-primary" />
+                <h3 className="font-semibold text-foreground text-sm">Editar Usuário</h3>
+              </div>
+              <button onClick={() => { setShowEdit(false); setEditingUser(null); }} className="text-muted-foreground hover:text-foreground">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <form onSubmit={handleUpdate} className="p-6 space-y-4">
+              <div>
+                <Label className="text-xs text-muted-foreground mb-1.5 block">E-mail</Label>
+                <Input
+                  type="email"
+                  value={form.email}
+                  onChange={e => setForm({ ...form, email: e.target.value })}
+                  placeholder="admin@exemplo.com"
+                  className="bg-input border-border h-9 text-sm"
+                  required
+                />
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground mb-1.5 block">Nova Senha (opcional)</Label>
+                <Input
+                  type="password"
+                  value={form.password}
+                  onChange={e => setForm({ ...form, password: e.target.value })}
+                  placeholder="Deixe em branco para manter a atual"
+                  className="bg-input border-border h-9 text-sm"
+                />
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground mb-1.5 block">Confirmar Nova Senha</Label>
+                <Input
+                  type="password"
+                  value={form.confirmPassword}
+                  onChange={e => setForm({ ...form, confirmPassword: e.target.value })}
+                  placeholder="••••••••"
+                  className="bg-input border-border h-9 text-sm"
+                />
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground mb-1.5 block">Nível de Permissão</Label>
+                <div className="space-y-2">
+                  {[
+                    { value: 'admin', label: 'Administrador', desc: 'Acesso total ao sistema', icon: Shield, color: 'text-red-400' },
+                    { value: 'manager', label: 'Gerente', desc: 'Gerencia clientes e planos', icon: Users, color: 'text-orange-400' },
+                    { value: 'user', label: 'Usuário', desc: 'Acesso básico de visualização', icon: User, color: 'text-blue-400' }
+                  ].map(opt => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setForm({ ...form, role: opt.value })}
+                      className={`w-full flex items-center gap-3 p-3 rounded-xl border text-sm transition-all ${
+                        form.role === opt.value
+                          ? 'border-primary bg-primary/10 text-primary'
+                          : 'border-border text-muted-foreground hover:border-primary/40 hover:text-foreground'
+                      }`}
+                    >
+                      <div className="w-9 h-9 rounded-lg bg-secondary flex items-center justify-center flex-shrink-0">
+                        <opt.icon className={`w-4 h-4 ${form.role === opt.value ? 'text-primary' : opt.color}`} />
+                      </div>
+                      <div className="flex-1 text-left">
+                        <p className="font-medium">{opt.label}</p>
+                        <p className="text-xs opacity-70">{opt.desc}</p>
+                      </div>
+                      {form.role === opt.value && <CheckCircle className="w-4 h-4 text-primary" />}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 pt-1">
+                <Button type="button" variant="outline" size="sm" onClick={() => { setShowEdit(false); setEditingUser(null); }} className="border-border">Cancelar</Button>
+                <Button type="submit" size="sm" disabled={updating} className="gap-2">
+                  {updating ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />}
+                  Salvar Alterações
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Create User Modal */}
       {showCreate && (
