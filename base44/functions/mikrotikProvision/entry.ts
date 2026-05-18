@@ -31,7 +31,18 @@ function sshExec(host, port, username, password, commands) {
 
     conn.on('ready', () => runNext(null, commands, 0));
     conn.on('error', err => { clearTimeout(timer); reject(err); });
-    conn.connect({ host, port: parseInt(port) || 22, username, password, readyTimeout: 8000 });
+    conn.connect({
+      host,
+      port: parseInt(port) || 22,
+      username,
+      password,
+      readyTimeout: 8000,
+      algorithms: {
+        cipher: ['aes128-ctr', 'aes192-ctr', 'aes256-ctr', '3des-cbc'],
+        serverHostKey: ['ssh-rsa', 'ssh-dss', 'ecdsa-sha2-nistp256', 'ecdsa-sha2-nistp384', 'ecdsa-sha2-nistp521'],
+        kex: ['diffie-hellman-group14-sha1', 'diffie-hellman-group1-sha1', 'ecdh-sha2-nistp256', 'ecdh-sha2-nistp384'],
+      },
+    });
   });
 }
 
