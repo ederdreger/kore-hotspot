@@ -17,15 +17,50 @@ export default function CaptivePortal() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!form.name || !form.email) return;
+    if (!form.name || !form.email || !form.cpf) return;
     setLoading(true);
     setStep('checking');
 
-    await new Promise(r => setTimeout(r, 1800));
+    let existingClient = null;
+    const cleanCpf = form.cpf.replace(/[^\d]/g, '');
 
-    // Simulate IXC check
-    const ixcClients = await base44.entities.Client.filter({ cpf: form.cpf }).catch(() => []);
-    const existingClient = ixcClients.find(c => c.status === 'active');
+    if (cleanCpf) {
+      // 1. Consulta no sistema local
+      const localClients = await base44.entities.Client.filter({ cpf: form.cpf }).catch(() => []);
+      existingClient = localClients.find(c => c.status === 'active');
+
+      // 2. Se não encontrou no sistema, consulta no IXC
+      if (!existingClient) {
+        try {
+          const ixcRes = await base44.functions.invoke('ixcConsultaCliente', { cpf: cleanCpf });
+          if (ixcRes.data && ixcRes.data.found && ixcRes.data.client?.status === 'active') {
+             const ixcData = ixcRes.data.client;
+             const radiusUser = `ixc-${ixcData.id}`;
+             
+             // Cadastra o cliente localmente como ativo (VIP)
+             existingClient = await base44.entities.Client.create({
+                name: ixcData.name || form.name,
+                cpf: form.cpf,
+                email: ixcData.email || form.email,
+                phone: ixcData.phone || form.phone,
+                status: 'active',
+                source: 'ixc',
+                ixc_id: String(ixcData.id),
+                radius_username: radiusUser,
+                radius_password: cleanCpf,
+             });
+             
+             await base44.entities.AuditLog.create({
+                action: 'ixc_client_sync', entity_type: 'client', entity_id: existingClient.id,
+                entity_name: existingClient.name, status: 'success',
+                message: `Cliente sincronizado do IXC via Captive Portal`
+             });
+          }
+        } catch (e) {
+          console.error("IXC Check error", e);
+        }
+      }
+    }
 
     if (existingClient) {
       // IXC client found — provision RADIUS
@@ -99,10 +134,10 @@ export default function CaptivePortal() {
                 </div>
               </div>
               <div>
-                <Label className="text-xs text-muted-foreground mb-1.5 block">CPF</Label>
+                <Label className="text-xs text-muted-foreground mb-1.5 block">CPF *</Label>
                 <div className="relative">
                   <CreditCard className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input value={form.cpf} onChange={e => setForm({ ...form, cpf: e.target.value })} placeholder="000.000.000-00" className="pl-9 bg-input border-border h-10 font-mono" />
+                  <Input value={form.cpf} onChange={e => setForm({ ...form, cpf: e.target.value })} placeholder="000.000.000-00" className="pl-9 bg-input border-border h-10 font-mono" required />
                 </div>
               </div>
               <div>
