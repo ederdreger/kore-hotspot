@@ -3,9 +3,8 @@ import { base44 } from '@/api/base44Client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Plus, Pencil, Trash2, Server, Eye, EyeOff, CheckCircle, RefreshCw, X, Wifi, LayoutDashboard, Terminal } from 'lucide-react';
+import { Plus, Pencil, Trash2, Server, Eye, EyeOff, CheckCircle, RefreshCw, X, Terminal } from 'lucide-react';
 import { toast } from 'sonner';
-import MikrotikDashboard from './MikrotikDashboard';
 import MikrotikScriptModal from './MikrotikScriptModal';
 
 const EMPTY = { name: '', host: '', port: '22', user: 'admin', password: '', hotspot_interface: 'ether1', hotspot_network: '192.168.1.0/24' };
@@ -18,7 +17,6 @@ export default function MikrotikList() {
   const [form, setForm] = useState({ ...EMPTY });
   const [saving, setSaving] = useState(false);
   const [showPass, setShowPass] = useState(false);
-  const [viewingMt, setViewingMt] = useState(null);
   const [scriptMt, setScriptMt] = useState(null);
   const [radiusSettings, setRadiusSettings] = useState({});
 
@@ -142,15 +140,13 @@ export default function MikrotikList() {
                 <p className="text-xs font-mono text-muted-foreground">{mt.host}:{mt.port} · {mt.user} · {mt.hotspot_interface}</p>
               </div>
               <div className="flex items-center gap-1 flex-shrink-0">
-                <button onClick={() => setViewingMt(mt)} className="p-1.5 rounded-lg hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors" title="Dashboard">
-                  <LayoutDashboard className="w-3.5 h-3.5" />
-                </button>
                 <button
                   onClick={() => setScriptMt(mt)}
-                  className="p-1.5 rounded-lg hover:bg-success/10 text-muted-foreground hover:text-success transition-colors"
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary transition-colors text-xs font-medium"
                   title="Gerar script para Terminal"
                 >
                   <Terminal className="w-3.5 h-3.5" />
+                  Gerar script
                 </button>
                 <button onClick={() => openEdit(mt)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-primary transition-colors" title="Editar">
                   <Pencil className="w-3.5 h-3.5" />
@@ -164,8 +160,7 @@ export default function MikrotikList() {
         </div>
       )}
 
-      {/* Dashboard Modal */}
-      {viewingMt && <MikrotikDashboard mikrotik={viewingMt} onClose={() => setViewingMt(null)} />}
+      {/* Script Modal */}
       {scriptMt && <MikrotikScriptModal mikrotik={scriptMt} radius={radiusSettings} onClose={() => setScriptMt(null)} />}
 
       {/* Modal Form */}

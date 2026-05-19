@@ -73,7 +73,7 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 
         <div className="p-6 space-y-4 overflow-y-auto max-h-[calc(90vh-88px)]">
           <div className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-xs text-warning">
-            O sistema não vai executar comandos remotamente. Você copia este script, entra no MikroTik com seu usuário e senha, cola no Terminal e executa.
+Fluxo correto: cadastre IP, usuário e senha apenas para registrar o equipamento; depois copie este script, entre no MikroTik manualmente e cole no Terminal. Nenhuma conexão SSH será feita pelo sistema.
           </div>
 
           <pre className="bg-background border border-border rounded-xl p-4 text-xs font-mono text-foreground overflow-x-auto whitespace-pre-wrap leading-relaxed">
