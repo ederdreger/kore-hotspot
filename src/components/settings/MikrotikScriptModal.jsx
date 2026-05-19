@@ -32,7 +32,7 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
     const finalHotspotInterface = vlanId ? vlanInterface : (bridgeName || physicalInterface);
     const vlanSection = vlanId ? `
 # Cria/atualiza VLAN ${vlanId} sobre ${bridgeName || physicalInterface}
-/interface vlan remove [find where name="${vlanInterface}"]
+:do { /interface vlan remove [find where name="${vlanInterface}"] } on-error={}
 /interface vlan add name="${vlanInterface}" interface="${bridgeName || physicalInterface}" vlan-id=${vlanId} comment="Kore-HotSpot VLAN" disabled=no` : '';
     const bridgeSection = bridgeName ? `
 # Cria/atualiza bridge e vincula a porta fisica ${physicalInterface}
@@ -47,12 +47,11 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
     const vpnSection = mikrotik.vpn_enabled ? `
 # --- VPN L2TP/IPsec CLIENT ---
 # Conecta o equipamento na Matriz (VPN)
-/ppp profile remove [find where name="kore-vpn-profile"]
-/ppp profile add name="kore-vpn-profile" use-upnp=no
-/interface l2tp-client remove [find where name="l2tp-vpn"]
-/interface l2tp-client add connect-to="${radius.vpn_server_host || ''}" name="l2tp-vpn" user="${mikrotik.vpn_user}" password="${mikrotik.vpn_password}" profile="kore-vpn-profile" use-ipsec=yes ipsec-secret="${radius.vpn_ipsec_secret || ''}" disabled=no
-/ip route remove [find where comment="Rota Radius via VPN"]
-/ip route add dst-address=${radiusHost} gateway="l2tp-vpn" comment="Rota Radius via VPN"
+:do { /interface l2tp-client remove [find name="l2tp-vpn"] } on-error={}
+:do { /ip route remove [find comment="Rota Radius via VPN"] } on-error={}
+
+/interface l2tp-client add connect-to="${radius.vpn_server_host || ''}" name="l2tp-vpn" user="${mikrotik.vpn_user}" password="${mikrotik.vpn_password}" profile="default" use-ipsec=yes ipsec-secret="${radius.vpn_ipsec_secret || ''}" disabled=no
+/ip route add dst-address=${radiusHost}/32 gateway="l2tp-vpn" comment="Rota Radius via VPN"
 # -----------------------------
 ` : '';
 
@@ -60,13 +59,13 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 # Cole TODO o script no Terminal do MikroTik. Não cole linha por linha.
 
 # Limpeza de itens quebrados criados por scripts anteriores
-/interface vlan remove [find where comment="Kore-HotSpot VLAN"]
-/ip firewall filter remove [find where comment~"Kore-HotSpot allow"]
-/radius remove [find where comment="${radiusName}"]
-/ip hotspot remove [find where name="${hotspotName}"]
-/ip hotspot profile remove [find where name="${profileName}"]
-/interface l2tp-client remove [find where name="l2tp-vpn"]
-/ppp profile remove [find where name="kore-vpn-profile"]
+:do { /interface vlan remove [find where comment="Kore-HotSpot VLAN"] } on-error={}
+:do { /ip firewall filter remove [find where comment~"Kore-HotSpot allow"] } on-error={}
+:do { /radius remove [find where comment="${radiusName}"] } on-error={}
+:do { /ip hotspot remove [find where name="${hotspotName}"] } on-error={}
+:do { /ip hotspot profile remove [find where name="${profileName}"] } on-error={}
+:do { /interface l2tp-client remove [find where name="l2tp-vpn"] } on-error={}
+:do { /ppp profile remove [find where name="kore-vpn-profile"] } on-error={}
 
 # Valida porta fisica
 :if ([:len [/interface find where name="${physicalInterface}"]] = 0) do={ :error "ERRO: interface fisica ${physicalInterface} nao encontrada" }
@@ -86,14 +85,6 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 /ip firewall filter move [find where comment="Kore-HotSpot allow SNMP UDP 161"] destination=0
 /ip firewall filter move [find where comment="Kore-HotSpot allow established"] destination=0
 ${bridgeSection}${vlanSection}
-${vpnSection}
-# RADIUS Hotspot
-/radius add service=hotspot address=${radiusHost} secret="${radiusSecret}" authentication-port=1812 accounting-port=1813 timeout=3s disabled=no comment="${radiusName}"
-
-# Perfil e servidor Hotspot na interface final ${finalHotspotInterface}
-/ip hotspot profile add name="${profileName}" use-radius=yes radius-accounting=yes login-by=http-chap,http-pap,cookie html-directory=hotspot
-/ip hotspot add name="${hotspotName}" interface="${finalHotspotInterface}" profile="${profileName}" disabled=no
-
 ${vpnSection}
 # RADIUS Hotspot
 /radius add service=hotspot address=${radiusHost} secret="${radiusSecret}" authentication-port=1812 accounting-port=1813 timeout=3s disabled=no comment="${radiusName}"
