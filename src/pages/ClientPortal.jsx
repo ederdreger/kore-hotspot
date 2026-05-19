@@ -41,18 +41,28 @@ export default function ClientPortal() {
   const handleCheckout = async (plan) => {
     setProcessing(true);
     try {
-      // Endpoint to be created after Stripe installation
-      const res = await base44.functions.invoke('createStripeCheckout', {
+      // Como o gateway oficial foi ignorado, faremos uma simulação de pagamento via PIX que libera o acesso instantaneamente.
+      toast.info(`Simulando pagamento PIX para o plano ${plan.name}...`);
+      
+      const res = await base44.functions.invoke('renewClientPlan', {
          clientId: client.id,
          planId: plan.id
       });
-      if (res.data && res.data.url) {
-         window.location.href = res.data.url;
+      
+      if (res.data.success) {
+         toast.success(res.data.message);
+         // Atualiza o cliente localmente para refletir a mudança
+         setClient({
+           ...client,
+           status: 'active',
+           plan_id: plan.id,
+           plan_name: plan.name
+         });
       } else {
-         toast.info("Aguardando aprovação e configuração do Gateway de Pagamento pelo administrador.");
+         toast.error(res.data.error || "Erro ao processar renovação.");
       }
     } catch (e) {
-      toast.info("Aguardando aprovação e configuração do Gateway de Pagamento pelo administrador.");
+      toast.error(e.response?.data?.error || "Erro de comunicação com o servidor.");
     }
     setProcessing(false);
   };
