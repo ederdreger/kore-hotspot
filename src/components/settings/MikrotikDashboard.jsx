@@ -76,7 +76,7 @@ export default function MikrotikDashboard({ mikrotik, onClose }) {
         active_users: null,
         board_name: null,
         version: null,
-        error: err?.response?.data?.snmp_error || err?.response?.data?.error || 'Não foi possível coletar via SNMP no MikroTik',
+        error: err?.response?.data?.snmp_error || err?.response?.data?.error || 'Não foi possível coletar via SSH no MikroTik',
       });
     } finally {
       setLoading(false);

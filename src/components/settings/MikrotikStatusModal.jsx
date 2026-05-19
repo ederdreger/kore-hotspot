@@ -40,7 +40,7 @@ export default function MikrotikStatusModal({ mikrotik, token, onClose }) {
       setStatus({
         online: false,
         snmp_connected: false,
-        snmp_error: error?.response?.status === 504 ? 'A consulta demorou demais. Verifique se o IP/porta SNMP estão acessíveis pela internet.' : 'Falha ao consultar MikroTik',
+        error: error?.response?.status === 504 ? 'A consulta demorou demais via SSH. Verifique IP e porta.' : (error?.response?.data?.error || 'Falha ao consultar MikroTik via SSH'),
         ping: { online: null },
         ssh: { reachable: null, port: mikrotik.port || '22' },
       });
@@ -51,7 +51,7 @@ export default function MikrotikStatusModal({ mikrotik, token, onClose }) {
   useEffect(() => { checkStatus(); }, []);
 
   const online = status?.online || status?.connected;
-  const snmpOk = status?.snmp_connected && !status?.snmp_error;
+  const sshOk = online && !status?.error;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
@@ -77,7 +77,7 @@ export default function MikrotikStatusModal({ mikrotik, token, onClose }) {
           ) : (
             <div className={`rounded-xl border p-4 text-sm flex gap-3 ${online ? 'border-success/30 bg-success/10 text-success' : 'border-destructive/30 bg-destructive/10 text-destructive'}`}>
               {online ? <CheckCircle className="w-4 h-4 mt-0.5 flex-shrink-0" /> : <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />}
-              <span>{online ? 'Comunicação estabelecida com sucesso.' : (status?.error || status?.snmp_error || 'Equipamento sem resposta. Verifique as credenciais e porta.')}</span>
+              <span>{online ? 'Comunicação estabelecida com sucesso.' : (status?.error || 'Equipamento sem resposta. Verifique as credenciais SSH.')}</span>
             </div>
           )}
 

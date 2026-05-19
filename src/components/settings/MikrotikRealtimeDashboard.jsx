@@ -15,18 +15,18 @@ function MonitorCard({ device, status }) {
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-sm font-semibold text-foreground truncate">{device.name}</p>
-          <p className="text-xs font-mono text-muted-foreground truncate">{device.host}:{device.snmp_port || '161'} · SNMP</p>
+          <p className="text-xs font-mono text-muted-foreground truncate">{device.host}:{device.port || '22'} · SSH</p>
         </div>
         <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium border ${online ? 'bg-success/10 text-success border-success/30' : 'bg-destructive/10 text-destructive border-destructive/30'}`}>
           <span className={`w-1.5 h-1.5 rounded-full ${online ? 'bg-success animate-pulse' : 'bg-destructive'}`} />
-          {status?.loading ? 'Lendo...' : online ? (snmpOk ? 'Online + SNMP' : 'Online') : 'Offline'}
+          {status?.loading ? 'Lendo...' : online ? 'Online' : 'Offline'}
         </span>
       </div>
 
-      {status?.snmp_error ? (
+      {status?.error || status?.snmp_error ? (
         <div className="flex items-start gap-2 text-xs text-warning bg-warning/10 border border-warning/20 rounded-lg p-2">
           <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
-          <span className="line-clamp-2">{status.snmp_error}</span>
+          <span className="line-clamp-2">{status.error || status.snmp_error}</span>
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-2 text-xs">
@@ -70,13 +70,13 @@ export default function MikrotikRealtimeDashboard({ devices, token }) {
         const response = await base44.functions.invoke('mikrotikStatus', {
           host: device.host,
           port: device.port || '22',
-          snmp_port: device.snmp_port || '161',
-          snmp_community: device.snmp_community || 'public',
+          user: device.user || 'admin',
+          password: device.password || '',
           token,
         });
         return [device._id, response.data];
       } catch (error) {
-        return [device._id, { online: false, snmp_connected: false, snmp_error: error?.response?.status === 504 ? 'Consulta excedeu o tempo limite' : (error?.response?.data?.error || 'Falha ao consultar MikroTik') }];
+        return [device._id, { online: false, error: error?.response?.status === 504 ? 'Consulta excedeu o tempo limite' : (error?.response?.data?.error || 'Falha ao consultar MikroTik via SSH') }];
       }
     }));
 
@@ -106,7 +106,7 @@ export default function MikrotikRealtimeDashboard({ devices, token }) {
           <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
             <Activity className="w-4 h-4 text-primary" /> Monitoramento em tempo real
           </h3>
-          <p className="text-xs text-muted-foreground">Coleta via SNMP a cada 30 segundos, sem acesso SSH</p>
+          <p className="text-xs text-muted-foreground">Coleta via SSH a cada 30 segundos</p>
         </div>
         <Button variant="outline" size="sm" onClick={loadStatuses} disabled={refreshing} className="gap-2 border-border">
           <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} /> Atualizar agora
