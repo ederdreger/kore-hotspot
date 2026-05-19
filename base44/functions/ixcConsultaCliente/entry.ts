@@ -32,10 +32,18 @@ Deno.serve(async (req) => {
             }
         }
         
+        // Em muitas versões do IXC o CPF fica formatado
+        let formattedCpf = cleanCpf;
+        if (cleanCpf.length === 11) {
+            formattedCpf = cleanCpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+        } else if (cleanCpf.length === 14) {
+            formattedCpf = cleanCpf.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
+        }
+
         const payload = {
             qtype: 'cliente.cnpj_cpf',
-            query: cleanCpf,
-            oper: '=',
+            query: formattedCpf,
+            oper: 'L',
             page: '1',
             rp: '10',
             sortname: 'cliente.id',
@@ -76,7 +84,7 @@ Deno.serve(async (req) => {
             });
         }
         
-        return Response.json({ found: false });
+        return Response.json({ found: false, raw_ixc_response: data, cleanCpf });
     } catch (error) {
         return Response.json({ found: false, error: error.message }, { status: 500 });
     }
