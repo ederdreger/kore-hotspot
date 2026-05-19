@@ -52,7 +52,7 @@ function sshExec(host, port, username, password, commands) {
       tryKeyboard: true,
       readyTimeout: 12000,
       algorithms: {
-        cipher: ['aes256-cbc', 'aes128-cbc'],
+        cipher: ['aes128-ctr', 'aes192-ctr', 'aes256-ctr', 'aes128-cbc', 'aes192-cbc', 'aes256-cbc'],
         serverHostKey: ['ssh-rsa', 'rsa-sha2-256', 'rsa-sha2-512', 'ecdsa-sha2-nistp256', 'ecdsa-sha2-nistp384', 'ecdsa-sha2-nistp521'],
         kex: [
           'curve25519-sha256', 'curve25519-sha256@libssh.org',

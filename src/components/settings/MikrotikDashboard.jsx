@@ -43,8 +43,8 @@ export default function MikrotikDashboard({ mikrotik, onClose }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [tests, setTests] = useState([
-    { id: 'ping', label: 'Conectividade SSH', status: 'idle', detail: null },
-    { id: 'api', label: 'Autenticação SSH (porta ' + (mikrotik.port || '22') + ')', status: 'idle', detail: null },
+    { id: 'snmp', label: 'Coleta SNMP', status: 'idle', detail: null },
+    { id: 'system', label: 'Dados do sistema', status: 'idle', detail: null },
     { id: 'hotspot', label: 'Hotspot Ativo', status: 'idle', detail: null },
     { id: 'users', label: 'Usuários Conectados', status: 'idle', detail: null },
   ]);
@@ -58,8 +58,8 @@ export default function MikrotikDashboard({ mikrotik, onClose }) {
       const response = await base44.functions.invoke('mikrotikStatus', {
         host: mikrotik.host,
         port: mikrotik.port,
-        user: mikrotik.user,
-        password: mikrotik.password,
+        snmp_port: mikrotik.snmp_port || '161',
+        snmp_community: mikrotik.snmp_community || 'public',
         token: getToken(),
       });
       setMetrics(response.data);
@@ -74,7 +74,7 @@ export default function MikrotikDashboard({ mikrotik, onClose }) {
         active_users: null,
         board_name: null,
         version: null,
-        error: err?.response?.data?.error || 'Não foi possível conectar ao MikroTik',
+        error: err?.response?.data?.snmp_error || err?.response?.data?.error || 'Não foi possível coletar via SNMP no MikroTik',
       });
     } finally {
       setLoading(false);
@@ -86,7 +86,7 @@ export default function MikrotikDashboard({ mikrotik, onClose }) {
 
   const runTests = async () => {
     setTestRunning(true);
-    const steps = ['ping', 'api', 'hotspot', 'users'];
+    const steps = ['snmp', 'system', 'hotspot', 'users'];
 
     for (const id of steps) {
       setTests(prev => prev.map(t => t.id === id ? { ...t, status: 'running', detail: null } : t));
@@ -95,12 +95,12 @@ export default function MikrotikDashboard({ mikrotik, onClose }) {
       let status = 'ok';
       let detail = null;
 
-      if (id === 'ping') {
+      if (id === 'snmp') {
         status = isOnline ? 'ok' : 'error';
-        detail = isOnline ? 'SSH respondeu' : 'Host inacessível';
-      } else if (id === 'api') {
+        detail = isOnline ? `SNMP ${mikrotik.snmp_port || '161'} respondeu` : 'SNMP sem resposta';
+      } else if (id === 'system') {
         status = isOnline ? 'ok' : 'error';
-        detail = isOnline ? 'Autenticado' : `Porta ${mikrotik.port} sem resposta válida`;
+        detail = isOnline ? 'Métricas coletadas' : (metrics?.snmp_error || 'Sem dados');
       } else if (id === 'hotspot') {
         status = isOnline ? 'ok' : 'error';
         detail = isOnline ? `Interface: ${mikrotik.hotspot_interface}` : 'Indisponível';
@@ -117,7 +117,7 @@ export default function MikrotikDashboard({ mikrotik, onClose }) {
     else toast.error('Falha em alguns testes');
   };
 
-  const isOnline = !loading && metrics?.connected === true && !metrics?.error;
+  const isOnline = !loading && metrics?.snmp_connected === true && !metrics?.error;
   const cpuPercent = isOnline ? (metrics?.cpu_load ?? null) : null;
   const memUsed = isOnline && metrics?.total_memory && metrics?.free_memory
     ? Math.round(((metrics.total_memory - metrics.free_memory) / metrics.total_memory) * 100)
@@ -134,7 +134,7 @@ export default function MikrotikDashboard({ mikrotik, onClose }) {
             </div>
             <div>
               <h3 className="font-semibold text-foreground text-sm">{mikrotik.name}</h3>
-              <p className="text-xs font-mono text-muted-foreground">{mikrotik.host}:{mikrotik.port || '22'} · SSH</p>
+              <p className="text-xs font-mono text-muted-foreground">{mikrotik.host} · SNMP {mikrotik.snmp_port || '161'}</p>
             </div>
             {/* Status pill */}
             <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${
@@ -159,10 +159,10 @@ export default function MikrotikDashboard({ mikrotik, onClose }) {
 
         <div className="p-6 space-y-6">
           {/* Error banner */}
-          {!loading && metrics?.error && (
+          {!loading && (metrics?.error || metrics?.snmp_error) && (
             <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-destructive/10 border border-destructive/30 text-destructive text-sm">
               <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-              <span>{metrics.error}</span>
+              <span>{metrics.error || metrics.snmp_error}</span>
             </div>
           )}
 
