@@ -6,25 +6,7 @@ import RadiusStatsBar from '@/components/radius/RadiusStatsBar';
 import { RefreshCw, Radio } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
-// Simulated RADIUS accounting sessions (in production these come from FreeRADIUS SQL)
-function generateSessions(clients) {
-  const plans = ['Trial 5M', 'Básico 10MB', 'Padrão 50MB', 'Premium 100MB'];
-  const statuses = ['active', 'active', 'active', 'active', 'quota_exceeded', 'active', 'active', 'warning'];
-  const base = clients.length > 0 ? clients.slice(0, 8) : [];
 
-  const synthetic = [
-    { id: 's1', username: 'joao.silva', fullName: 'João Silva', nasIp: '10.0.1.1', framedIp: '192.168.1.101', macAddress: '00:11:22:33:44:55', planName: 'Padrão 50MB', startTime: new Date(Date.now() - 8100000), downloadMb: 1842, uploadMb: 312, downloadRate: 24.5, uploadRate: 4.2, sessionTime: '2h 15m', status: 'active', quotaGb: 50 },
-    { id: 's2', username: 'maria.santos', fullName: 'Maria Santos', nasIp: '10.0.1.1', framedIp: '192.168.1.102', macAddress: '00:11:22:33:44:56', planName: 'Premium 100MB', startTime: new Date(Date.now() - 2700000), downloadMb: 654, uploadMb: 98, downloadRate: 61.3, uploadRate: 12.8, sessionTime: '45m', status: 'active', quotaGb: 100 },
-    { id: 's3', username: 'trial-a3f2', fullName: 'Trial-A3F2', nasIp: '10.0.1.2', framedIp: '192.168.1.150', macAddress: '00:11:22:33:44:57', planName: 'Trial 5M', startTime: new Date(Date.now() - 1080000), downloadMb: 142, uploadMb: 28, downloadRate: 4.8, uploadRate: 0.9, sessionTime: '18m', status: 'active', quotaGb: 0.5 },
-    { id: 's4', username: 'carlos.lima', fullName: 'Carlos Lima', nasIp: '10.0.1.1', framedIp: '192.168.1.103', macAddress: '00:11:22:33:44:58', planName: 'Padrão 50MB', startTime: new Date(Date.now() - 18120000), downloadMb: 48200, uploadMb: 9140, downloadRate: 0.3, uploadRate: 0.1, sessionTime: '5h 02m', status: 'quota_exceeded', quotaGb: 50 },
-    { id: 's5', username: 'ana.costa', fullName: 'Ana Costa', nasIp: '10.0.1.2', framedIp: '192.168.1.104', macAddress: '00:11:22:33:44:59', planName: 'Básico 10MB', startTime: new Date(Date.now() - 3600000), downloadMb: 3210, uploadMb: 581, downloadRate: 8.1, uploadRate: 1.4, sessionTime: '1h 00m', status: 'warning', quotaGb: 10 },
-    { id: 's6', username: 'trial-b7c1', fullName: 'Trial-B7C1', nasIp: '10.0.1.2', framedIp: '192.168.1.151', macAddress: '00:11:22:33:44:60', planName: 'Trial 5M', startTime: new Date(Date.now() - 300000), downloadMb: 28, uploadMb: 5, downloadRate: 4.2, uploadRate: 0.7, sessionTime: '5m', status: 'active', quotaGb: 0.5 },
-    { id: 's7', username: 'pedro.alves', fullName: 'Pedro Alves', nasIp: '10.0.1.1', framedIp: '192.168.1.105', macAddress: '00:11:22:33:44:61', planName: 'Premium 100MB', startTime: new Date(Date.now() - 5400000), downloadMb: 12480, uploadMb: 2340, downloadRate: 88.4, uploadRate: 21.6, sessionTime: '1h 30m', status: 'active', quotaGb: 100 },
-    { id: 's8', username: 'lucia.ferr', fullName: 'Lúcia Ferreira', nasIp: '10.0.1.3', framedIp: '192.168.1.106', macAddress: '00:11:22:33:44:62', planName: 'Básico 10MB', startTime: new Date(Date.now() - 900000), downloadMb: 890, uploadMb: 142, downloadRate: 9.8, uploadRate: 1.6, sessionTime: '15m', status: 'active', quotaGb: 10 },
-  ];
-
-  return synthetic;
-}
 
 export default function RadiusMonitor() {
   const [sessions, setSessions] = useState([]);
@@ -38,12 +20,10 @@ export default function RadiusMonitor() {
     setLoading(true);
     const cls = await base44.entities.Client.list('-created_date', 50).catch(() => []);
     setClients(cls);
-    // Simulate slight real-time variation
-    const sess = generateSessions(cls).map(s => ({
-      ...s,
-      downloadRate: parseFloat((s.downloadRate * (0.85 + Math.random() * 0.3)).toFixed(1)),
-      uploadRate: parseFloat((s.uploadRate * (0.85 + Math.random() * 0.3)).toFixed(1)),
-    }));
+    
+    // In production these will come from FreeRADIUS SQL or API
+    // For now we set it to empty so test data is cleared
+    const sess = [];
     setSessions(sess);
     setLastRefresh(new Date());
     setLoading(false);

@@ -1,7 +1,7 @@
 import { cn } from '@/lib/utils';
 import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
 
-export default function StatCard({ title, value, subtitle, icon: Icon, color = 'primary', trend, trendValue }) {
+export default function StatCard({ title, value, subtitle, icon: Icon, color = 'primary', trend, trendValue, onClick }) {
   const colorMap = {
     primary: 'text-primary bg-primary/10 border-primary/20',
     success: 'text-success bg-success/10 border-success/20',
@@ -14,7 +14,13 @@ export default function StatCard({ title, value, subtitle, icon: Icon, color = '
   const trendColor = trend === 'up' ? 'text-success' : trend === 'down' ? 'text-destructive' : 'text-muted-foreground';
 
   return (
-    <div className="bg-card border border-border rounded-xl p-5 hover:border-primary/30 transition-all duration-200">
+    <div 
+      onClick={onClick}
+      className={cn(
+        "bg-card border border-border rounded-xl p-5 transition-all duration-200",
+        onClick ? "cursor-pointer hover:border-primary/50 hover:shadow-md active:scale-[0.98]" : "hover:border-primary/30"
+      )}
+    >
       <div className="flex items-start justify-between mb-3">
         <div className={cn("w-10 h-10 rounded-lg border flex items-center justify-center", colorMap[color])}>
           <Icon className="w-5 h-5" />

@@ -9,11 +9,13 @@ import { ptBR } from 'date-fns/locale';
 import ConversionFunnelChart from '@/components/charts/ConversionFunnelChart';
 import BandwidthByPlanChart from '@/components/charts/BandwidthByPlanChart';
 import HotspotHeatmap from '@/components/charts/HotspotHeatmap';
+import { useNavigate } from 'react-router-dom';
 
 const trafficData = [];
 const onlineUsers = [];
 
 export default function Dashboard() {
+  const navigate = useNavigate();
   const [clients, setClients] = useState([]);
   const [prospects, setProspects] = useState([]);
   const [plans, setPlans] = useState([]);
@@ -45,10 +47,10 @@ export default function Dashboard() {
     <div className="space-y-6">
       {/* Stats Row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard title="Clientes Ativos" value={activeClients} subtitle={`${trialClients} em trial`} icon={Users} color="primary" trend="up" trendValue="+5%" />
-        <StatCard title="Prospectos" value={newProspects} subtitle="Novos este mês" icon={UserSearch} color="info" trend="up" trendValue="+12%" />
-        <StatCard title="Online Agora" value={onlineUsers.length} subtitle="2 em trial" icon={Wifi} color="success" />
-        <StatCard title="Vouchers" value={availableVouchers} subtitle="Disponíveis" icon={Ticket} color="warning" />
+        <StatCard title="Clientes Ativos" value={activeClients} subtitle={`${trialClients} em trial`} icon={Users} color="primary" trend="up" trendValue="+5%" onClick={() => navigate('/clients')} />
+        <StatCard title="Prospectos" value={newProspects} subtitle="Novos este mês" icon={UserSearch} color="info" trend="up" trendValue="+12%" onClick={() => navigate('/prospects')} />
+        <StatCard title="Online Agora" value={onlineUsers.length} subtitle="2 em trial" icon={Wifi} color="success" onClick={() => navigate('/radius')} />
+        <StatCard title="Vouchers" value={availableVouchers} subtitle="Disponíveis" icon={Ticket} color="warning" onClick={() => navigate('/vouchers')} />
       </div>
 
       {/* Main Charts */}

@@ -63,7 +63,13 @@ export default function MikrotikRealtimeDashboard({ devices, token }) {
   const loadStatuses = async () => {
     if (!devices.length) return;
     setRefreshing(true);
-    setStatuses(Object.fromEntries(devices.map(device => [device._id, { loading: true }])));
+    setStatuses(prev => {
+      const next = { ...prev };
+      devices.forEach(d => {
+        next[d._id] = { ...(next[d._id] || {}), loading: true };
+      });
+      return next;
+    });
 
     const results = await Promise.all(devices.map(async (device) => {
       try {
@@ -80,7 +86,13 @@ export default function MikrotikRealtimeDashboard({ devices, token }) {
       }
     }));
 
-    setStatuses(Object.fromEntries(results));
+    setStatuses(prev => {
+      const next = { ...prev };
+      results.forEach(([id, data]) => {
+        next[id] = data;
+      });
+      return next;
+    });
     setRefreshing(false);
   };
 

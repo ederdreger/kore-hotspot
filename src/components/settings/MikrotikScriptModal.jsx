@@ -35,17 +35,18 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 /interface vlan add name="${vlanInterface}" interface="${bridgeName || physicalInterface}" vlan-id=${vlanId} comment="Kore-HotSpot VLAN" disabled=no` : '';
     const bridgeSection = bridgeName ? `
 # Cria/atualiza bridge e vincula a porta fisica ${physicalInterface}
-/interface bridge remove [find where name="${bridgeName}"]
-/interface bridge add name="${bridgeName}" protocol-mode=rstp comment="Kore-HotSpot bridge" disabled=no
-/interface bridge port remove [find where interface="${physicalInterface}"]
-/interface bridge port add bridge="${bridgeName}" interface="${physicalInterface}" comment="Kore-HotSpot porta fisica" disabled=no` : '';
+:if ([:len [/interface bridge find where name="${bridgeName}"]] = 0) do={
+  /interface bridge add name="${bridgeName}" protocol-mode=rstp comment="Kore-HotSpot bridge" disabled=no
+}
+:if ([:len [/interface bridge port find where interface="${physicalInterface}" and bridge="${bridgeName}"]] = 0) do={
+  /interface bridge port remove [find where interface="${physicalInterface}"]
+  /interface bridge port add bridge="${bridgeName}" interface="${physicalInterface}" comment="Kore-HotSpot porta fisica" disabled=no
+}` : '';
 
     return `# Kore-HotSpot - Script corrigido de integração MikroTik
 # Cole TODO o script no Terminal do MikroTik. Não cole linha por linha.
 
 # Limpeza de itens quebrados criados por scripts anteriores
-/interface bridge remove [find where comment="Kore-HotSpot bridge"]
-/interface bridge port remove [find where comment="Kore-HotSpot porta fisica"]
 /interface vlan remove [find where comment="Kore-HotSpot VLAN"]
 /ip firewall filter remove [find where comment~"Kore-HotSpot allow"]
 /radius remove [find where comment="${radiusName}"]
