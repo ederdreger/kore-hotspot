@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 
 export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
   const script = useMemo(() => {
-    const radiusHost = radius.radius_host || 'SEU_IP_RADIUS';
+    const radiusHost = radius.radius_host || mikrotik.host || 'SEU_IP_RADIUS';
     const radiusSecret = radius.radius_secret || 'SUA_CHAVE_RADIUS';
     const interfaceName = mikrotik.hotspot_interface || 'bridge-hotspot';
     const network = mikrotik.hotspot_network || '192.168.50.0/24';
@@ -22,25 +22,30 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 :local profileName "${profileName}"
 :local hotspotName "${hotspotName}"
 
-# Remove RADIUS Hotspot antigo para evitar duplicidade
-/radius remove [find service=hotspot]
-
-# Adiciona servidor RADIUS
-/radius add service=hotspot address=$radiusAddress secret=$radiusSecret authentication-port=1812 accounting-port=1813 timeout=3000ms
-
-# Cria ou atualiza o perfil do Hotspot usando RADIUS
-/ip hotspot profile add name=$profileName use-radius=yes login-by=http-chap,http-pap,mac-cookie hotspot-address=0.0.0.0 dns-name="" html-directory=hotspot disabled=no
-/ip hotspot profile set [find name=$profileName] use-radius=yes login-by=http-chap,http-pap,mac-cookie
-
-# Cria servidor Hotspot na interface informada se ainda não existir
-:if ([:len [/ip hotspot find name=$hotspotName]] = 0) do={
-  /ip hotspot add name=$hotspotName interface=$hotspotInterface profile=$profileName disabled=no
-} else={
-  /ip hotspot set [find name=$hotspotName] interface=$hotspotInterface profile=$profileName disabled=no
+# Valida se a interface existe com nome exato
+:if ([:len [/interface find where name=$hotspotInterface]] = 0) do={
+  :error ("Interface nao encontrada: " . $hotspotInterface)
 }
 
-# Libera accounting RADIUS
-/ip hotspot profile set [find name=$profileName] radius-accounting=yes
+# Remove apenas RADIUS antigo criado para Hotspot
+/radius remove [find where service~"hotspot"]
+
+# Adiciona servidor RADIUS do Hotspot
+/radius add service=hotspot address=$radiusAddress secret=$radiusSecret authentication-port=1812 accounting-port=1813 timeout=3s disabled=no
+
+# Cria ou atualiza o perfil do Hotspot usando RADIUS
+:if ([:len [/ip hotspot profile find where name=$profileName]] = 0) do={
+  /ip hotspot profile add name=$profileName use-radius=yes radius-accounting=yes login-by=http-chap,http-pap,cookie html-directory=hotspot
+} else={
+  /ip hotspot profile set [find where name=$profileName] use-radius=yes radius-accounting=yes login-by=http-chap,http-pap,cookie html-directory=hotspot
+}
+
+# Cria ou atualiza o servidor Hotspot na interface informada
+:if ([:len [/ip hotspot find where name=$hotspotName]] = 0) do={
+  /ip hotspot add name=$hotspotName interface=[/interface get [find where name=$hotspotInterface] name] profile=$profileName disabled=no
+} else={
+  /ip hotspot set [find where name=$hotspotName] interface=[/interface get [find where name=$hotspotInterface] name] profile=$profileName disabled=no
+}
 
 # Exibe resultado
 /radius print
@@ -73,7 +78,7 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 
         <div className="p-6 space-y-4 overflow-y-auto max-h-[calc(90vh-88px)]">
           <div className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-xs text-warning">
-Fluxo correto: cadastre IP, usuário e senha apenas para registrar o equipamento; depois copie este script, entre no MikroTik manualmente e cole no Terminal. Nenhuma conexão SSH será feita pelo sistema.
+Antes de copiar, confirme que o Host RADIUS e o Shared Secret estão preenchidos em Configurações &gt; FreeRADIUS. O botão Status usa SSH somente para leitura e valida se o equipamento responde.
           </div>
 
           <pre className="bg-background border border-border rounded-xl p-4 text-xs font-mono text-foreground overflow-x-auto whitespace-pre-wrap leading-relaxed">

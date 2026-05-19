@@ -1,15 +1,18 @@
 import { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
+import { useAuth } from '@/lib/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Plus, Pencil, Trash2, Server, Eye, EyeOff, CheckCircle, RefreshCw, X, Terminal } from 'lucide-react';
+import { Plus, Pencil, Trash2, Server, Eye, EyeOff, CheckCircle, RefreshCw, X, Terminal, Activity } from 'lucide-react';
 import { toast } from 'sonner';
 import MikrotikScriptModal from './MikrotikScriptModal';
+import MikrotikStatusModal from './MikrotikStatusModal';
 
 const EMPTY = { name: '', host: '', port: '22', user: 'admin', password: '', hotspot_interface: 'ether1', hotspot_network: '192.168.1.0/24' };
 
 export default function MikrotikList() {
+  const { getToken } = useAuth();
   const [mikrotiks, setMikrotiks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -18,6 +21,7 @@ export default function MikrotikList() {
   const [saving, setSaving] = useState(false);
   const [showPass, setShowPass] = useState(false);
   const [scriptMt, setScriptMt] = useState(null);
+  const [statusMt, setStatusMt] = useState(null);
   const [radiusSettings, setRadiusSettings] = useState({});
 
   const load = async () => {
@@ -141,12 +145,20 @@ export default function MikrotikList() {
               </div>
               <div className="flex items-center gap-1 flex-shrink-0">
                 <button
+                  onClick={() => setStatusMt(mt)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-success/10 hover:bg-success/20 text-success transition-colors text-xs font-medium"
+                  title="Verificar status via SSH"
+                >
+                  <Activity className="w-3.5 h-3.5" />
+                  Status
+                </button>
+                <button
                   onClick={() => setScriptMt(mt)}
                   className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary transition-colors text-xs font-medium"
                   title="Gerar script para Terminal"
                 >
                   <Terminal className="w-3.5 h-3.5" />
-                  Gerar script
+                  Script
                 </button>
                 <button onClick={() => openEdit(mt)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-primary transition-colors" title="Editar">
                   <Pencil className="w-3.5 h-3.5" />
@@ -160,7 +172,8 @@ export default function MikrotikList() {
         </div>
       )}
 
-      {/* Script Modal */}
+      {/* Status and Script Modals */}
+      {statusMt && <MikrotikStatusModal mikrotik={statusMt} token={getToken()} onClose={() => setStatusMt(null)} />}
       {scriptMt && <MikrotikScriptModal mikrotik={scriptMt} radius={radiusSettings} onClose={() => setScriptMt(null)} />}
 
       {/* Modal Form */}

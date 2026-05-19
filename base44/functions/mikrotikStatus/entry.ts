@@ -17,22 +17,30 @@ function sshExec(host, port, username, password, command) {
   return new Promise((resolve, reject) => {
     const conn = new Client();
     let output = '';
+    let settled = false;
+    const finish = (err, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      conn.end();
+      if (err) reject(err); else resolve(String(value || '').trim());
+    };
     const timer = setTimeout(() => {
       conn.destroy();
-      reject(new Error('Timeout SSH ao conectar em ' + host + ':' + port));
-    }, 10000);
+      finish(new Error('Timeout SSH ao conectar em ' + host + ':' + port));
+    }, 15000);
 
     conn.on('ready', () => {
-      conn.exec(command, (err, stream) => {
-        if (err) { clearTimeout(timer); conn.end(); return reject(err); }
+      conn.exec(`terminal length 0\n${command}`, { pty: true }, (err, stream) => {
+        if (err) return finish(err);
         stream.on('data', d => { output += d.toString(); });
-        stream.stderr.on('data', () => {});
-        stream.on('close', () => { clearTimeout(timer); conn.end(); resolve(output.trim()); });
+        stream.stderr.on('data', d => { output += d.toString(); });
+        stream.on('close', () => finish(null, output));
       });
     });
 
-    conn.on('keyboard-interactive', (name, instructions, lang, prompts, finish) => finish([password]));
-    conn.on('error', err => { clearTimeout(timer); reject(err); });
+    conn.on('keyboard-interactive', (name, instructions, lang, prompts, done) => done([password]));
+    conn.on('error', err => finish(err));
 
     conn.connect({
       host: normalizeHost(host),
@@ -40,9 +48,9 @@ function sshExec(host, port, username, password, command) {
       username,
       password,
       tryKeyboard: true,
-      readyTimeout: 12000,
+      readyTimeout: 15000,
       algorithms: {
-        cipher: ['aes256-cbc', 'aes128-cbc'],
+        cipher: ['aes256-cbc', 'aes128-cbc', 'aes256-ctr', 'aes128-ctr'],
         serverHostKey: ['ssh-rsa', 'rsa-sha2-256', 'rsa-sha2-512', 'ecdsa-sha2-nistp256', 'ecdsa-sha2-nistp384', 'ecdsa-sha2-nistp521'],
         kex: [
           'curve25519-sha256', 'curve25519-sha256@libssh.org',
@@ -59,7 +67,15 @@ function sshExec(host, port, username, password, command) {
 // Parse RouterOS print output into key-value object
 function parsePrint(output) {
   const result = {};
-  const lines = output.split('\n');
+  const text = String(output || '').replace(/\r/g, '\n');
+  const pairs = text.match(/[a-zA-Z][\w-]*=("[^"]*"|\S+)/g) || [];
+  for (const pair of pairs) {
+    const index = pair.indexOf('=');
+    const key = pair.slice(0, index);
+    const value = pair.slice(index + 1).replace(/^"|"$/g, '');
+    result[key] = value;
+  }
+  const lines = text.split('\n');
   for (const line of lines) {
     const match = line.match(/^\s*([\w-]+):\s*(.+)$/);
     if (match) result[match[1]] = match[2].trim();
@@ -84,7 +100,7 @@ Deno.serve(async (req) => {
     // Fetch system resources and hotspot active users in sequence
     const cleanHost = normalizeHost(host);
     const resOutput = await sshExec(cleanHost, port, sshUser, password,
-      '/system resource print');
+      '/system resource print terse without-paging');
     const res = parsePrint(resOutput);
     const hasRouterOsData = Boolean(res.uptime || res.version || res['board-name'] || res['cpu-load'] || res['free-memory'] || res['total-memory']);
     if (!hasRouterOsData) {
@@ -106,6 +122,13 @@ Deno.serve(async (req) => {
       hotspotCount = parseInt(hotspotList) || 0;
     } catch (_) {}
 
+    let radiusHotspotCount = 0;
+    try {
+      const radiusList = await sshExec(cleanHost, port, sshUser, password,
+        '/radius print count-only where service~"hotspot"');
+      radiusHotspotCount = parseInt(radiusList) || 0;
+    } catch (_) {}
+
     return Response.json({
       connected: true,
       uptime: res['uptime'] || null,
@@ -117,6 +140,7 @@ Deno.serve(async (req) => {
       version: res['version'] || null,
       active_users: activeUsers,
       hotspot_count: hotspotCount,
+      radius_hotspot_count: radiusHotspotCount,
     });
   } catch (err) {
     let msg = err.message;
