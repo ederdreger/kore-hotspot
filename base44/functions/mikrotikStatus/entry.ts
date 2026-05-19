@@ -101,22 +101,13 @@ Deno.serve(async (req) => {
 
     let activeUsers = 0;
     let hotspotCount = 0;
-    try {
-      const hotOutput = await sshExec(cleanHost, port, sshUser, password,
-        '/ip hotspot active print count-only');
-      activeUsers = parseInt(hotOutput) || 0;
-    } catch (_) {}
-    try {
-      const hotspotList = await sshExec(cleanHost, port, sshUser, password,
-        '/ip hotspot print count-only');
-      hotspotCount = parseInt(hotspotList) || 0;
-    } catch (_) {}
-
     let radiusHotspotCount = 0;
     try {
-      const radiusList = await sshExec(cleanHost, port, sshUser, password,
-        '/radius print count-only where service~"hotspot"');
-      radiusHotspotCount = parseInt(radiusList) || 0;
+      const serviceOutput = await sshExec(cleanHost, port, sshUser, password,
+        ':put ("active-users=" . [:len [/ip hotspot active find]]); :put ("hotspot-count=" . [:len [/ip hotspot find]]); :put ("radius-hotspot-count=" . [:len [/radius find where service~"hotspot"]])');
+      activeUsers = parseInt(extractValue(serviceOutput, 'active-users')) || 0;
+      hotspotCount = parseInt(extractValue(serviceOutput, 'hotspot-count')) || 0;
+      radiusHotspotCount = parseInt(extractValue(serviceOutput, 'radius-hotspot-count')) || 0;
     } catch (_) {}
 
     return Response.json({

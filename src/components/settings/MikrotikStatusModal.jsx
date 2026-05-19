@@ -3,6 +3,22 @@ import { base44 } from '@/api/base44Client';
 import { Button } from '@/components/ui/button';
 import { Activity, AlertTriangle, CheckCircle, RefreshCw, Router, X } from 'lucide-react';
 
+function formatRouterUptime(value) {
+  const text = String(value || '').trim();
+  const match = text.match(/^(?:(\d+)w)?(?:(\d+)d)?(?:(\d{1,2}):(\d{2}):(\d{2}))?$/);
+  if (!match) return text || 'N/A';
+
+  const weeks = parseInt(match[1] || '0');
+  const days = parseInt(match[2] || '0');
+  const hours = parseInt(match[3] || '0');
+  const minutes = parseInt(match[4] || '0');
+  const parts = [];
+  if (weeks) parts.push(`${weeks} sem`);
+  if (days) parts.push(`${days} dia${days > 1 ? 's' : ''}`);
+  parts.push(`${hours}h ${minutes}min`);
+  return parts.join(' ');
+}
+
 export default function MikrotikStatusModal({ mikrotik, token, onClose }) {
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState(null);
@@ -59,7 +75,7 @@ export default function MikrotikStatusModal({ mikrotik, token, onClose }) {
 
           {!loading && !status?.error && (
             <div className="grid grid-cols-2 gap-3">
-              <div className="bg-background border border-border rounded-xl p-3"><p className="text-xs text-muted-foreground">Uptime</p><p className="text-sm font-semibold">{status.uptime || 'N/A'}</p></div>
+              <div className="bg-background border border-border rounded-xl p-3"><p className="text-xs text-muted-foreground">Uptime</p><p className="text-sm font-semibold">{formatRouterUptime(status.uptime)}</p></div>
               <div className="bg-background border border-border rounded-xl p-3"><p className="text-xs text-muted-foreground">CPU</p><p className="text-sm font-semibold">{status.cpu_load ?? 'N/A'}%</p></div>
               <div className="bg-background border border-border rounded-xl p-3"><p className="text-xs text-muted-foreground">Versão</p><p className="text-sm font-semibold">{status.version || 'N/A'}</p></div>
               <div className="bg-background border border-border rounded-xl p-3"><p className="text-xs text-muted-foreground">Hotspot</p><p className="text-sm font-semibold">{status.hotspot_count ?? 0} servidor(es)</p></div>
