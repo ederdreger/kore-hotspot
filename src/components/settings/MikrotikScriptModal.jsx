@@ -123,6 +123,12 @@ ${vpnSection}
       vlan_interface: mikrotik.vlan_interface,
       hotspot_network: mikrotik.hotspot_network,
       snmp_community: mikrotik.snmp_community,
+      wan_interface: mikrotik.wan_interface,
+      vpn_enabled: mikrotik.vpn_enabled,
+      vpn_server: mikrotik.vpn_server,
+      vpn_secret: mikrotik.vpn_secret,
+      vpn_user: mikrotik.vpn_user,
+      vpn_password: mikrotik.vpn_password,
       radius_host: radius.radius_host || mikrotik.host,
       radius_secret: radius.radius_secret || mikrotik.radius_secret || generateRadiusSecret(mikrotik),
     });
