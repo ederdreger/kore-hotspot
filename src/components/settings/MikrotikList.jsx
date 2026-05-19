@@ -8,8 +8,20 @@ import { Plus, Pencil, Trash2, Server, Eye, EyeOff, CheckCircle, RefreshCw, X, T
 import { toast } from 'sonner';
 import MikrotikScriptModal from './MikrotikScriptModal';
 import MikrotikStatusModal from './MikrotikStatusModal';
+import MikrotikRealtimeDashboard from './MikrotikRealtimeDashboard';
 
-const EMPTY = { name: '', host: '', port: '22', user: 'admin', password: '', hotspot_interface: 'ether1', hotspot_network: '192.168.1.0/24' };
+const EMPTY = {
+  name: '',
+  host: '',
+  port: '22',
+  user: 'admin',
+  password: '',
+  physical_interface: 'ether1',
+  bridge_name: 'bridge-hotspot',
+  vlan_id: '',
+  vlan_interface: 'vlan-hotspot',
+  hotspot_network: '192.168.1.0/24',
+};
 
 export default function MikrotikList() {
   const { getToken } = useAuth();
@@ -57,7 +69,10 @@ export default function MikrotikList() {
       port: mt.port || '22',
       user: mt.user || 'admin',
       password: mt.password || '',
-      hotspot_interface: mt.hotspot_interface || 'ether1',
+      physical_interface: mt.physical_interface || mt.hotspot_interface || 'ether1',
+      bridge_name: mt.bridge_name || 'bridge-hotspot',
+      vlan_id: mt.vlan_id || '',
+      vlan_interface: mt.vlan_interface || 'vlan-hotspot',
       hotspot_network: mt.hotspot_network || '192.168.1.0/24',
     });
     setShowPass(false);
@@ -71,7 +86,7 @@ export default function MikrotikList() {
     }
 
     setSaving(true);
-    const deviceData = { ...form };
+    const deviceData = { ...form, hotspot_interface: form.bridge_name };
     const blob = JSON.stringify(deviceData);
     let savedDevice;
 
@@ -101,7 +116,10 @@ export default function MikrotikList() {
     { key: 'host', label: 'IP do MikroTik', placeholder: '192.168.88.1' },
     { key: 'port', label: 'Porta de acesso', placeholder: '22' },
     { key: 'user', label: 'Usuário de acesso', placeholder: 'admin' },
-    { key: 'hotspot_interface', label: 'Interface Hotspot', placeholder: 'ether1' },
+    { key: 'physical_interface', label: 'Interface física (ether)', placeholder: 'ether1' },
+    { key: 'bridge_name', label: 'Bridge Hotspot', placeholder: 'bridge-hotspot' },
+    { key: 'vlan_id', label: 'VLAN ID (opcional)', placeholder: '100' },
+    { key: 'vlan_interface', label: 'Nome da VLAN', placeholder: 'vlan-hotspot' },
     { key: 'hotspot_network', label: 'Rede Hotspot', placeholder: '192.168.1.0/24' },
   ];
 
@@ -109,7 +127,7 @@ export default function MikrotikList() {
     <div>
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
-        <p className="text-xs text-muted-foreground">Cadastre o equipamento e gere o script para colar no Terminal do MikroTik</p>
+        <p className="text-xs text-muted-foreground">Cadastre o equipamento, bridge, ether e VLAN para gerar o script profissional do MikroTik</p>
         <Button size="sm" onClick={openNew} className="gap-1.5">
           <Plus className="w-3.5 h-3.5" />
           Cadastrar MikroTik
@@ -130,7 +148,9 @@ export default function MikrotikList() {
           </Button>
         </div>
       ) : (
-        <div className="rounded-xl border border-border overflow-hidden">
+        <>
+          <MikrotikRealtimeDashboard devices={mikrotiks} token={getToken()} />
+          <div className="rounded-xl border border-border overflow-hidden">
           {mikrotiks.map((mt, i) => (
             <div
               key={mt._id}
@@ -141,7 +161,7 @@ export default function MikrotikList() {
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-foreground truncate">{mt.name}</p>
-                <p className="text-xs font-mono text-muted-foreground">{mt.host}:{mt.port} · {mt.user} · {mt.hotspot_interface}</p>
+                <p className="text-xs font-mono text-muted-foreground">{mt.host}:{mt.port} · {mt.user} · {mt.bridge_name || mt.hotspot_interface} · {mt.vlan_id ? `VLAN ${mt.vlan_id}` : (mt.physical_interface || 'ether')}</p>
               </div>
               <div className="flex items-center gap-1 flex-shrink-0">
                 <button
@@ -169,7 +189,8 @@ export default function MikrotikList() {
               </div>
             </div>
           ))}
-        </div>
+          </div>
+        </>
       )}
 
       {/* Status and Script Modals */}
@@ -179,7 +200,7 @@ export default function MikrotikList() {
       {/* Modal Form */}
       {showForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-lg">
+          <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-2xl">
             <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-border">
               <div className="flex items-center gap-2">
                 <Server className="w-4 h-4 text-primary" />
@@ -191,7 +212,7 @@ export default function MikrotikList() {
             </div>
             <div className="p-6 grid grid-cols-2 gap-4">
               {fields.map(f => (
-                <div key={f.key} className={f.key === 'name' ? 'col-span-2' : ''}>
+                <div key={f.key} className={['name', 'hotspot_network'].includes(f.key) ? 'col-span-2' : ''}>
                   <Label className="text-xs text-muted-foreground mb-1.5 block">{f.label}</Label>
                   <Input
                     value={form[f.key]}

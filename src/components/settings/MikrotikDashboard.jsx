@@ -252,7 +252,7 @@ export default function MikrotikDashboard({ mikrotik, onClose }) {
 
           {/* Info footer */}
           <div className="flex items-center gap-4 text-xs text-muted-foreground">
-            <span className="flex items-center gap-1"><Wifi className="w-3 h-3" /> Interface: <span className="font-mono">{mikrotik.hotspot_interface}</span></span>
+            <span className="flex items-center gap-1"><Wifi className="w-3 h-3" /> Bridge: <span className="font-mono">{mikrotik.bridge_name || mikrotik.hotspot_interface}</span></span>
             <span className="flex items-center gap-1"><Activity className="w-3 h-3" /> Rede: <span className="font-mono">{mikrotik.hotspot_network}</span></span>
           </div>
         </div>

@@ -7,7 +7,10 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
   const script = useMemo(() => {
     const radiusHost = radius.radius_host || mikrotik.host || 'SEU_IP_RADIUS';
     const radiusSecret = radius.radius_secret || 'SUA_CHAVE_RADIUS';
-    const interfaceName = mikrotik.hotspot_interface || 'bridge-hotspot';
+    const physicalInterface = mikrotik.physical_interface || mikrotik.hotspot_interface || 'ether1';
+    const bridgeName = mikrotik.bridge_name || mikrotik.hotspot_interface || 'bridge-hotspot';
+    const vlanId = mikrotik.vlan_id || '';
+    const vlanInterface = mikrotik.vlan_interface || 'vlan-hotspot';
     const network = mikrotik.hotspot_network || '192.168.50.0/24';
     const profileName = 'kore-hotspot-profile';
     const hotspotName = 'kore-hotspot';
@@ -18,17 +21,39 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 
 :local radiusAddress "${radiusHost}"
 :local radiusSecret "${radiusSecret}"
-:local hotspotInterface "${interfaceName}"
+:local physicalInterface "${physicalInterface}"
+:local bridgeName "${bridgeName}"
+:local vlanId "${vlanId}"
+:local vlanInterface "${vlanInterface}"
 :local hotspotNetwork "${network}"
 :local profileName "${profileName}"
 :local hotspotName "${hotspotName}"
+:local hotspotInterface $bridgeName
 
 # Libera SSH/API no firewall se existir filtro de entrada
 /ip firewall filter add chain=input protocol=tcp dst-port=22,8728 action=accept comment="Kore-HotSpot allow SSH/API" place-before=0 disabled=no
 
-# Valida se a interface existe com nome exato
-:if ([:len [/interface find where name=$hotspotInterface]] = 0) do={
-  :error ("Interface nao encontrada: " . $hotspotInterface)
+# Valida interface fisica, cria bridge e adiciona a ether na bridge
+:if ([:len [/interface find where name=$physicalInterface]] = 0) do={
+  :error ("Interface fisica nao encontrada: " . $physicalInterface)
+}
+
+:if ([:len [/interface bridge find where name=$bridgeName]] = 0) do={
+  /interface bridge add name=$bridgeName comment="Kore-HotSpot bridge"
+}
+
+:if ([:len [/interface bridge port find where bridge=$bridgeName interface=$physicalInterface]] = 0) do={
+  /interface bridge port add bridge=$bridgeName interface=$physicalInterface comment="Kore-HotSpot uplink"
+}
+
+# VLAN opcional: se VLAN ID for informado, o Hotspot sera aplicado na VLAN criada sobre a bridge
+:if ([:len $vlanId] > 0) do={
+  :if ([:len [/interface vlan find where name=$vlanInterface]] = 0) do={
+    /interface vlan add name=$vlanInterface interface=$bridgeName vlan-id=$vlanId comment="Kore-HotSpot VLAN"
+  } else={
+    /interface vlan set [find where name=$vlanInterface] interface=$bridgeName vlan-id=$vlanId
+  }
+  :set hotspotInterface $vlanInterface
 }
 
 # Remove apenas RADIUS antigo criado para Hotspot
@@ -44,7 +69,7 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
   /ip hotspot profile set [find where name=$profileName] use-radius=yes radius-accounting=yes login-by=http-chap,http-pap,cookie html-directory=hotspot
 }
 
-# Cria ou atualiza o servidor Hotspot na interface informada
+# Cria ou atualiza o servidor Hotspot na bridge ou VLAN final
 :if ([:len [/ip hotspot find where name=$hotspotName]] = 0) do={
   /ip hotspot add name=$hotspotName interface=[/interface get [find where name=$hotspotInterface] name] profile=$profileName disabled=no
 } else={
@@ -52,6 +77,9 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 }
 
 # Exibe resultado
+/interface bridge print
+/interface bridge port print
+/interface vlan print
 /radius print
 /ip hotspot print
 /ip hotspot profile print`;
@@ -82,7 +110,7 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 
         <div className="p-6 space-y-4 overflow-y-auto max-h-[calc(90vh-88px)]">
           <div className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-xs text-warning">
-Antes de copiar, confirme que o Host RADIUS e o Shared Secret estão preenchidos em Configurações &gt; FreeRADIUS. O botão Status usa SSH somente para leitura e valida se o equipamento responde.
+Antes de copiar, confirme o Host RADIUS, Shared Secret, interface ether, bridge e VLAN opcional. O Hotspot será aplicado na bridge ou na VLAN criada sobre ela.
           </div>
 
           <pre className="bg-background border border-border rounded-xl p-4 text-xs font-mono text-foreground overflow-x-auto whitespace-pre-wrap leading-relaxed">
