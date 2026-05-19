@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Network, Plus, Trash2, Shield, Settings, Copy, Check, TerminalSquare, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
+import VpnRealtimeMonitor from '@/components/dashboard/VpnRealtimeMonitor';
 
 export default function VpnManager() {
   const { getToken } = useAuth();
@@ -175,6 +176,10 @@ export default function VpnManager() {
           <Plus className="w-4 h-4" /> Nova Conexão
         </Button>
       </div>
+
+      {mikrotiks.length > 0 && (
+        <VpnRealtimeMonitor mikrotik={mikrotiks[0]} />
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         

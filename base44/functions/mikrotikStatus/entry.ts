@@ -89,19 +89,59 @@ Deno.serve(async (req) => {
   const cleanHost = normalizeHost(host);
 
   try {
+    if (body.action === 'disconnect_vpn' && body.username_to_disconnect) {
+       await sshExec(cleanHost, port, user, password, [`/ppp active remove [find name="${body.username_to_disconnect}"]`]);
+       return Response.json({ success: true });
+    }
+
     // Check via SSH (fallback robusto para redes que bloqueiam UDP/SNMP)
     const commands = [
       '/system resource print',
       '/ip hotspot print count-only',
-      '/ip hotspot active print count-only'
+      '/ip hotspot active print count-only',
+      '/ppp active print detail without-paging',
+      '/interface print stats-detail without-paging'
     ];
     
     const results = await sshExec(cleanHost, port, user, password, commands);
     const resourceText = results[0].output;
     const hotspotCount = parseInt(results[1].output) || 0;
     const activeUsers = parseInt(results[2].output) || 0;
+    const pppText = results[3].output;
+    const ifaceText = results[4].output;
     
     const resData = parseResource(resourceText);
+
+    // Parse PPP
+    const vpn_connections = [];
+    pppText.split('\n').forEach(line => {
+       if (line.includes('name=')) {
+          const nameMatch = line.match(/name="([^"]+)"/);
+          const addressMatch = line.match(/address=([\d\.]+)/);
+          const uptimeMatch = line.match(/uptime=([\w\d]+)/);
+          const serviceMatch = line.match(/service=([\w\d]+)/);
+          if (nameMatch) {
+             vpn_connections.push({
+                name: nameMatch[1],
+                address: addressMatch ? addressMatch[1] : '',
+                uptime: uptimeMatch ? uptimeMatch[1] : '',
+                service: serviceMatch ? serviceMatch[1] : ''
+             });
+          }
+       }
+    });
+
+    // Parse Interfaces to get total rx/tx bytes
+    let totalRx = 0;
+    let totalTx = 0;
+    ifaceText.split('\n').forEach(line => {
+       if (line.includes('rx-byte=')) {
+          const rxMatch = line.match(/rx-byte=([\d]+)/);
+          const txMatch = line.match(/tx-byte=([\d]+)/);
+          if (rxMatch) totalRx += parseInt(rxMatch[1]);
+          if (txMatch) totalTx += parseInt(txMatch[1]);
+       }
+    });
 
     return Response.json({
       connected: true,
@@ -116,6 +156,9 @@ Deno.serve(async (req) => {
       version: resData.version || null,
       active_users: activeUsers,
       hotspot_count: hotspotCount,
+      vpn_connections,
+      total_rx_bytes: totalRx,
+      total_tx_bytes: totalTx
     });
   } catch (err) {
     let msg = err.message || 'Falha ao conectar';
