@@ -46,77 +46,58 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 :local hotspotName "${hotspotName}"
 :local hotspotInterface $physicalInterface
 
-# Ativa SNMP v2c somente leitura para o Kore-HotSpot
-/snmp set enabled=yes contact="Kore-HotSpot" location="Hotspot"
-:if ([:len [/snmp community find where name=$snmpCommunity]] = 0) do={
-  /snmp community add name=$snmpCommunity read-access=yes write-access=no disabled=no
-} else={
-  /snmp community set [find where name=$snmpCommunity] read-access=yes write-access=no disabled=no
-}
-
-# Libera acesso de gerenciamento necessário para o Kore-HotSpot
-# IMPORTANTE: coloque estas regras antes de regras DROP/REJECT da chain=input
-/ip service set ssh disabled=no port=$sshPort
-
-:if ([:len [/ip firewall filter find where comment="Kore-HotSpot allow established"]] = 0) do={
-  /ip firewall filter add chain=input connection-state=established,related action=accept comment="Kore-HotSpot allow established" disabled=no
-} else={
-  /ip firewall filter set [find where comment="Kore-HotSpot allow established"] chain=input connection-state=established,related action=accept disabled=no
-}
-
-:if ([:len [/ip firewall filter find where comment="Kore-HotSpot allow SNMP UDP 161"]] = 0) do={
-  /ip firewall filter add chain=input protocol=udp dst-port=161 action=accept comment="Kore-HotSpot allow SNMP UDP 161" disabled=no
-} else={
-  /ip firewall filter set [find where comment="Kore-HotSpot allow SNMP UDP 161"] chain=input protocol=udp dst-port=161 action=accept disabled=no
-}
-
-:if ([:len [/ip firewall filter find where comment="Kore-HotSpot allow SSH"]] = 0) do={
-  /ip firewall filter add chain=input protocol=tcp dst-port=$sshPort action=accept comment="Kore-HotSpot allow SSH" disabled=no
-} else={
-  /ip firewall filter set [find where comment="Kore-HotSpot allow SSH"] chain=input protocol=tcp dst-port=$sshPort action=accept disabled=no
-}
-
-:local firstDrop [/ip firewall filter find where chain=input action=drop]
-:if ([:len $firstDrop] > 0) do={
-  /ip firewall filter move [find where comment="Kore-HotSpot allow established"] destination=[:pick $firstDrop 0]
-  /ip firewall filter move [find where comment="Kore-HotSpot allow SNMP UDP 161"] destination=[:pick $firstDrop 0]
-  /ip firewall filter move [find where comment="Kore-HotSpot allow SSH"] destination=[:pick $firstDrop 0]
-}
-
-# Valida interface fisica
+# Valida entradas e interface fisica
+:local sshPortNum [:tonum $sshPort]
+:local vlanIdNum 0
+:if ([:len $vlanId] > 0) do={ :set vlanIdNum [:tonum $vlanId] }
 :if ([:len [/interface find where name=$physicalInterface]] = 0) do={
-  :error ("Interface fisica nao encontrada: " . $physicalInterface)
+  :error ("ERRO: interface fisica nao encontrada: " . $physicalInterface)
+}
+:if (([:len $vlanId] > 0) and (($vlanIdNum < 1) or ($vlanIdNum > 4094))) do={
+  :error ("ERRO: VLAN ID invalida: " . $vlanId)
 }
 
-# Regra MikroTik: se bridge foi informada, cria a bridge e vincula a ether nela
+# Ativa SNMP v2c somente leitura para o Kore-HotSpot
+/snmp set enabled=yes contact="Kore-HotSpot" location="Hotspot" trap-version=2
+:if ([:len [/snmp community find where name=$snmpCommunity]] = 0) do={
+  /snmp community add name=$snmpCommunity addresses=0.0.0.0/0 read-access=yes write-access=no disabled=no
+} else={
+  /snmp community set [find where name=$snmpCommunity] addresses=0.0.0.0/0 read-access=yes write-access=no disabled=no
+}
+
+# Libera gerenciamento no firewall INPUT antes de qualquer DROP/REJECT
+/ip service set ssh disabled=no port=$sshPortNum
+:foreach ruleComment in={"Kore-HotSpot allow established";"Kore-HotSpot allow SNMP UDP 161";"Kore-HotSpot allow SSH"} do={
+  /ip firewall filter remove [find where comment=$ruleComment]
+}
+/ip firewall filter add chain=input connection-state=established,related action=accept comment="Kore-HotSpot allow established" disabled=no place-before=0
+/ip firewall filter add chain=input protocol=udp dst-port=161 action=accept comment="Kore-HotSpot allow SNMP UDP 161" disabled=no place-before=0
+/ip firewall filter add chain=input protocol=tcp dst-port=$sshPortNum action=accept comment="Kore-HotSpot allow SSH" disabled=no place-before=0
+
+# Cria bridge, vincula ether e cria VLAN corretamente
 :if ([:len $bridgeName] > 0) do={
   :if ([:len [/interface bridge find where name=$bridgeName]] = 0) do={
-    /interface bridge add name=$bridgeName comment="Kore-HotSpot bridge"
+    /interface bridge add name=$bridgeName protocol-mode=rstp comment="Kore-HotSpot bridge"
   }
 
-  :if ([:len [/interface bridge port find where bridge=$bridgeName interface=$physicalInterface]] = 0) do={
-    /interface bridge port add bridge=$bridgeName interface=$physicalInterface comment="Kore-HotSpot uplink"
-  }
-
+  # remove a ether de outra bridge antes de vincular na bridge correta
+  /interface bridge port remove [find where interface=$physicalInterface]
+  /interface bridge port add bridge=$bridgeName interface=$physicalInterface comment="Kore-HotSpot porta fisica"
   :set hotspotInterface $bridgeName
 }
 
-# Regra MikroTik: se somente VLAN e ether foram informadas, cria VLAN direto na ether, sem bridge
-# Se bridge tambem foi informada, cria VLAN sobre a bridge
 :if ([:len $vlanId] > 0) do={
   :local vlanBaseInterface $hotspotInterface
   :if ([:len [/interface vlan find where name=$vlanInterface]] = 0) do={
-    /interface vlan add name=$vlanInterface interface=$vlanBaseInterface vlan-id=$vlanId comment="Kore-HotSpot VLAN"
+    /interface vlan add name=$vlanInterface interface=$vlanBaseInterface vlan-id=$vlanIdNum comment="Kore-HotSpot VLAN"
   } else={
-    /interface vlan set [find where name=$vlanInterface] interface=$vlanBaseInterface vlan-id=$vlanId
+    /interface vlan set [find where name=$vlanInterface] interface=$vlanBaseInterface vlan-id=$vlanIdNum disabled=no
   }
   :set hotspotInterface $vlanInterface
 }
 
-# Remove apenas RADIUS antigo do Kore-HotSpot
+# Remove apenas RADIUS antigo do Kore-HotSpot e recria
 /radius remove [find where comment=$radiusName]
-
-# Adiciona servidor RADIUS do Hotspot com chave gerada automaticamente
 /radius add service=hotspot address=$radiusAddress secret=$radiusSecret authentication-port=1812 accounting-port=1813 timeout=3s disabled=no comment=$radiusName
 
 # Cria ou atualiza o perfil do Hotspot usando RADIUS
@@ -126,22 +107,24 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
   /ip hotspot profile set [find where name=$profileName] use-radius=yes radius-accounting=yes login-by=http-chap,http-pap,cookie html-directory=hotspot
 }
 
-# Cria ou atualiza o servidor Hotspot na bridge ou VLAN final
+# Cria ou atualiza o servidor Hotspot na interface final
 :if ([:len [/ip hotspot find where name=$hotspotName]] = 0) do={
-  /ip hotspot add name=$hotspotName interface=[/interface get [find where name=$hotspotInterface] name] profile=$profileName disabled=no
+  /ip hotspot add name=$hotspotName interface=$hotspotInterface profile=$profileName disabled=no
 } else={
-  /ip hotspot set [find where name=$hotspotName] interface=[/interface get [find where name=$hotspotInterface] name] profile=$profileName disabled=no
+  /ip hotspot set [find where name=$hotspotName] interface=$hotspotInterface profile=$profileName disabled=no
 }
 
-# Exibe resultado
-/interface bridge print
-/interface bridge port print
-/interface vlan print
+# Diagnostico final: confira se estes itens aparecem no terminal
+:put "=== KORE-HOTSPOT OK ==="
+:put ("Interface final do hotspot: " . $hotspotInterface)
+/interface bridge print detail where comment~"Kore-HotSpot"
+/interface bridge port print detail where comment~"Kore-HotSpot"
+/interface vlan print detail where comment~"Kore-HotSpot"
+/ip firewall filter print detail where comment~"Kore-HotSpot"
 /snmp print
-/snmp community print
-/radius print
-/ip hotspot print
-/ip hotspot profile print`;
+/snmp community print detail where name=$snmpCommunity
+/radius print detail where comment=$radiusName
+/ip hotspot print detail where name=$hotspotName`;
   }, [mikrotik, radius]);
 
   const copyScript = async () => {
@@ -169,7 +152,7 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 
         <div className="p-6 space-y-4 overflow-y-auto max-h-[calc(90vh-88px)]">
           <div className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-xs text-warning">
-O script agora libera automaticamente UDP 161 para SNMP e a porta SSH informada no firewall do MikroTik, posicionando as regras antes do primeiro DROP da chain input.
+Execute este script atualizado no Terminal do MikroTik: ele valida a ether, cria/vincula bridge, cria VLAN, libera SNMP/SSH no firewall e imprime o diagnóstico final no terminal.
           </div>
 
           <pre className="bg-background border border-border rounded-xl p-4 text-xs font-mono text-foreground overflow-x-auto whitespace-pre-wrap leading-relaxed">
