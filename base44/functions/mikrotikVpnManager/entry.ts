@@ -75,12 +75,18 @@ Deno.serve(async (req) => {
   const commands = [];
   
   if (action === 'enable_server') {
-    commands.push(`/interface l2tp-server server set enabled=yes use-ipsec=yes ipsec-secret="${ipsec_secret || 'vpn123'}" default-profile=default-encryption`);
-    commands.push(`/ip firewall filter add chain=input protocol=udp dst-port=1701,500,4500 action=accept comment="Kore-HotSpot VPN L2TP/IPsec"`);
-    commands.push(`/ip firewall filter add chain=input protocol=ipsec-esp action=accept comment="Kore-HotSpot VPN IPsec ESP"`);
+    commands.push(`/ppp profile remove [find where name="kore-vpn-profile"]`);
+    commands.push(`/ppp profile add name="kore-vpn-profile" use-upnp=no local-address="10.255.255.1"`);
+    commands.push(`/interface l2tp-server server set enabled=yes use-ipsec=yes ipsec-secret="${ipsec_secret || 'vpn123'}" default-profile="kore-vpn-profile" authentication=mschap2`);
+    commands.push(`/ip firewall filter remove [find where comment="KoreVPN - L2TP"]`);
+    commands.push(`/ip firewall filter add chain=input protocol=udp dst-port=500,1701,4500 action=accept comment="KoreVPN - L2TP" place-before=0`);
+    commands.push(`/ip firewall filter remove [find where comment="KoreVPN - IPsec"]`);
+    commands.push(`/ip firewall filter add chain=input protocol=ipsec-esp action=accept comment="KoreVPN - IPsec" place-before=0`);
   } else if (action === 'add' || action === 'update') {
+    commands.push(`/ppp profile remove [find where name="kore-vpn-profile"]`);
+    commands.push(`/ppp profile add name="kore-vpn-profile" use-upnp=no local-address="10.255.255.1"`);
     commands.push(`/ppp secret remove [find name="${username}"]`);
-    commands.push(`/ppp secret add name="${username}" password="${password}" local-address="10.255.255.1" remote-address="${remote_ip}" service=l2tp profile=default-encryption comment="Criado por Kore-HotSpot"`);
+    commands.push(`/ppp secret add name="${username}" password="${password}" local-address="10.255.255.1" remote-address="${remote_ip}" service=l2tp profile="kore-vpn-profile" comment="Criado por Kore-HotSpot"`);
   } else if (action === 'remove') {
     commands.push(`/ppp secret remove [find name="${username}"]`);
   }

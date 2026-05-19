@@ -107,9 +107,6 @@ Deno.serve(async (req) => {
     `/radius remove [find where comment="${radiusName}"]`,
     `/ip hotspot remove [find where name="${hotspotName}"]`,
     `/ip hotspot profile remove [find where name="${profileName}"]`,
-    `/interface pppoe-server server remove [find where service-name="kore-pppoe"]`,
-    `/ppp profile remove [find where name="kore-pppoe-profile"]`,
-    `/ppp secret remove [find where name="kore-teste"]`,
     
     // SSH e SNMP
     `/ip service set ssh disabled=no port=${port}`,
@@ -132,18 +129,11 @@ Deno.serve(async (req) => {
     commands.push(`/interface vlan add name="${vlan_interface}" interface="${bridge_name || physical_interface}" vlan-id=${vlan_id} comment="Kore-HotSpot VLAN" disabled=no`);
   }
 
-  // RADIUS, Hotspot e PPPoE
+  // RADIUS e Hotspot
   commands.push(
-  `/radius add service=hotspot,ppp address=${rHost} secret="${rSecret}" authentication-port=1812 accounting-port=1813 timeout=3s disabled=no comment="${radiusName}"`,
+  `/radius add service=hotspot address=${rHost} secret="${rSecret}" authentication-port=1812 accounting-port=1813 timeout=3s disabled=no comment="${radiusName}"`,
   `/ip hotspot profile add name="${profileName}" use-radius=yes radius-accounting=yes login-by=http-chap,http-pap,cookie html-directory=hotspot`,
-  `/ip hotspot add name="${hotspotName}" interface="${finalHotspotInterface}" profile="${profileName}" disabled=no`,
-  `/ppp profile remove [find where name="kore-pppoe-profile"]`,
-  `/ppp profile add name="kore-pppoe-profile" use-upnp=no`,
-  `/interface pppoe-server server remove [find where service-name="kore-pppoe"]`,
-  `/interface pppoe-server server add service-name="kore-pppoe" interface="${finalHotspotInterface}" default-profile="kore-pppoe-profile" disabled=no`,
-  `/ppp aaa set use-radius=yes accounting=yes`,
-  `/ppp secret remove [find where name="kore-teste"]`,
-  `/ppp secret add name="kore-teste" password="kore-teste" profile="kore-pppoe-profile" service=pppoe comment="Kore PPPoE Test"`
+  `/ip hotspot add name="${hotspotName}" interface="${finalHotspotInterface}" profile="${profileName}" disabled=no`
   );
 
   try {
