@@ -14,6 +14,7 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 
     return `# Kore-HotSpot - Script de integração MikroTik
 # Cole este script no Terminal do MikroTik
+# Inclui liberação SSH/API para o sistema consultar status, se houver firewall ativo
 
 :local radiusAddress "${radiusHost}"
 :local radiusSecret "${radiusSecret}"
@@ -21,6 +22,9 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 :local hotspotNetwork "${network}"
 :local profileName "${profileName}"
 :local hotspotName "${hotspotName}"
+
+# Libera SSH/API no firewall se existir filtro de entrada
+/ip firewall filter add chain=input protocol=tcp dst-port=22,8728 action=accept comment="Kore-HotSpot allow SSH/API" place-before=0 disabled=no
 
 # Valida se a interface existe com nome exato
 :if ([:len [/interface find where name=$hotspotInterface]] = 0) do={

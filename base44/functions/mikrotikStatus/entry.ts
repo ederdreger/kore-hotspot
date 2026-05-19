@@ -64,23 +64,9 @@ function sshExec(host, port, username, password, command) {
   });
 }
 
-// Parse RouterOS print output into key-value object
-function parsePrint(output) {
-  const result = {};
-  const text = String(output || '').replace(/\r/g, '\n');
-  const pairs = text.match(/[a-zA-Z][\w-]*=("[^"]*"|\S+)/g) || [];
-  for (const pair of pairs) {
-    const index = pair.indexOf('=');
-    const key = pair.slice(0, index);
-    const value = pair.slice(index + 1).replace(/^"|"$/g, '');
-    result[key] = value;
-  }
-  const lines = text.split('\n');
-  for (const line of lines) {
-    const match = line.match(/^\s*([\w-]+):\s*(.+)$/);
-    if (match) result[match[1]] = match[2].trim();
-  }
-  return result;
+function extractValue(output, key) {
+  const line = String(output || '').split(/\r?\n/).find(item => item.trim().startsWith(key + '='));
+  return line ? line.split('=').slice(1).join('=').trim() : '';
 }
 
 Deno.serve(async (req) => {
@@ -97,15 +83,19 @@ Deno.serve(async (req) => {
   if (!host) return Response.json({ error: 'host é obrigatório' }, { status: 400 });
 
   try {
-    // Fetch system resources and hotspot active users in sequence
     const cleanHost = normalizeHost(host);
-    const resOutput = await sshExec(cleanHost, port, sshUser, password,
-      '/system resource print terse');
-    const res = parsePrint(resOutput);
-    const hasRouterOsData = Boolean(res.uptime || res.version || res['board-name'] || res['cpu-load'] || res['free-memory'] || res['total-memory']);
-    if (!hasRouterOsData) {
+    const resourceCommand = ':put ("uptime=" . [/system resource get uptime]); :put ("version=" . [/system resource get version]); :put ("board-name=" . [/system resource get board-name]); :put ("cpu-load=" . [/system resource get cpu-load]); :put ("free-memory=" . [/system resource get free-memory]); :put ("total-memory=" . [/system resource get total-memory])';
+    const resOutput = await sshExec(cleanHost, port, sshUser, password, resourceCommand);
+    const uptime = extractValue(resOutput, 'uptime');
+    const version = extractValue(resOutput, 'version');
+    const boardName = extractValue(resOutput, 'board-name');
+    const cpuLoad = extractValue(resOutput, 'cpu-load');
+    const freeMemory = extractValue(resOutput, 'free-memory');
+    const totalMemory = extractValue(resOutput, 'total-memory');
+
+    if (!uptime && !version && !boardName) {
       return Response.json({
-        error: `SSH conectou em ${cleanHost}:${port}, mas o RouterOS não retornou dados válidos. Verifique se o usuário tem permissão e se o comando /system resource print funciona no terminal.`
+        error: `SSH conectou em ${cleanHost}:${port}, mas o RouterOS não respondeu aos comandos de leitura. Execute no terminal: /system resource get uptime`
       }, { status: 200 });
     }
 
@@ -131,13 +121,13 @@ Deno.serve(async (req) => {
 
     return Response.json({
       connected: true,
-      uptime: res['uptime'] || null,
-      cpu_load: res['cpu-load'] !== undefined ? (parseInt(res['cpu-load']) || 0) : null,
-      free_memory: parseInt(res['free-memory']) || null,
-      total_memory: parseInt(res['total-memory']) || null,
-      temperature: res['cpu-temperature'] ? parseInt(res['cpu-temperature']) : null,
-      board_name: res['board-name'] || null,
-      version: res['version'] || null,
+      uptime: uptime || null,
+      cpu_load: cpuLoad !== '' ? (parseInt(cpuLoad) || 0) : null,
+      free_memory: parseInt(freeMemory) || null,
+      total_memory: parseInt(totalMemory) || null,
+      temperature: null,
+      board_name: boardName || null,
+      version: version || null,
       active_users: activeUsers,
       hotspot_count: hotspotCount,
       radius_hotspot_count: radiusHotspotCount,
@@ -145,7 +135,7 @@ Deno.serve(async (req) => {
   } catch (err) {
     let msg = err.message;
     if (msg.includes('Timeout') || msg.includes('timeout')) {
-      msg = `O MikroTik aceitou o SSH, mas demorou para responder ao comando em ${normalizeHost(host)}:${port}. Verifique se o usuário tem permissão para executar /system resource print`;
+      msg = `O MikroTik aceitou o SSH, mas demorou para responder aos comandos RouterOS em ${normalizeHost(host)}:${port}.`;
     } else if (msg.includes('refused') || msg.includes('ECONNREFUSED')) {
       msg = `Conexão SSH recusada em ${host}:${port} — verifique se o SSH está ativo no MikroTik`;
     } else if (msg.includes('Authentication') || msg.includes('auth')) {
