@@ -26,9 +26,10 @@ Deno.serve(async (req) => {
             return new Response('No payment ID', { status: 400 });
         }
 
-        const token = Deno.env.get('MERCADO_PAGO_ACCESS_TOKEN');
+        const settings = await base44.asServiceRole.entities.Setting.filter({ key: 'mp_access_token' });
+        const token = settings.length > 0 ? settings[0].value : null;
         if (!token) {
-            console.error('MERCADO_PAGO_ACCESS_TOKEN not set');
+            console.error('mp_access_token not set in settings');
             return new Response('Token not configured', { status: 500 });
         }
 

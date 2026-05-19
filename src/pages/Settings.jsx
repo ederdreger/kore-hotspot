@@ -3,7 +3,7 @@ import { base44 } from '@/api/base44Client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Server, Shield, Database, Globe, Save, RefreshCw, Eye, EyeOff, CheckCircle, Wifi, Search } from 'lucide-react';
+import { Server, Shield, Database, Globe, Save, RefreshCw, Eye, EyeOff, CheckCircle, Wifi, Search, CreditCard } from 'lucide-react';
 import MikrotikList from '@/components/settings/MikrotikList';
 import RadiusAutoConfig from '@/components/settings/RadiusAutoConfig';
 
@@ -21,6 +21,8 @@ const defaultSettings = {
   ixc_token: '',
   ixc_empresa_id: '',
   ixc_sync_interval_minutes: '15',
+  // Mercado Pago
+  mp_access_token: '',
   // Hotspot / Trial
   trial_default_duration_minutes: '30',
   trial_max_duration_minutes: '120',
@@ -48,6 +50,12 @@ const sections = [
       { key: 'ixc_token', label: 'Token API', secret: true },
       { key: 'ixc_empresa_id', label: 'Empresa ID' },
       { key: 'ixc_sync_interval_minutes', label: 'Intervalo de Sync (min)' },
+    ]
+  },
+  {
+    id: 'mercadopago', label: 'Mercado Pago', icon: CreditCard, color: 'text-info',
+    fields: [
+      { key: 'mp_access_token', label: 'Access Token (Produção ou Teste)', secret: true },
     ]
   },
   {

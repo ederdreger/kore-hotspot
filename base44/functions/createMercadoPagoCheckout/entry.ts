@@ -18,9 +18,10 @@ Deno.serve(async (req) => {
             return Response.json({ error: 'Cliente ou plano não encontrado' }, { status: 404 });
         }
 
-        const token = Deno.env.get('MERCADO_PAGO_ACCESS_TOKEN');
+        const settings = await base44.asServiceRole.entities.Setting.filter({ key: 'mp_access_token' });
+        const token = settings.length > 0 ? settings[0].value : null;
         if (!token) {
-            return Response.json({ error: 'Access Token do Mercado Pago não configurado.' }, { status: 500 });
+            return Response.json({ error: 'Access Token do Mercado Pago não configurado no painel.' }, { status: 500 });
         }
 
         const origin = req.headers.get("origin") || "https://sua-url.com"; // Em produção seria a URL real do app
