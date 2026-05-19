@@ -8,6 +8,8 @@ export default function RadiusAutoConfig() {
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [config, setConfig] = useState(null);
+  const [mikrotiks, setMikrotiks] = useState([]);
+  const [selectedMikrotikId, setSelectedMikrotikId] = useState('');
 
   useEffect(() => {
     loadConfig();
@@ -24,6 +26,15 @@ export default function RadiusAutoConfig() {
     } else {
       setConfig(null);
     }
+
+    // Load MikroTiks
+    const mtiks = await base44.entities.Setting.filter({ category: 'mikrotik_device' }).catch(() => []);
+    const parsedMtiks = mtiks.map(s => {
+      try { return { id: s.id, ...JSON.parse(s.value) }; } catch { return null; }
+    }).filter(Boolean);
+    setMikrotiks(parsedMtiks);
+    if (parsedMtiks.length > 0) setSelectedMikrotikId(parsedMtiks[0].id);
+
     setLoading(false);
   };
 
@@ -68,10 +79,18 @@ export default function RadiusAutoConfig() {
   };
 
   const copyScript = async () => {
-    const script = `# Kore-HotSpot - Integração Simples MikroTik
+    const selectedMt = mikrotiks.find(m => m.id === selectedMikrotikId);
+    if (mikrotiks.length > 0 && !selectedMt) {
+      toast.error('Selecione um MikroTik primeiro.');
+      return;
+    }
+
+    const secretToUse = selectedMt ? (selectedMt.radius_secret || config.radius_secret) : config.radius_secret;
+
+    const script = `# Kore-HotSpot - Integração Simples MikroTik${selectedMt ? ` (${selectedMt.name})` : ''}
 # Basta colar no New Terminal.
 
-/radius add service=hotspot address=${config.radius_host} secret="${config.radius_secret}" authentication-port=${config.radius_port} accounting-port=1813 timeout=3s comment="Kore-HotSpot"
+/radius add service=hotspot address=${config.radius_host} secret="${secretToUse}" authentication-port=${config.radius_port} accounting-port=1813 timeout=3s comment="Kore-HotSpot"
 
 /ip hotspot profile set [find default=yes] use-radius=yes radius-accounting=yes login-by=http-chap,http-pap,cookie html-directory=hotspot
 
@@ -129,13 +148,33 @@ export default function RadiusAutoConfig() {
               <p className="text-xs text-muted-foreground mb-4">
                 Entregue este script ao cliente. Basta ele colar no <strong>New Terminal</strong> do MikroTik e a integração estará pronta.
               </p>
+
+              {mikrotiks.length > 0 ? (
+                <div className="mb-4">
+                  <label className="text-[10px] text-muted-foreground block mb-1">Selecione o Equipamento</label>
+                  <select 
+                    value={selectedMikrotikId} 
+                    onChange={e => setSelectedMikrotikId(e.target.value)}
+                    className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  >
+                    {mikrotiks.map(mt => (
+                      <option key={mt.id} value={mt.id} className="bg-background">{mt.name} ({mt.host})</option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div className="mb-4 px-3 py-2 bg-warning/10 border border-warning/30 rounded-lg text-xs text-warning">
+                  Nenhum MikroTik cadastrado. Vá na aba "MikroTik" para adicionar equipamentos.
+                </div>
+              )}
             </div>
-            <Button onClick={copyScript} variant="outline" className="w-full gap-2 border-primary/30 text-primary hover:bg-primary/10">
-              <FileCode2 className="w-4 h-4" /> Copiar Script para Cliente
+
+            <Button onClick={copyScript} variant="outline" disabled={mikrotiks.length > 0 && !selectedMikrotikId} className="w-full gap-2 border-primary/30 text-primary hover:bg-primary/10">
+              <FileCode2 className="w-4 h-4" /> Copiar Script
             </Button>
             
             <p className="text-[10px] text-muted-foreground mt-3 text-center">
-              Para provedores, sugerimos cadastrar o MikroTik na aba lateral para acesso ao dashboard em tempo real.
+              Cada equipamento possui sua própria senha de segurança (Secret) gerada automaticamente.
             </p>
           </div>
         </div>
