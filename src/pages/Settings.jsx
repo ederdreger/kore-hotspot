@@ -3,7 +3,7 @@ import { base44 } from '@/api/base44Client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Server, Shield, Database, Globe, Save, RefreshCw, Eye, EyeOff, CheckCircle, Wifi } from 'lucide-react';
+import { Server, Shield, Database, Globe, Save, RefreshCw, Eye, EyeOff, CheckCircle, Wifi, Search } from 'lucide-react';
 import MikrotikList from '@/components/settings/MikrotikList';
 
 const defaultSettings = {
@@ -90,6 +90,10 @@ export default function Settings() {
   const [showSecrets, setShowSecrets] = useState({});
   const [activeSection, setActiveSection] = useState('mikrotik');
 
+  const [ixcTestCpf, setIxcTestCpf] = useState('');
+  const [ixcTestResult, setIxcTestResult] = useState(null);
+  const [ixcTesting, setIxcTesting] = useState(false);
+
   useEffect(() => {
     base44.entities.Setting.list().then(saved => {
       const map = {};
@@ -138,6 +142,18 @@ export default function Settings() {
       showFeedback('success', `Conexão ${activeSection.toUpperCase()} testada com sucesso!`);
       setTesting(false);
     }, 1500);
+  };
+
+  const handleTestIxc = async () => {
+    setIxcTesting(true);
+    setIxcTestResult(null);
+    try {
+      const res = await base44.functions.invoke('ixcConsultaCliente', { cpf: ixcTestCpf });
+      setIxcTestResult(res.data);
+    } catch (e) {
+      setIxcTestResult({ error: e.message || 'Falha na requisição' });
+    }
+    setIxcTesting(false);
   };
 
   const activeS = sections.find(s => s.id === activeSection);
@@ -227,6 +243,39 @@ export default function Settings() {
                   </div>
                 </div>
               ))}
+              
+              {activeSection === 'ixc' && (
+                <div className="col-span-1 md:col-span-2 mt-4 pt-6 border-t border-border">
+                  <div className="flex flex-col gap-2">
+                    <div>
+                      <h3 className="text-sm font-semibold text-foreground">Testar Integração IXC</h3>
+                      <p className="text-xs text-muted-foreground">Salve as configurações antes de testar. Digite um CPF para simular uma busca na API do IXC.</p>
+                    </div>
+                    <div className="flex gap-3 mt-2">
+                      <div className="max-w-xs w-full">
+                        <Input
+                          value={ixcTestCpf}
+                          onChange={e => setIxcTestCpf(e.target.value)}
+                          placeholder="000.000.000-00"
+                          className="bg-input border-border h-9 text-sm font-mono"
+                        />
+                      </div>
+                      <Button onClick={handleTestIxc} disabled={!ixcTestCpf || ixcTesting} className="h-9 gap-2 bg-secondary hover:bg-secondary/80 text-secondary-foreground">
+                        {ixcTesting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+                        Consultar
+                      </Button>
+                    </div>
+                    {ixcTestResult && (
+                      <div className="mt-3 p-4 rounded-xl bg-secondary/30 border border-border">
+                        <p className="text-xs font-semibold text-muted-foreground mb-2">Resultado da API:</p>
+                        <pre className="text-xs font-mono text-foreground whitespace-pre-wrap break-all">
+                          {JSON.stringify(ixcTestResult, null, 2)}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
