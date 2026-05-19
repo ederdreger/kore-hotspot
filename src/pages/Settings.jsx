@@ -244,8 +244,25 @@ export default function Settings() {
                 </div>
               ))}
               
+              {activeSection === 'radius' && (
+                <div className="col-span-1 md:col-span-2 mt-4 pt-6 border-t border-border">
+                  <div className="p-4 rounded-xl bg-info/10 border border-info/20">
+                    <h3 className="text-sm font-semibold text-info mb-1">Por que usar o FreeRADIUS?</h3>
+                    <p className="text-xs text-info/80 leading-relaxed">
+                      Como o MikroTik <strong>não tem integração direta com o IXC</strong>, o FreeRADIUS é a ferramenta central de utilidade para sua rede. Ele atua como o autenticador local que gerencia a conexão de forma perfeita para todos os acessos dos clientes (tanto os validados pelo IXC quanto os novos cadastros feitos aqui).
+                    </p>
+                  </div>
+                </div>
+              )}
+              
               {activeSection === 'ixc' && (
                 <div className="col-span-1 md:col-span-2 mt-4 pt-6 border-t border-border">
+                  <div className="mb-6 p-4 rounded-xl bg-primary/10 border border-primary/20">
+                    <h3 className="text-sm font-semibold text-primary mb-1">Como o IXC funciona na Kore HotSpot?</h3>
+                    <p className="text-xs text-primary/80 leading-relaxed">
+                      O IXC serve <strong>exclusivamente para consultar clientes já cadastrados</strong>. A integração não sincroniza o MikroTik com o IXC. Clientes novos (ou não encontrados no IXC) farão um cadastro obrigatório e passarão a ser gerenciados localmente pelo banco de dados da Kore HotSpot via FreeRADIUS.
+                    </p>
+                  </div>
                   <div className="flex flex-col gap-2">
                     <div>
                       <h3 className="text-sm font-semibold text-foreground">Testar Integração IXC</h3>

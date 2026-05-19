@@ -12,6 +12,7 @@ const navItems = [
   { label: 'Planos', icon: Zap, path: '/plans' },
   { label: 'Vouchers', icon: Ticket, path: '/vouchers' },
   { label: 'Campanhas', icon: Megaphone, path: '/campaigns' },
+  { label: 'RADIUS Monitor', icon: Radio, path: '/radius', highlight: true },
   { label: 'Monitor de APs', icon: Signal, path: '/ap-monitor', highlight: true },
   { label: 'Logs', icon: ScrollText, path: '/logs' },
   { label: 'Usuários', icon: UserCog, path: '/users' },
