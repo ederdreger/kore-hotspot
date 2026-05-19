@@ -25,14 +25,24 @@ export default function MikrotikStatusModal({ mikrotik, token, onClose }) {
 
   const checkStatus = async () => {
     setLoading(true);
-    const res = await base44.functions.invoke('mikrotikStatus', {
-      host: mikrotik.host,
-      port: mikrotik.port || '22',
-      snmp_port: mikrotik.snmp_port || '161',
-      snmp_community: mikrotik.snmp_community || 'public',
-      token,
-    });
-    setStatus(res.data);
+    try {
+      const res = await base44.functions.invoke('mikrotikStatus', {
+        host: mikrotik.host,
+        port: mikrotik.port || '22',
+        snmp_port: mikrotik.snmp_port || '161',
+        snmp_community: mikrotik.snmp_community || 'public',
+        token,
+      });
+      setStatus(res.data);
+    } catch (error) {
+      setStatus({
+        online: false,
+        snmp_connected: false,
+        snmp_error: error?.response?.status === 504 ? 'A consulta demorou demais. Verifique se o IP/porta SNMP estão acessíveis pela internet.' : 'Falha ao consultar MikroTik',
+        ping: { online: null },
+        ssh: { reachable: null, port: mikrotik.port || '22' },
+      });
+    }
     setLoading(false);
   };
 

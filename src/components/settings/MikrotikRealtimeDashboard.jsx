@@ -76,7 +76,7 @@ export default function MikrotikRealtimeDashboard({ devices, token }) {
         });
         return [device._id, response.data];
       } catch (error) {
-        return [device._id, { error: error?.response?.data?.error || 'Falha ao consultar MikroTik' }];
+        return [device._id, { online: false, snmp_connected: false, snmp_error: error?.response?.status === 504 ? 'Consulta excedeu o tempo limite' : (error?.response?.data?.error || 'Falha ao consultar MikroTik') }];
       }
     }));
 

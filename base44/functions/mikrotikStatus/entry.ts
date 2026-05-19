@@ -19,8 +19,8 @@ function readSnmp(host, community, port, oids) {
     const session = snmp.createSession(host, community, {
       port: parseInt(port) || 161,
       version: snmp.Version2c,
-      timeout: 5000,
-      retries: 1,
+      timeout: 2000,
+      retries: 0,
       transport: 'udp4',
     });
 
@@ -38,40 +38,12 @@ function readSnmp(host, community, port, oids) {
   });
 }
 
-async function pingHost(host) {
-  try {
-    const command = new Deno.Command('ping', {
-      args: ['-c', '1', '-W', '2', host],
-      stdout: 'piped',
-      stderr: 'piped',
-    });
-    const output = await command.output();
-    const stdout = new TextDecoder().decode(output.stdout || new Uint8Array());
-    const stderr = new TextDecoder().decode(output.stderr || new Uint8Array());
-    const text = `${stdout}\n${stderr}`;
-    const latency = text.match(/time[=<]([0-9.]+)\s*ms/i);
-    return {
-      online: output.code === 0,
-      latency_ms: latency ? Number(latency[1]) : null,
-      error: output.code === 0 ? null : 'Sem resposta ao ping ICMP',
-    };
-  } catch (error) {
-    return { online: false, latency_ms: null, error: 'Ping ICMP indisponível no ambiente de execução' };
-  }
+function uncheckedPing() {
+  return { online: null, latency_ms: null, error: 'Ping ICMP não disponível no ambiente seguro da aplicação' };
 }
 
-async function checkTcpPort(host, port) {
-  const numericPort = parseInt(port) || 22;
-  try {
-    const connection = await Promise.race([
-      Deno.connect({ hostname: host, port: numericPort }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500)),
-    ]);
-    connection.close();
-    return { reachable: true, port: numericPort, error: null };
-  } catch (error) {
-    return { reachable: false, port: numericPort, error: 'Porta SSH sem resposta' };
-  }
+function uncheckedSsh(port) {
+  return { reachable: null, port: parseInt(port) || 22, error: 'Teste SSH direto desativado para evitar timeout; use SNMP para coleta' };
 }
 
 function toText(value) {
@@ -119,19 +91,20 @@ Deno.serve(async (req) => {
   if (!host) return Response.json({ error: 'host é obrigatório' }, { status: 400 });
 
   const cleanHost = normalizeHost(host);
-  const [ping, ssh] = await Promise.all([
-    pingHost(cleanHost),
-    checkTcpPort(cleanHost, port),
-  ]);
+  const ping = uncheckedPing();
+  const ssh = uncheckedSsh(port);
 
   try {
-    const data = await readSnmp(cleanHost, snmp_community, snmp_port, Object.values(OIDS));
+    const data = await Promise.race([
+      readSnmp(cleanHost, snmp_community, snmp_port, Object.values(OIDS)),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('SNMP timeout')), 3000)),
+    ]);
     const versionText = toText(data[OIDS.sysDescr]);
 
     if (!versionText && !data[OIDS.uptime]) {
       return Response.json({
-        connected: ping.online || ssh.reachable,
-        online: ping.online || ssh.reachable,
+        connected: false,
+        online: false,
         ping,
         ssh,
         snmp_connected: false,
@@ -165,8 +138,8 @@ Deno.serve(async (req) => {
       msg = 'Comunidade SNMP inválida ou sem permissão de leitura';
     }
     return Response.json({
-      connected: ping.online || ssh.reachable,
-      online: ping.online || ssh.reachable,
+      connected: false,
+      online: false,
       ping,
       ssh,
       snmp_connected: false,
