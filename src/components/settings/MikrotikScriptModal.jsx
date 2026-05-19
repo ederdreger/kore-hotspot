@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { base44 } from '@/api/base44Client';
 import { Button } from '@/components/ui/button';
 import { Copy, FileCode2, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -96,6 +97,32 @@ ${bridgeSection}${vlanSection}
     toast.success('Script copiado para a área de transferência');
   };
 
+  const autoProvision = async () => {
+    const promise = base44.functions.invoke('mikrotikProvision', {
+      host: mikrotik.host,
+      port: mikrotik.port,
+      user: mikrotik.user,
+      password: mikrotik.password, // from local state if available, or saved
+      physical_interface: mikrotik.physical_interface,
+      bridge_name: mikrotik.bridge_name,
+      vlan_id: mikrotik.vlan_id,
+      vlan_interface: mikrotik.vlan_interface,
+      hotspot_network: mikrotik.hotspot_network,
+      snmp_community: mikrotik.snmp_community,
+      radius_host: radius.radius_host || mikrotik.host,
+      radius_secret: radius.radius_secret || mikrotik.radius_secret || generateRadiusSecret(mikrotik),
+    });
+
+    toast.promise(promise, {
+      loading: 'Enviando configuração para o MikroTik via SSH...',
+      success: (res) => {
+        if (res.data?.success) return res.data.message || 'Configurado com sucesso!';
+        throw new Error(res.data?.error || 'Erro desconhecido');
+      },
+      error: (err) => err.message || 'Falha ao provisionar',
+    });
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
       <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden">
@@ -116,18 +143,23 @@ ${bridgeSection}${vlanSection}
 
         <div className="p-6 space-y-4 overflow-y-auto max-h-[calc(90vh-88px)]">
           <div className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-xs text-warning">
-Execute este script atualizado no Terminal do MikroTik: ele valida a ether, cria/vincula bridge, cria VLAN, libera SNMP/SSH no firewall e imprime o diagnóstico final no terminal.
+Você pode aplicar toda a configuração automaticamente (o sistema gerou as senhas de integração do RADIUS) clicando em "Aplicar Automático" ou copiar e colar no Terminal do MikroTik.
           </div>
 
           <pre className="bg-background border border-border rounded-xl p-4 text-xs font-mono text-foreground overflow-x-auto whitespace-pre-wrap leading-relaxed">
             {script}
           </pre>
 
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" size="sm" onClick={onClose} className="border-border">Fechar</Button>
-            <Button size="sm" onClick={copyScript} className="gap-2">
-              <Copy className="w-3.5 h-3.5" /> Copiar Script
+          <div className="flex justify-between items-center mt-4">
+            <Button size="sm" onClick={autoProvision} className="gap-2 bg-info hover:bg-info/90 text-white">
+              Aplicar Automático (SSH)
             </Button>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={onClose} className="border-border">Fechar</Button>
+              <Button size="sm" onClick={copyScript} className="gap-2">
+                <Copy className="w-3.5 h-3.5" /> Copiar Script
+              </Button>
+            </div>
           </div>
         </div>
       </div>

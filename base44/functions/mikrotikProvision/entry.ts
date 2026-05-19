@@ -64,9 +64,13 @@ Deno.serve(async (req) => {
   const body = await req.json().catch(() => ({}));
   const {
     host, port = '22', user: sshUser = 'admin', password = '', token,
-    hotspot_interface = 'ether1',
+    physical_interface = 'ether1',
+    bridge_name = '',
+    vlan_id = '',
+    vlan_interface = 'vlan-hotspot',
     hotspot_network = '192.168.1.0/24',
-    // RADIUS config (read from Settings if not provided directly)
+    snmp_community = 'public',
+    // RADIUS config
     radius_host, radius_secret,
   } = body;
 
@@ -90,17 +94,47 @@ Deno.serve(async (req) => {
     rSecret = map['radius_secret'] || 'testing123';
   }
 
-  // Commands to configure RADIUS on MikroTik via SSH
+  const radiusName = 'Kore-HotSpot';
+  const profileName = 'kore-hotspot-profile';
+  const hotspotName = 'kore-hotspot';
+  const finalHotspotInterface = vlan_id ? vlan_interface : (bridge_name || physical_interface);
+
+  // Comandos detalhados e robustos para provisionamento completo (tudo automático)
   const commands = [
-    // Remove existing RADIUS config to avoid duplicates
-    `/radius remove [find service=hotspot]`,
-    // Add RADIUS server
-    `/radius add service=hotspot address=${rHost} secret=${rSecret} authentication-port=1812 accounting-port=1813 timeout=3000`,
-    // Configure hotspot to use RADIUS
-    `/ip hotspot profile set [find] use-radius=yes`,
-    // Ensure hotspot service is active on interface
-    `/ip hotspot print`,
+    // Limpeza de itens anteriores
+    `/interface vlan remove [find where comment="Kore-HotSpot VLAN"]`,
+    `/ip firewall filter remove [find where comment~"Kore-HotSpot allow"]`,
+    `/radius remove [find where comment="${radiusName}"]`,
+    `/ip hotspot remove [find where name="${hotspotName}"]`,
+    `/ip hotspot profile remove [find where name="${profileName}"]`,
+    
+    // SSH e SNMP
+    `/ip service set ssh disabled=no port=${port}`,
+    `/snmp set enabled=yes contact="Kore-HotSpot" location="Hotspot" trap-version=2`,
+    `/snmp community remove [find where name="${snmp_community}"]`,
+    `/snmp community add name="${snmp_community}" addresses=0.0.0.0/0 read-access=yes write-access=no disabled=no`,
+    
+    // Firewall
+    `/ip firewall filter add chain=input connection-state=established,related action=accept comment="Kore-HotSpot allow established" disabled=no`,
+    `/ip firewall filter add chain=input protocol=udp dst-port=161 action=accept comment="Kore-HotSpot allow SNMP UDP 161" disabled=no`,
+    `/ip firewall filter add chain=input protocol=tcp dst-port=${port} action=accept comment="Kore-HotSpot allow SSH" disabled=no`,
   ];
+
+  if (bridge_name) {
+    commands.push(`:if ([:len [/interface bridge find where name="${bridge_name}"]] = 0) do={ /interface bridge add name="${bridge_name}" protocol-mode=rstp comment="Kore-HotSpot bridge" disabled=no }`);
+    commands.push(`:if ([:len [/interface bridge port find where interface="${physical_interface}" and bridge="${bridge_name}"]] = 0) do={ /interface bridge port remove [find where interface="${physical_interface}"]; /interface bridge port add bridge="${bridge_name}" interface="${physical_interface}" comment="Kore-HotSpot porta fisica" disabled=no }`);
+  }
+
+  if (vlan_id) {
+    commands.push(`/interface vlan add name="${vlan_interface}" interface="${bridge_name || physical_interface}" vlan-id=${vlan_id} comment="Kore-HotSpot VLAN" disabled=no`);
+  }
+
+  // RADIUS e Hotspot
+  commands.push(
+    `/radius add service=hotspot address=${rHost} secret="${rSecret}" authentication-port=1812 accounting-port=1813 timeout=3s disabled=no comment="${radiusName}"`,
+    `/ip hotspot profile add name="${profileName}" use-radius=yes radius-accounting=yes login-by=http-chap,http-pap,cookie html-directory=hotspot`,
+    `/ip hotspot add name="${hotspotName}" interface="${finalHotspotInterface}" profile="${profileName}" disabled=no`
+  );
 
   try {
     const cleanHost = normalizeHost(host);

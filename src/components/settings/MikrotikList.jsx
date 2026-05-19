@@ -91,7 +91,16 @@ export default function MikrotikList() {
 
     setSaving(true);
     const hotspotInterface = form.vlan_id ? form.vlan_interface : (form.bridge_name || form.physical_interface);
-    const deviceData = { ...form, hotspot_interface: hotspotInterface };
+    
+    // Auto-generate a secure RADIUS secret and integration user if not exists
+    const integrationSecret = editing?.radius_secret || `Kore-${Math.random().toString(36).substr(2, 8).toUpperCase()}-HotSpot`;
+    
+    const deviceData = { 
+      ...form, 
+      hotspot_interface: hotspotInterface,
+      radius_secret: integrationSecret
+    };
+    
     const blob = JSON.stringify(deviceData);
     let savedDevice;
 
@@ -250,7 +259,7 @@ export default function MikrotikList() {
               <Button variant="outline" size="sm" onClick={() => setShowForm(false)} className="border-border">Cancelar</Button>
               <Button size="sm" onClick={handleSave} disabled={saving} className="bg-primary text-primary-foreground gap-2">
                 {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />}
-                {editing ? 'Atualizar e gerar script' : 'Cadastrar e gerar script' }
+                {editing ? 'Atualizar e Configurar' : 'Cadastrar e Configurar' }
               </Button>
             </div>
           </div>
