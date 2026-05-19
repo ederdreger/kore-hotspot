@@ -25,6 +25,7 @@ import Login from '@/pages/Login';
 import MikrotikManager from '@/pages/MikrotikManager';
 import ClientPortalLogin from '@/pages/ClientPortalLogin';
 import ClientPortal from '@/pages/ClientPortal';
+import VpnManager from '@/pages/VpnManager';
 
 // AuthenticatedApp: All admin routes are protected by ProtectedRoute
 const AuthenticatedApp = () => {
@@ -50,6 +51,7 @@ const AuthenticatedApp = () => {
           <Route path="/settings" element={<Settings />} />
           <Route path="/users" element={<UsersPage />} />
           <Route path="/mikrotiks" element={<MikrotikManager />} />
+          <Route path="/vpn" element={<VpnManager />} />
         </Route>
       </Route>
 

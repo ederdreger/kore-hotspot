@@ -2,7 +2,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import {
   LayoutDashboard, Users, UserSearch, Zap, Ticket, Megaphone,
-  Settings, ScrollText, Wifi, ChevronRight, X, Radio, Signal, UserCog
+  Settings, ScrollText, Wifi, ChevronRight, X, Radio, Signal, UserCog, Network
 } from 'lucide-react';
 
 import { Server } from 'lucide-react';
@@ -11,6 +11,7 @@ const navItems = [
   { label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard' },
   { label: 'Clientes', icon: Users, path: '/clients' },
   { label: 'Equipamentos', icon: Server, path: '/mikrotiks' },
+  { label: 'VPN L2TP', icon: Network, path: '/vpn' },
   { label: 'Planos', icon: Zap, path: '/plans' },
   { label: 'Vouchers', icon: Ticket, path: '/vouchers' },
   { label: 'Campanhas', icon: Megaphone, path: '/campaigns' },
