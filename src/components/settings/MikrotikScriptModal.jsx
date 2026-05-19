@@ -44,13 +44,16 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
   /interface bridge port add bridge="${bridgeName}" interface="${physicalInterface}" comment="Kore-HotSpot porta fisica" disabled=no
 }` : '';
 
+    const serverIp = radius?.vpn_server_host || mikrotik?.vpn_server || 'COLOQUE_IP_DA_VPS_AQUI';
+    const ipsecSec = radius?.vpn_ipsec_secret || mikrotik?.vpn_secret || 'SUA_SENHA_IPSEC';
+
     const vpnSection = mikrotik.vpn_enabled ? `
 # --- VPN L2TP/IPsec CLIENT ---
 # Conecta o equipamento na Matriz (VPN)
 :do { /interface l2tp-client remove [find name="l2tp-vpn"] } on-error={}
 :do { /ip route remove [find comment="Rota Radius via VPN"] } on-error={}
 
-/interface l2tp-client add connect-to="${radius.vpn_server_host || ''}" name="l2tp-vpn" user="${mikrotik.vpn_user}" password="${mikrotik.vpn_password}" profile="default" use-ipsec=yes ipsec-secret="${radius.vpn_ipsec_secret || ''}" disabled=no
+/interface l2tp-client add connect-to="${serverIp}" name="l2tp-vpn" user="${mikrotik.vpn_user || 'korehotspot'}" password="${mikrotik.vpn_password || 'senha123'}" profile="default" use-ipsec=yes ipsec-secret="${ipsecSec}" disabled=no
 /ip route add dst-address=${radiusHost}/32 gateway="l2tp-vpn" comment="Rota Radius via VPN"
 # -----------------------------
 ` : '';
