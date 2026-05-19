@@ -28,103 +28,66 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
     const profileName = 'kore-hotspot-profile';
     const hotspotName = 'kore-hotspot';
 
-    return `# Kore-HotSpot - Script de integração MikroTik
-# Cole este script no Terminal do MikroTik
-# Inclui configuração SNMP para coleta leve, evitando logs de SSH no MikroTik
+    const finalHotspotInterface = vlanId ? vlanInterface : (bridgeName || physicalInterface);
+    const vlanSection = vlanId ? `
+# Cria/atualiza VLAN ${vlanId} sobre ${bridgeName || physicalInterface}
+/interface vlan remove [find where name="${vlanInterface}"]
+/interface vlan add name="${vlanInterface}" interface="${bridgeName || physicalInterface}" vlan-id=${vlanId} comment="Kore-HotSpot VLAN" disabled=no` : '';
+    const bridgeSection = bridgeName ? `
+# Cria/atualiza bridge e vincula a porta fisica ${physicalInterface}
+/interface bridge remove [find where name="${bridgeName}"]
+/interface bridge add name="${bridgeName}" protocol-mode=rstp comment="Kore-HotSpot bridge" disabled=no
+/interface bridge port remove [find where interface="${physicalInterface}"]
+/interface bridge port add bridge="${bridgeName}" interface="${physicalInterface}" comment="Kore-HotSpot porta fisica" disabled=no` : '';
 
-:local radiusAddress "${radiusHost}"
-:local radiusSecret "${radiusSecret}"
-:local radiusName "${radiusName}"
-:local physicalInterface "${physicalInterface}"
-:local bridgeName "${bridgeName}"
-:local vlanId "${vlanId}"
-:local vlanInterface "${vlanInterface}"
-:local hotspotNetwork "${network}"
-:local snmpCommunity "${snmpCommunity}"
-:local sshPort "${sshPort}"
-:local profileName "${profileName}"
-:local hotspotName "${hotspotName}"
-:local hotspotInterface $physicalInterface
+    return `# Kore-HotSpot - Script corrigido de integração MikroTik
+# Cole TODO o script no Terminal do MikroTik. Não cole linha por linha.
 
-# Valida entradas e interface fisica
-:local sshPortNum [:tonum $sshPort]
-:local vlanIdNum 0
-:if ([:len $vlanId] > 0) do={ :set vlanIdNum [:tonum $vlanId] }
-:if ([:len [/interface find where name=$physicalInterface]] = 0) do={
-  :error ("ERRO: interface fisica nao encontrada: " . $physicalInterface)
-}
-:if (([:len $vlanId] > 0) and (($vlanIdNum < 1) or ($vlanIdNum > 4094))) do={
-  :error ("ERRO: VLAN ID invalida: " . $vlanId)
-}
+# Limpeza de itens quebrados criados por scripts anteriores
+/interface bridge remove [find where comment="Kore-HotSpot bridge"]
+/interface bridge port remove [find where comment="Kore-HotSpot porta fisica"]
+/interface vlan remove [find where comment="Kore-HotSpot VLAN"]
+/ip firewall filter remove [find where comment~"Kore-HotSpot allow"]
+/radius remove [find where comment="${radiusName}"]
+/ip hotspot remove [find where name="${hotspotName}"]
+/ip hotspot profile remove [find where name="${profileName}"]
 
-# Ativa SNMP v2c somente leitura para o Kore-HotSpot
+# Valida porta fisica
+:if ([:len [/interface find where name="${physicalInterface}"]] = 0) do={ :error "ERRO: interface fisica ${physicalInterface} nao encontrada" }
+
+# SSH e SNMP para coleta
+/ip service set ssh disabled=no port=${sshPort}
 /snmp set enabled=yes contact="Kore-HotSpot" location="Hotspot" trap-version=2
-:if ([:len [/snmp community find where name=$snmpCommunity]] = 0) do={
-  /snmp community add name=$snmpCommunity addresses=0.0.0.0/0 read-access=yes write-access=no disabled=no
-} else={
-  /snmp community set [find where name=$snmpCommunity] addresses=0.0.0.0/0 read-access=yes write-access=no disabled=no
-}
+/snmp community remove [find where name="${snmpCommunity}"]
+/snmp community add name="${snmpCommunity}" addresses=0.0.0.0/0 read-access=yes write-access=no disabled=no
 
-# Libera gerenciamento no firewall INPUT antes de qualquer DROP/REJECT
-/ip service set ssh disabled=no port=$sshPortNum
-:foreach ruleComment in={"Kore-HotSpot allow established";"Kore-HotSpot allow SNMP UDP 161";"Kore-HotSpot allow SSH"} do={
-  /ip firewall filter remove [find where comment=$ruleComment]
-}
-/ip firewall filter add chain=input connection-state=established,related action=accept comment="Kore-HotSpot allow established" disabled=no place-before=0
-/ip firewall filter add chain=input protocol=udp dst-port=161 action=accept comment="Kore-HotSpot allow SNMP UDP 161" disabled=no place-before=0
-/ip firewall filter add chain=input protocol=tcp dst-port=$sshPortNum action=accept comment="Kore-HotSpot allow SSH" disabled=no place-before=0
+# Firewall INPUT para SSH/SNMP
+/ip firewall filter add chain=input connection-state=established,related action=accept comment="Kore-HotSpot allow established" disabled=no
+/ip firewall filter add chain=input protocol=udp dst-port=161 action=accept comment="Kore-HotSpot allow SNMP UDP 161" disabled=no
+/ip firewall filter add chain=input protocol=tcp dst-port=${sshPort} action=accept comment="Kore-HotSpot allow SSH" disabled=no
+/ip firewall filter move [find where comment="Kore-HotSpot allow SSH"] destination=0
+/ip firewall filter move [find where comment="Kore-HotSpot allow SNMP UDP 161"] destination=0
+/ip firewall filter move [find where comment="Kore-HotSpot allow established"] destination=0
+${bridgeSection}${vlanSection}
 
-# Cria bridge, vincula ether e cria VLAN corretamente
-:if ([:len $bridgeName] > 0) do={
-  :if ([:len [/interface bridge find where name=$bridgeName]] = 0) do={
-    /interface bridge add name=$bridgeName protocol-mode=rstp comment="Kore-HotSpot bridge"
-  }
+# RADIUS Hotspot
+/radius add service=hotspot address=${radiusHost} secret="${radiusSecret}" authentication-port=1812 accounting-port=1813 timeout=3s disabled=no comment="${radiusName}"
 
-  # remove a ether de outra bridge antes de vincular na bridge correta
-  /interface bridge port remove [find where interface=$physicalInterface]
-  /interface bridge port add bridge=$bridgeName interface=$physicalInterface comment="Kore-HotSpot porta fisica"
-  :set hotspotInterface $bridgeName
-}
+# Perfil e servidor Hotspot na interface final ${finalHotspotInterface}
+/ip hotspot profile add name="${profileName}" use-radius=yes radius-accounting=yes login-by=http-chap,http-pap,cookie html-directory=hotspot
+/ip hotspot add name="${hotspotName}" interface="${finalHotspotInterface}" profile="${profileName}" disabled=no
 
-:if ([:len $vlanId] > 0) do={
-  :local vlanBaseInterface $hotspotInterface
-  :if ([:len [/interface vlan find where name=$vlanInterface]] = 0) do={
-    /interface vlan add name=$vlanInterface interface=$vlanBaseInterface vlan-id=$vlanIdNum comment="Kore-HotSpot VLAN"
-  } else={
-    /interface vlan set [find where name=$vlanInterface] interface=$vlanBaseInterface vlan-id=$vlanIdNum disabled=no
-  }
-  :set hotspotInterface $vlanInterface
-}
-
-# Remove apenas RADIUS antigo do Kore-HotSpot e recria
-/radius remove [find where comment=$radiusName]
-/radius add service=hotspot address=$radiusAddress secret=$radiusSecret authentication-port=1812 accounting-port=1813 timeout=3s disabled=no comment=$radiusName
-
-# Cria ou atualiza o perfil do Hotspot usando RADIUS
-:if ([:len [/ip hotspot profile find where name=$profileName]] = 0) do={
-  /ip hotspot profile add name=$profileName use-radius=yes radius-accounting=yes login-by=http-chap,http-pap,cookie html-directory=hotspot
-} else={
-  /ip hotspot profile set [find where name=$profileName] use-radius=yes radius-accounting=yes login-by=http-chap,http-pap,cookie html-directory=hotspot
-}
-
-# Cria ou atualiza o servidor Hotspot na interface final
-:if ([:len [/ip hotspot find where name=$hotspotName]] = 0) do={
-  /ip hotspot add name=$hotspotName interface=$hotspotInterface profile=$profileName disabled=no
-} else={
-  /ip hotspot set [find where name=$hotspotName] interface=$hotspotInterface profile=$profileName disabled=no
-}
-
-# Diagnostico final: confira se estes itens aparecem no terminal
-:put "=== KORE-HOTSPOT OK ==="
-:put ("Interface final do hotspot: " . $hotspotInterface)
-/interface bridge print detail where comment~"Kore-HotSpot"
-/interface bridge port print detail where comment~"Kore-HotSpot"
-/interface vlan print detail where comment~"Kore-HotSpot"
-/ip firewall filter print detail where comment~"Kore-HotSpot"
+# Diagnostico final
+:put "=== KORE-HOTSPOT FINALIZADO ==="
+:put "Interface final do hotspot: ${finalHotspotInterface}"
+/interface bridge print detail where name="${bridgeName}"
+/interface bridge port print detail where interface="${physicalInterface}"
+/interface vlan print detail where name="${vlanInterface}"
+/ip firewall filter print detail where comment~"Kore-HotSpot allow"
 /snmp print
-/snmp community print detail where name=$snmpCommunity
-/radius print detail where comment=$radiusName
-/ip hotspot print detail where name=$hotspotName`;
+/snmp community print detail where name="${snmpCommunity}"
+/radius print detail where comment="${radiusName}"
+/ip hotspot print detail where name="${hotspotName}"`;
   }, [mikrotik, radius]);
 
   const copyScript = async () => {
