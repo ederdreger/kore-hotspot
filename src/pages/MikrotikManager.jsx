@@ -3,8 +3,10 @@ import { base44 } from '@/api/base44Client';
 import { Shield, Server, Activity, Thermometer, Cpu, Users, Clock, AlertTriangle, RefreshCw, Zap, Wifi, CheckCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
+import { useAuth } from '@/lib/AuthContext';
 
 export default function MikrotikManager() {
+  const { getToken } = useAuth();
   const [mikrotiks, setMikrotiks] = useState([]);
   const [selectedId, setSelectedId] = useState('');
   const [metrics, setMetrics] = useState(null);
@@ -64,6 +66,7 @@ export default function MikrotikManager() {
         password: mtik.password || '',
         snmp_port: mtik.snmp_port || '161',
         snmp_community: mtik.snmp_community || 'public',
+        token: getToken(),
       });
       setMetrics(response.data);
     } catch (err) {
