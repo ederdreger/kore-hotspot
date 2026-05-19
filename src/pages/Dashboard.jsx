@@ -9,6 +9,7 @@ import { ptBR } from 'date-fns/locale';
 import ConversionFunnelChart from '@/components/charts/ConversionFunnelChart';
 import BandwidthByPlanChart from '@/components/charts/BandwidthByPlanChart';
 import HotspotHeatmap from '@/components/charts/HotspotHeatmap';
+import FinancialSummary from '@/components/charts/FinancialSummary';
 import { useNavigate } from 'react-router-dom';
 
 const trafficData = [];
@@ -126,6 +127,9 @@ export default function Dashboard() {
         <ConversionFunnelChart prospects={prospects} clients={clients} />
         <BandwidthByPlanChart plans={plans} clients={clients} />
       </div>
+
+      {/* Financial Summary Row */}
+      <FinancialSummary clients={clients} plans={plans} />
 
       {/* Heatmap full width */}
       <HotspotHeatmap clients={clients} prospects={prospects} />
