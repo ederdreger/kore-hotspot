@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
-import { Ticket, Plus, Search, RefreshCw, Copy, Trash2, Clock } from 'lucide-react';
+import { Ticket, Plus, Search, RefreshCw, Copy, Trash2, Clock, CheckCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -69,9 +69,12 @@ export default function Vouchers() {
     load();
   };
 
+  const [copiedCode, setCopiedCode] = useState(null);
   const copyCode = (code) => {
     navigator.clipboard.writeText(code);
     toast.success(`Código ${code} copiado!`);
+    setCopiedCode(code);
+    setTimeout(() => setCopiedCode(null), 2000);
   };
 
   const stats = [
@@ -138,7 +141,7 @@ export default function Vouchers() {
                     <div className="flex items-center gap-2">
                       <span className="font-mono font-bold text-primary text-sm">{v.code}</span>
                       <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => copyCode(v.code)}>
-                        <Copy className="w-3 h-3" />
+                        {copiedCode === v.code ? <CheckCircle className="w-3 h-3 text-success" /> : <Copy className="w-3 h-3" />}
                       </Button>
                     </div>
                   </td>

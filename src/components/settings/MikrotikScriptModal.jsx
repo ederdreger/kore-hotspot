@@ -1,7 +1,7 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { base44 } from '@/api/base44Client';
 import { Button } from '@/components/ui/button';
-import { Copy, FileCode2, X } from 'lucide-react';
+import { Copy, FileCode2, X, CheckCircle } from 'lucide-react';
 import { toast } from 'sonner';
 
 function generateRadiusSecret(mikrotik) {
@@ -93,9 +93,12 @@ ${bridgeSection}${vlanSection}
 /ip hotspot print detail where name="${hotspotName}"`;
   }, [mikrotik, radius]);
 
+  const [copied, setCopied] = useState(false);
   const copyScript = async () => {
     await navigator.clipboard.writeText(script);
     toast.success('Script copiado para a área de transferência');
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   const autoProvision = async () => {
@@ -158,7 +161,8 @@ Você pode aplicar toda a configuração automaticamente (o sistema gerou as sen
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={onClose} className="border-border">Fechar</Button>
               <Button size="sm" onClick={copyScript} className="gap-2">
-                <Copy className="w-3.5 h-3.5" /> Copiar Script
+                {copied ? <CheckCircle className="w-3.5 h-3.5 text-success" /> : <Copy className="w-3.5 h-3.5" />} 
+                {copied ? 'Copiado!' : 'Copiar Script'}
               </Button>
             </div>
           </div>
