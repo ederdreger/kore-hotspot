@@ -6,12 +6,13 @@ import { Server, Activity, ArrowDown, ArrowUp, Cpu, MemoryStick } from 'lucide-r
 import { format } from 'date-fns';
 
 export default function SnmpPerformanceDashboard({ mikrotik }) {
-  const { sessionToken } = useAuth();
+  const { getToken } = useAuth();
   const [data, setData] = useState([]);
   const [current, setCurrent] = useState({ cpu: 0, memTotal: 0, memUsed: 0, rxMbps: 0, txMbps: 0, protocol: '' });
   const [error, setError] = useState('');
 
   useEffect(() => {
+    const sessionToken = getToken();
     if (!mikrotik || !sessionToken) return;
     
     let isSubscribed = true;
@@ -59,7 +60,7 @@ export default function SnmpPerformanceDashboard({ mikrotik }) {
       isSubscribed = false;
       clearInterval(interval);
     };
-  }, [mikrotik, sessionToken]);
+  }, [mikrotik, getToken]);
 
   if (!mikrotik) return null;
 
