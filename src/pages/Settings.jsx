@@ -108,21 +108,117 @@ export default function Settings() {
   const [copiedVpn, setCopiedVpn] = useState(false);
 
   const getVpnScript = () => {
-    return `# Script para o Servidor VPN L2TP/IPsec (Matriz/VPS)
-# Cole este script no New Terminal do seu MikroTik (CHR) na VPS
+    return `#!/bin/bash
+# Script de Instalação do Servidor VPN L2TP/IPsec no Linux (Ubuntu/Debian)
+# Execute este script como root (sudo su) na sua VPS
 
-/ppp profile remove [find where name="kore-vpn-profile"]
-/ppp profile add name="kore-vpn-profile" use-upnp=no local-address="10.255.255.1"
+echo "Instalando pacotes necessários (strongswan, xl2tpd, ppp)..."
+apt-get update
+apt-get install -y strongswan xl2tpd ppp libpam-radius-auth
 
-/interface l2tp-server server set enabled=yes use-ipsec=yes ipsec-secret="${settings.vpn_ipsec_secret || 'SUA_SENHA_AQUI'}" default-profile="kore-vpn-profile" authentication=mschap2
+echo "Configurando IPsec (StrongSwan)..."
+cat <<EOF > /etc/ipsec.conf
+config setup
+    charondebug="ike 1, knl 1, cfg 0"
+    uniqueids=no
 
-/ip firewall filter remove [find where comment="KoreVPN - L2TP"]
-/ip firewall filter add chain=input protocol=udp dst-port=500,1701,4500 action=accept comment="KoreVPN - L2TP" place-before=0
+conn L2TP-PSK-NAT
+    rightsubnet=vhost:%priv
+    also=L2TP-PSK-noNAT
 
-/ip firewall filter remove [find where comment="KoreVPN - IPsec"]
-/ip firewall filter add chain=input protocol=ipsec-esp action=accept comment="KoreVPN - IPsec" place-before=0
+conn L2TP-PSK-noNAT
+    authby=secret
+    pfs=no
+    auto=add
+    keyingtries=3
+    rekey=no
+    ikelifetime=8h
+    keylife=1h
+    type=transport
+    left=%defaultroute
+    leftprotoport=17/1701
+    right=%any
+    rightprotoport=17/%any
+EOF
 
-:put "=== SERVIDOR VPN L2TP CONFIGURADO COM SUCESSO ==="`;
+cat <<EOF > /etc/ipsec.secrets
+: PSK "${settings.vpn_ipsec_secret || 'SUA_SENHA_IPSEC'}"
+EOF
+
+echo "Configurando L2TP (xl2tpd)..."
+cat <<EOF > /etc/xl2tpd/xl2tpd.conf
+[global]
+ipsec saref = yes
+
+[lns default]
+ip range = 10.255.255.10-10.255.255.250
+local ip = 10.255.255.1
+require chap = yes
+refuse pap = yes
+require authentication = yes
+name = KoreVPN
+ppp debug = yes
+pppoptfile = /etc/ppp/options.xl2tpd
+length bit = yes
+EOF
+
+echo "Configurando PPP com integração RADIUS..."
+cat <<EOF > /etc/ppp/options.xl2tpd
+ipcp-accept-local
+ipcp-accept-remote
+ms-dns 8.8.8.8
+ms-dns 1.1.1.1
+noccp
+auth
+crtscts
+idle 1800
+mtu 1410
+mru 1410
+nodefaultroute
+debug
+lock
+proxyarp
+connect-delay 5000
+# Ativando plugins RADIUS
+plugin radius.so
+plugin radattr.so
+EOF
+
+# O pppd no Ubuntu/Debian costuma usar /etc/radiusclient ou /etc/radcli
+mkdir -p /etc/radiusclient
+cat <<EOF > /etc/radiusclient/radiusclient.conf
+auth_order radius
+login_tries 4
+login_timeout 60
+nologin /etc/nologin
+issue /etc/radiusclient/issue
+authserver ${settings.radius_host || '127.0.0.1'}:${settings.radius_port || '1812'}
+acctserver ${settings.radius_host || '127.0.0.1'}:${parseInt(settings.radius_port || '1812')+1}
+servers /etc/radiusclient/servers
+dictionary /etc/radiusclient/dictionary
+login_radius /usr/sbin/login.radius
+seqfile /var/run/radius.seq
+mapfile /etc/radiusclient/port-id-map
+default_realm
+radius_timeout 10
+radius_retries 3
+bindaddr *
+EOF
+
+cat <<EOF > /etc/radiusclient/servers
+${settings.radius_host || '127.0.0.1'}  ${settings.radius_secret || 'SEGREDO_RADIUS'}
+EOF
+
+# Aplicando regras de Firewall (NAT)
+iptables -t nat -A POSTROUTING -s 10.255.255.0/24 -o eth0 -j MASQUERADE
+# Salvar iptables (pode exigir iptables-persistent)
+# netfilter-persistent save
+
+echo "Reiniciando serviços..."
+systemctl restart strongswan-starter
+systemctl restart xl2tpd
+
+echo "=== SERVIDOR VPN L2TP/IPsec LINUX CONFIGURADO COM SUCESSO ==="`;
   };
 
   useEffect(() => {
@@ -221,7 +317,7 @@ export default function Settings() {
             </div>
             <div className="p-4">
               <p className="text-sm text-muted-foreground mb-3">
-                Abra o New Terminal do seu MikroTik (Matriz) e cole o script abaixo:
+                Acesse o terminal (SSH) da sua VPS Linux (Ubuntu/Debian) como <code>root</code> e cole o script abaixo:
               </p>
               <div className="relative group">
                 <pre className="bg-secondary/50 p-4 rounded-lg text-xs font-mono text-foreground whitespace-pre-wrap border border-border">
@@ -317,13 +413,13 @@ export default function Settings() {
               {activeSection === 'vpn' && (
                 <div className="col-span-1 md:col-span-2 mt-4 pt-6 border-t border-border">
                   <div className="mb-6 p-4 rounded-xl bg-primary/10 border border-primary/20">
-                    <h3 className="text-sm font-semibold text-primary mb-1">Servidor VPN (Matriz / VPS)</h3>
+                    <h3 className="text-sm font-semibold text-primary mb-1">Servidor VPN Linux (VPS / Matriz)</h3>
                     <p className="text-xs text-primary/80 leading-relaxed">
-                      Se você utiliza um MikroTik Cloud Hosted Router (CHR) em uma VPS para ser a Matriz da rede, gere o script abaixo e cole no Terminal desse equipamento para prepará-lo como Servidor L2TP. <strong>Certifique-se de salvar as configurações acima antes de gerar o script.</strong>
+                      Se você utiliza uma VPS Linux (Ubuntu ou Debian) para ser a Matriz da rede e autenticar via FreeRADIUS, gere o script Bash abaixo e execute-o como <code>root</code> no terminal da sua VPS para instalar e configurar o servidor L2TP/IPsec. <strong>Certifique-se de salvar as configurações acima antes de gerar o script.</strong>
                     </p>
                   </div>
                   <Button type="button" onClick={() => setShowVpnScript(true)} className="gap-2 bg-secondary hover:bg-secondary/80 text-secondary-foreground">
-                    <TerminalSquare className="w-4 h-4" /> Gerar Script do Servidor
+                    <TerminalSquare className="w-4 h-4" /> Gerar Bash Script para a VPS (Linux)
                   </Button>
                 </div>
               )}

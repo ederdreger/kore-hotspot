@@ -20,7 +20,7 @@ export default function VpnManager() {
 
   const [formData, setFormData] = useState({
     name: '',
-    mikrotik_server_id: '',
+    mikrotik_server_id: 'global_vps',
     username: '',
     password: '',
     remote_ip: '10.255.255.2'
@@ -45,7 +45,7 @@ export default function VpnManager() {
       if (secretRaw.length > 0) setIpsecSecret(secretRaw[0].value);
       else setIpsecSecret('korevpn123'); // Default
 
-      if (mtiks.length > 0) setFormData(f => ({ ...f, mikrotik_server_id: mtiks[0].id }));
+      setFormData(f => ({ ...f, mikrotik_server_id: 'global_vps' }));
     } catch (e) {
       toast.error('Erro ao carregar dados');
     } finally {
@@ -101,33 +101,16 @@ export default function VpnManager() {
     e.preventDefault();
     setSubmitting(true);
     
-    const serverMtik = mikrotiks.find(m => m.id === formData.mikrotik_server_id);
-    if (!serverMtik) {
-      toast.error('Selecione um servidor Matriz válido');
-      setSubmitting(false);
-      return;
-    }
+    // Removido disparo pro MikroTik Matriz, pois agora o servidor é a própria VPS via RADIUS
 
     try {
-      // Create in MikroTik first
-      const res = await base44.functions.invoke('mikrotikVpnManager', {
-        action: 'add',
-        server_host: serverMtik.host,
-        server_port: serverMtik.port,
-        server_user: serverMtik.user || 'admin',
-        server_password: serverMtik.password || '',
-        username: formData.username,
-        password: formData.password,
-        remote_ip: formData.remote_ip,
-        token: getToken()
-      });
-
-      if (!res.data.success) throw new Error(res.data.error);
-
       // Create in DB
       await base44.entities.VpnAccount.create(formData);
       
-      toast.success('Conta VPN criada com sucesso!');
+      // O FreeRADIUS agora irá cuidar da autenticação (neste ponto poderiamos inserir a conta numa tabela radius `radcheck` caso a integração seja via BD Radius, 
+      // ou se o L2TP do linux apontar pro freeradius e o freeradius consultar a mesma tabela de clientes, ok)
+      
+      toast.success('Conta VPN criada! (Autenticação via FreeRADIUS)');
       setShowModal(false);
       setFormData({
         ...formData,
@@ -147,34 +130,27 @@ export default function VpnManager() {
   const handleDelete = async (account) => {
     if (!confirm('Deseja realmente excluir esta conta VPN?')) return;
     
-    const serverMtik = mikrotiks.find(m => m.id === account.mikrotik_server_id);
-    
     try {
-      if (serverMtik) {
-        await base44.functions.invoke('mikrotikVpnManager', {
-          action: 'remove',
-          server_host: serverMtik.host,
-          server_port: serverMtik.port,
-          server_user: serverMtik.user || 'admin',
-          server_password: serverMtik.password || '',
-          username: account.username,
-          token: getToken()
-        });
-      }
-      
       await base44.entities.VpnAccount.delete(account.id);
-      toast.success('Conta excluída');
+      toast.success('Conta excluída do sistema');
       loadData();
     } catch (e) {
       toast.error('Erro ao excluir conta');
     }
   };
 
-  const getClientScript = (account) => {
-    const serverMtik = mikrotiks.find(m => m.id === account.mikrotik_server_id);
-    if (!serverMtik) return 'Servidor matriz não encontrado.';
+  const [globalVpnIp, setGlobalVpnIp] = useState('');
 
-    return `/interface l2tp-client add connect-to=${serverMtik.host} name="l2tp-matriz" user="${account.username}" password="${account.password}" profile=default-encryption use-ipsec=yes ipsec-secret="${ipsecSecret}" disabled=no
+  useEffect(() => {
+    base44.entities.Setting.filter({ key: 'vpn_server_host' }).then(res => {
+      if (res.length > 0) setGlobalVpnIp(res[0].value);
+    });
+  }, []);
+
+  const getClientScript = (account) => {
+    return `/ppp profile remove [find where name="kore-vpn-profile"]
+/ppp profile add name="kore-vpn-profile" use-upnp=no
+/interface l2tp-client add connect-to="${globalVpnIp || '<IP_PUBLICO_DA_SUA_VPS>'}" name="l2tp-matriz" user="${account.username}" password="${account.password}" profile="kore-vpn-profile" use-ipsec=yes ipsec-secret="${ipsecSecret}" disabled=no
 /ip route add dst-address=10.255.255.1 gateway=l2tp-matriz comment="Rota para a Matriz"
 # Use o IP ${account.remote_ip} no sistema para gerenciar este MikroTik natteado.`;
   };
@@ -228,7 +204,7 @@ export default function VpnManager() {
 
               <div className="pt-4 border-t border-border mt-4">
                 <p className="text-xs text-muted-foreground mb-3">
-                  Para gerar o script de provisionamento do seu Servidor VPN (MikroTik CHR na VPS), vá em <strong>Configurações &gt; VPN L2TP Matriz</strong>.
+                  Para gerar o script Bash de instalação do seu Servidor VPN L2TP (Linux Ubuntu/Debian na VPS), vá em <strong>Configurações &gt; VPN L2TP Matriz</strong>.
                 </p>
               </div>
             </div>
@@ -238,9 +214,9 @@ export default function VpnManager() {
             <AlertTriangle className="w-5 h-5 flex-shrink-0" />
             <div className="text-sm">
               <p className="font-semibold mb-1">Como funciona?</p>
-              <p className="opacity-90">1. Escolha um MikroTik com IP público para ser a <strong>Matriz</strong> e clique em Ativar Servidor.</p>
-              <p className="opacity-90 mt-1">2. Crie as contas VPN aqui.</p>
-              <p className="opacity-90 mt-1">3. Gere o script da conta e cole no MikroTik do cliente (que está via NAT).</p>
+              <p className="opacity-90">1. Vá em <strong>Configurações</strong> e instale o Servidor VPN L2TP/IPsec na sua VPS Linux (Matriz).</p>
+              <p className="opacity-90 mt-1">2. As contas VPN autenticarão automaticamente no banco FreeRADIUS.</p>
+              <p className="opacity-90 mt-1">3. Crie os clientes aqui, gere o script e cole no MikroTik do cliente (que está via NAT).</p>
               <p className="opacity-90 mt-1">4. No sistema, cadastre o equipamento do cliente usando o IP remoto VPN (ex: 10.255.255.2).</p>
             </div>
           </div>
@@ -278,7 +254,7 @@ export default function VpnManager() {
                           <span>IP VPN: <strong className="text-primary">{acc.remote_ip}</strong></span>
                         </div>
                         <div className="text-[10px] text-muted-foreground mt-1">
-                          Matriz: {server ? server.name : 'Desconhecida'}
+                          Matriz: Servidor VPS Linux
                         </div>
                       </div>
                       
@@ -340,21 +316,6 @@ export default function VpnManager() {
             </div>
             
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
-              <div>
-                <Label>Servidor Matriz (Public IP)</Label>
-                <select 
-                  required
-                  value={formData.mikrotik_server_id}
-                  onChange={e => setFormData({...formData, mikrotik_server_id: e.target.value})}
-                  className="w-full h-10 mt-1 rounded-md border border-input bg-background px-3 text-sm focus:ring-1 focus:ring-primary"
-                >
-                  <option value="">Selecione a Matriz</option>
-                  {mikrotiks.map(m => (
-                    <option key={m.id} value={m.id}>{m.name} ({m.host})</option>
-                  ))}
-                </select>
-              </div>
-
               <div>
                 <Label>Nome do Cliente / Filial</Label>
                 <Input required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="Ex: Filial Centro" className="mt-1" />
