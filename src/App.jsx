@@ -23,6 +23,8 @@ import HotspotLogin from '@/pages/HotspotLogin';
 import UsersPage from '@/pages/Users';
 import Login from '@/pages/Login';
 import MikrotikManager from '@/pages/MikrotikManager';
+import ClientPortalLogin from '@/pages/ClientPortalLogin';
+import ClientPortal from '@/pages/ClientPortal';
 
 // AuthenticatedApp: All admin routes are protected by ProtectedRoute
 const AuthenticatedApp = () => {
@@ -67,6 +69,9 @@ function App() {
             {/* Captive Portal e Hotspot Login — standalone */}
             <Route path="/hotspot-login" element={<HotspotLogin />} />
             <Route path="/captive-portal" element={<CaptivePortal />} />
+            {/* Portal do Cliente */}
+            <Route path="/portal/login" element={<ClientPortalLogin />} />
+            <Route path="/portal" element={<ClientPortal />} />
             {/* Rotas do admin — com autenticação */}
             <Route path="/*" element={<AuthenticatedApp />} />
           </Routes>
