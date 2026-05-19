@@ -1,17 +1,16 @@
 import { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
-import { useAuth } from '@/lib/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Plus, Pencil, Trash2, Server, Eye, EyeOff, CheckCircle, RefreshCw, X, Wifi, LayoutDashboard, Radio, Terminal } from 'lucide-react';
+import { Plus, Pencil, Trash2, Server, Eye, EyeOff, CheckCircle, RefreshCw, X, Wifi, LayoutDashboard, Terminal } from 'lucide-react';
 import { toast } from 'sonner';
 import MikrotikDashboard from './MikrotikDashboard';
+import MikrotikScriptModal from './MikrotikScriptModal';
 
 const EMPTY = { name: '', host: '', port: '22', user: 'admin', password: '', hotspot_interface: 'ether1', hotspot_network: '192.168.1.0/24' };
 
 export default function MikrotikList() {
-  const { getToken } = useAuth();
   const [mikrotiks, setMikrotiks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -20,7 +19,8 @@ export default function MikrotikList() {
   const [saving, setSaving] = useState(false);
   const [showPass, setShowPass] = useState(false);
   const [viewingMt, setViewingMt] = useState(null);
-  const [provisioning, setProvisioning] = useState(null); // _id of mt being provisioned
+  const [scriptMt, setScriptMt] = useState(null);
+  const [radiusSettings, setRadiusSettings] = useState({});
 
   const load = async () => {
     setLoading(true);
@@ -31,6 +31,10 @@ export default function MikrotikList() {
       try { return { _id: s.id, ...JSON.parse(s.value) }; } catch { return null; }
     }).filter(Boolean);
     setMikrotiks(parsed);
+    const radius = await base44.entities.Setting.filter({ category: 'radius' }).catch(() => []);
+    const radiusMap = {};
+    radius.forEach(s => { radiusMap[s.key] = s.value; });
+    setRadiusSettings(radiusMap);
     setLoading(false);
   };
 
@@ -73,30 +77,6 @@ export default function MikrotikList() {
     load();
   };
 
-  const handleProvision = async (mt) => {
-    setProvisioning(mt._id);
-    try {
-      const res = await base44.functions.invoke('mikrotikProvision', {
-        host: mt.host,
-        port: mt.port,
-        user: mt.user,
-        password: mt.password,
-        hotspot_interface: mt.hotspot_interface,
-        hotspot_network: mt.hotspot_network,
-        token: getToken(),
-      });
-      if (res.data?.success) {
-        toast.success(`RADIUS configurado em ${mt.name} com sucesso!`);
-      } else {
-        toast.error(`Erro: ${res.data?.error || 'Falha no provisionamento'}`);
-      }
-    } catch (err) {
-      toast.error(`Erro de conexão: ${err.message}`);
-    } finally {
-      setProvisioning(null);
-    }
-  };
-
   const handleDelete = async (mt) => {
     await base44.entities.Setting.delete(mt._id);
     toast.info(`${mt.name} removido`);
@@ -116,7 +96,7 @@ export default function MikrotikList() {
     <div>
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
-        <p className="text-xs text-muted-foreground">Gerencie múltiplos roteadores MikroTik</p>
+        <p className="text-xs text-muted-foreground">Cadastre o equipamento e gere o script para colar no Terminal do MikroTik</p>
         <Button size="sm" onClick={openNew} className="gap-1.5">
           <Plus className="w-3.5 h-3.5" />
           Cadastrar MikroTik
@@ -155,14 +135,11 @@ export default function MikrotikList() {
                   <LayoutDashboard className="w-3.5 h-3.5" />
                 </button>
                 <button
-                  onClick={() => handleProvision(mt)}
-                  disabled={provisioning === mt._id}
-                  className="p-1.5 rounded-lg hover:bg-success/10 text-muted-foreground hover:text-success transition-colors disabled:opacity-50"
-                  title="Provisionar RADIUS via SSH"
+                  onClick={() => setScriptMt(mt)}
+                  className="p-1.5 rounded-lg hover:bg-success/10 text-muted-foreground hover:text-success transition-colors"
+                  title="Gerar script para Terminal"
                 >
-                  {provisioning === mt._id
-                    ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    : <Radio className="w-3.5 h-3.5" />}
+                  <Terminal className="w-3.5 h-3.5" />
                 </button>
                 <button onClick={() => openEdit(mt)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-primary transition-colors" title="Editar">
                   <Pencil className="w-3.5 h-3.5" />
@@ -178,6 +155,7 @@ export default function MikrotikList() {
 
       {/* Dashboard Modal */}
       {viewingMt && <MikrotikDashboard mikrotik={viewingMt} onClose={() => setViewingMt(null)} />}
+      {scriptMt && <MikrotikScriptModal mikrotik={scriptMt} radius={radiusSettings} onClose={() => setScriptMt(null)} />}
 
       {/* Modal Form */}
       {showForm && (
