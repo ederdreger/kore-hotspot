@@ -96,29 +96,30 @@ export default function MikrotikDashboard({ mikrotik, onClose }) {
       let detail = null;
 
       if (id === 'ping') {
-        status = metrics?.error ? 'error' : 'ok';
-        detail = metrics?.error ? 'Host inacessível' : `${Math.floor(1 + Math.random() * 5)}ms`;
+        status = isOnline ? 'ok' : 'error';
+        detail = isOnline ? 'SSH respondeu' : 'Host inacessível';
       } else if (id === 'api') {
-        status = metrics?.error ? 'error' : 'ok';
-        detail = metrics?.error ? `Porta ${mikrotik.port} fechada` : 'Autenticado';
+        status = isOnline ? 'ok' : 'error';
+        detail = isOnline ? 'Autenticado' : `Porta ${mikrotik.port} sem resposta válida`;
       } else if (id === 'hotspot') {
-        status = metrics?.error ? 'error' : 'ok';
-        detail = metrics?.error ? 'Indisponível' : `Interface: ${mikrotik.hotspot_interface}`;
+        status = isOnline ? 'ok' : 'error';
+        detail = isOnline ? `Interface: ${mikrotik.hotspot_interface}` : 'Indisponível';
       } else if (id === 'users') {
-        status = metrics?.error ? 'error' : 'ok';
-        detail = metrics?.error ? 'N/A' : `${metrics?.active_users ?? 0} ativos`;
+        status = isOnline ? 'ok' : 'error';
+        detail = isOnline ? `${metrics?.active_users ?? 0} ativos` : 'N/A';
       }
 
       setTests(prev => prev.map(t => t.id === id ? { ...t, status, detail } : t));
     }
 
     setTestRunning(false);
-    if (!metrics?.error) toast.success('Todos os testes concluídos');
+    if (isOnline) toast.success('Todos os testes concluídos');
     else toast.error('Falha em alguns testes');
   };
 
-  const cpuPercent = metrics?.cpu_load ?? null;
-  const memUsed = metrics?.total_memory && metrics?.free_memory
+  const isOnline = !loading && metrics?.connected === true && !metrics?.error;
+  const cpuPercent = isOnline ? (metrics?.cpu_load ?? null) : null;
+  const memUsed = isOnline && metrics?.total_memory && metrics?.free_memory
     ? Math.round(((metrics.total_memory - metrics.free_memory) / metrics.total_memory) * 100)
     : null;
 
@@ -138,11 +139,11 @@ export default function MikrotikDashboard({ mikrotik, onClose }) {
             {/* Status pill */}
             <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${
               loading ? 'bg-muted text-muted-foreground border-border' :
-              metrics?.error ? 'bg-destructive/10 text-destructive border-destructive/30' :
+              !isOnline ? 'bg-destructive/10 text-destructive border-destructive/30' :
               'bg-success/10 text-success border-success/30'
             }`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${loading ? 'bg-muted-foreground animate-pulse' : metrics?.error ? 'bg-destructive' : 'bg-success animate-pulse'}`} />
-              {loading ? 'Verificando...' : metrics?.error ? 'Offline' : 'Online'}
+              <span className={`w-1.5 h-1.5 rounded-full ${loading ? 'bg-muted-foreground animate-pulse' : !isOnline ? 'bg-destructive' : 'bg-success animate-pulse'}`} />
+              {loading ? 'Verificando...' : !isOnline ? 'Offline' : 'Online'}
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -205,7 +206,7 @@ export default function MikrotikDashboard({ mikrotik, onClose }) {
           )}
 
           {/* Extra info row */}
-          {!loading && !metrics?.error && (
+          {isOnline && (
             <div className="grid grid-cols-2 gap-3">
               <StatCard
                 icon={Server}

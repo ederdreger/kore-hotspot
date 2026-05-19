@@ -53,10 +53,13 @@ async function requireAdmin(base44, token) {
   const sessions = await base44.asServiceRole.entities.AdminSession.filter({ token });
   const session = sessions?.[0];
   if (!session || new Date(session.expires_at) < new Date()) throw new Error('Sessão expirada');
-  const users = await base44.asServiceRole.entities.AdminUser.filter({ email: session.email });
-  const user = users?.[0];
-  if (!user || user.status === 'inactive' || user.role === 'inactive') throw new Error('Usuário inativo');
-  return sanitizeUser(user);
+  return {
+    id: session.admin_user_id,
+    email: session.email,
+    full_name: session.email,
+    role: session.role || 'admin',
+    status: 'active'
+  };
 }
 
 Deno.serve(async (req) => {

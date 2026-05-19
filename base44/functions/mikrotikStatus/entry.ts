@@ -6,10 +6,7 @@ async function requireAdmin(base44, token) {
   const sessions = await base44.asServiceRole.entities.AdminSession.filter({ token });
   const session = sessions?.[0];
   if (!session || new Date(session.expires_at) < new Date()) throw new Error('Sessão administrativa expirada');
-  const users = await base44.asServiceRole.entities.AdminUser.filter({ email: session.email });
-  const user = users?.[0];
-  if (!user || user.status === 'inactive' || user.role === 'inactive') throw new Error('Usuário administrativo inativo');
-  return user;
+  return session;
 }
 
 function normalizeHost(host) {
@@ -89,6 +86,12 @@ Deno.serve(async (req) => {
     const resOutput = await sshExec(cleanHost, port, sshUser, password,
       '/system resource print');
     const res = parsePrint(resOutput);
+    const hasRouterOsData = Boolean(res.uptime || res.version || res['board-name'] || res['cpu-load'] || res['free-memory'] || res['total-memory']);
+    if (!hasRouterOsData) {
+      return Response.json({
+        error: `SSH conectou em ${cleanHost}:${port}, mas o RouterOS não retornou dados válidos. Verifique se o usuário tem permissão e se o comando /system resource print funciona no terminal.`
+      }, { status: 200 });
+    }
 
     let activeUsers = 0;
     let hotspotCount = 0;
@@ -104,8 +107,9 @@ Deno.serve(async (req) => {
     } catch (_) {}
 
     return Response.json({
+      connected: true,
       uptime: res['uptime'] || null,
-      cpu_load: parseInt(res['cpu-load']) || 0,
+      cpu_load: res['cpu-load'] !== undefined ? (parseInt(res['cpu-load']) || 0) : null,
       free_memory: parseInt(res['free-memory']) || null,
       total_memory: parseInt(res['total-memory']) || null,
       temperature: res['cpu-temperature'] ? parseInt(res['cpu-temperature']) : null,
