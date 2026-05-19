@@ -27,11 +27,11 @@ function sshExec(host, port, username, password, command) {
     };
     const timer = setTimeout(() => {
       conn.destroy();
-      finish(new Error('Timeout SSH ao conectar em ' + host + ':' + port));
-    }, 15000);
+      finish(new Error('Timeout ao executar comando SSH em ' + host + ':' + port));
+    }, 20000);
 
     conn.on('ready', () => {
-      conn.exec(`terminal length 0\n${command}`, { pty: true }, (err, stream) => {
+      conn.exec(command, (err, stream) => {
         if (err) return finish(err);
         stream.on('data', d => { output += d.toString(); });
         stream.stderr.on('data', d => { output += d.toString(); });
@@ -48,7 +48,7 @@ function sshExec(host, port, username, password, command) {
       username,
       password,
       tryKeyboard: true,
-      readyTimeout: 15000,
+      readyTimeout: 20000,
       algorithms: {
         cipher: ['aes256-cbc', 'aes128-cbc'],
         serverHostKey: ['ssh-rsa', 'rsa-sha2-256', 'rsa-sha2-512', 'ecdsa-sha2-nistp256', 'ecdsa-sha2-nistp384', 'ecdsa-sha2-nistp521'],
@@ -100,7 +100,7 @@ Deno.serve(async (req) => {
     // Fetch system resources and hotspot active users in sequence
     const cleanHost = normalizeHost(host);
     const resOutput = await sshExec(cleanHost, port, sshUser, password,
-      '/system resource print terse without-paging');
+      '/system resource print terse');
     const res = parsePrint(resOutput);
     const hasRouterOsData = Boolean(res.uptime || res.version || res['board-name'] || res['cpu-load'] || res['free-memory'] || res['total-memory']);
     if (!hasRouterOsData) {
@@ -145,7 +145,7 @@ Deno.serve(async (req) => {
   } catch (err) {
     let msg = err.message;
     if (msg.includes('Timeout') || msg.includes('timeout')) {
-      msg = `Timeout SSH em ${normalizeHost(host)}:${port} — verifique NAT/firewall e se essa porta está acessível pela internet`;
+      msg = `O MikroTik aceitou o SSH, mas demorou para responder ao comando em ${normalizeHost(host)}:${port}. Verifique se o usuário tem permissão para executar /system resource print`;
     } else if (msg.includes('refused') || msg.includes('ECONNREFUSED')) {
       msg = `Conexão SSH recusada em ${host}:${port} — verifique se o SSH está ativo no MikroTik`;
     } else if (msg.includes('Authentication') || msg.includes('auth')) {
