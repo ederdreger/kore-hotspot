@@ -83,12 +83,21 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 /ip firewall filter move [find where comment="Kore-HotSpot allow established"] destination=0
 ${bridgeSection}${vlanSection}
 ${vpnSection}
-# RADIUS Hotspot
-/radius add service=hotspot address=${radiusHost} secret="${radiusSecret}" authentication-port=1812 accounting-port=1813 timeout=3s disabled=no comment="${radiusName}"
+# RADIUS (Hotspot + PPPoE)
+/radius add service=hotspot,ppp address=${radiusHost} secret="${radiusSecret}" authentication-port=1812 accounting-port=1813 timeout=3s disabled=no comment="${radiusName}"
 
 # Perfil e servidor Hotspot na interface final ${finalHotspotInterface}
 /ip hotspot profile add name="${profileName}" use-radius=yes radius-accounting=yes login-by=http-chap,http-pap,cookie html-directory=hotspot
 /ip hotspot add name="${hotspotName}" interface="${finalHotspotInterface}" profile="${profileName}" disabled=no
+
+# Servidor PPPoE, Profile e Usuário de Teste
+/ppp profile remove [find where name="kore-pppoe-profile"]
+/ppp profile add name="kore-pppoe-profile" use-upnp=no
+/interface pppoe-server server remove [find where service-name="kore-pppoe"]
+/interface pppoe-server server add service-name="kore-pppoe" interface="${finalHotspotInterface}" default-profile="kore-pppoe-profile" disabled=no
+/ppp aaa set use-radius=yes accounting=yes
+/ppp secret remove [find where name="kore-teste"]
+/ppp secret add name="kore-teste" password="kore-teste" profile="kore-pppoe-profile" service=pppoe comment="Kore PPPoE Test"
 
 # Diagnostico final
 :put "=== KORE-HOTSPOT FINALIZADO ==="
