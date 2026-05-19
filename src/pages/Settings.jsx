@@ -112,9 +112,9 @@ export default function Settings() {
 # Script de Instalação do Servidor VPN L2TP/IPsec no Linux (Ubuntu/Debian)
 # Execute este script como root (sudo su) na sua VPS
 
-echo "Instalando pacotes necessários (strongswan, xl2tpd, ppp)..."
+echo "Instalando pacotes necessários (strongswan, xl2tpd, ppp e freeradius)..."
 apt-get update
-apt-get install -y strongswan xl2tpd ppp libpam-radius-auth
+apt-get install -y strongswan xl2tpd ppp libpam-radius-auth freeradius freeradius-mysql
 
 echo "Configurando IPsec (StrongSwan)..."
 cat <<EOF > /etc/ipsec.conf
