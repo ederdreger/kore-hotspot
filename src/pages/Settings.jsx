@@ -306,8 +306,8 @@ echo "=== SERVIDOR VPN L2TP/IPsec LINUX CONFIGURADO COM SUCESSO ==="`;
       {/* Modals */}
       {showVpnScript && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
-          <div className="bg-card border border-border rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden">
-            <div className="p-4 border-b border-border flex justify-between items-center">
+          <div className="bg-card border border-border rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="p-4 border-b border-border flex justify-between items-center flex-shrink-0">
               <h3 className="font-semibold text-sm flex items-center gap-2">
                 <TerminalSquare className="w-4 h-4" /> Script para o Servidor VPS
               </h3>
@@ -315,12 +315,12 @@ echo "=== SERVIDOR VPN L2TP/IPsec LINUX CONFIGURADO COM SUCESSO ==="`;
                 <X className="w-4 h-4" />
               </Button>
             </div>
-            <div className="p-4">
-              <p className="text-sm text-muted-foreground mb-3">
+            <div className="p-4 overflow-y-auto flex-1 scrollbar-thin">
+              <p className="text-sm text-muted-foreground mb-3 flex-shrink-0">
                 Acesse o terminal (SSH) da sua VPS Linux (Ubuntu/Debian) como <code>root</code> e cole o script abaixo:
               </p>
-              <div className="relative group">
-                <pre className="bg-secondary/50 p-4 rounded-lg text-xs font-mono text-foreground whitespace-pre-wrap border border-border">
+              <div className="relative group flex-1">
+                <pre className="bg-secondary/50 p-4 rounded-lg text-xs font-mono text-foreground whitespace-pre-wrap border border-border max-h-[60vh] overflow-y-auto scrollbar-thin">
                   {getVpnScript()}
                 </pre>
                 <Button 
