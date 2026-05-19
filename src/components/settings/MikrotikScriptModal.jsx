@@ -3,16 +3,27 @@ import { Button } from '@/components/ui/button';
 import { Copy, FileCode2, X } from 'lucide-react';
 import { toast } from 'sonner';
 
+function generateRadiusSecret(mikrotik) {
+  const source = `${mikrotik?.name || 'kore'}-${mikrotik?.host || 'hotspot'}`;
+  let hash = 0;
+  for (let i = 0; i < source.length; i += 1) {
+    hash = ((hash << 5) - hash) + source.charCodeAt(i);
+    hash |= 0;
+  }
+  return `Kore-${Math.abs(hash).toString(36).toUpperCase()}-HotSpot`;
+}
+
 export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
   const script = useMemo(() => {
     const radiusHost = radius.radius_host || mikrotik.host || 'SEU_IP_RADIUS';
-    const radiusSecret = radius.radius_secret || 'SUA_CHAVE_RADIUS';
+    const radiusSecret = radius.radius_secret || mikrotik.radius_secret || generateRadiusSecret(mikrotik);
     const physicalInterface = mikrotik.physical_interface || mikrotik.hotspot_interface || 'ether1';
     const bridgeName = mikrotik.bridge_name || mikrotik.hotspot_interface || 'bridge-hotspot';
     const vlanId = mikrotik.vlan_id || '';
     const vlanInterface = mikrotik.vlan_interface || 'vlan-hotspot';
     const network = mikrotik.hotspot_network || '192.168.50.0/24';
     const snmpCommunity = mikrotik.snmp_community || 'public';
+    const radiusName = 'Kore-HotSpot';
     const profileName = 'kore-hotspot-profile';
     const hotspotName = 'kore-hotspot';
 
@@ -22,6 +33,7 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 
 :local radiusAddress "${radiusHost}"
 :local radiusSecret "${radiusSecret}"
+:local radiusName "${radiusName}"
 :local physicalInterface "${physicalInterface}"
 :local bridgeName "${bridgeName}"
 :local vlanId "${vlanId}"
@@ -66,11 +78,11 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
   :set hotspotInterface $vlanInterface
 }
 
-# Remove apenas RADIUS antigo criado para Hotspot
-/radius remove [find where service~"hotspot"]
+# Remove apenas RADIUS antigo do Kore-HotSpot
+/radius remove [find where comment=$radiusName]
 
-# Adiciona servidor RADIUS do Hotspot
-/radius add service=hotspot address=$radiusAddress secret=$radiusSecret authentication-port=1812 accounting-port=1813 timeout=3s disabled=no
+# Adiciona servidor RADIUS do Hotspot com chave gerada automaticamente
+/radius add service=hotspot address=$radiusAddress secret=$radiusSecret authentication-port=1812 accounting-port=1813 timeout=3s disabled=no comment=$radiusName
 
 # Cria ou atualiza o perfil do Hotspot usando RADIUS
 :if ([:len [/ip hotspot profile find where name=$profileName]] = 0) do={
@@ -122,7 +134,7 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 
         <div className="p-6 space-y-4 overflow-y-auto max-h-[calc(90vh-88px)]">
           <div className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-xs text-warning">
-Antes de copiar, confirme o Host RADIUS, Shared Secret, comunidade SNMP, interface ether, bridge e VLAN opcional. A coleta de status será feita via SNMP, sem SSH.
+Antes de copiar, confirme o Host RADIUS, comunidade SNMP, interface ether, bridge e VLAN opcional. A chave RADIUS será gerada automaticamente e o identificador padrão será Kore-HotSpot.
           </div>
 
           <pre className="bg-background border border-border rounded-xl p-4 text-xs font-mono text-foreground overflow-x-auto whitespace-pre-wrap leading-relaxed">
