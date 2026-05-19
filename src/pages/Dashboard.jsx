@@ -49,7 +49,7 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard title="Clientes Ativos" value={activeClients} subtitle={`${trialClients} em trial`} icon={Users} color="primary" trend="up" trendValue="+5%" onClick={() => navigate('/clients')} />
         <StatCard title="Prospectos" value={newProspects} subtitle="Novos este mês" icon={UserSearch} color="info" trend="up" trendValue="+12%" onClick={() => navigate('/prospects')} />
-        <StatCard title="Online Agora" value={onlineUsers.length} subtitle="2 em trial" icon={Wifi} color="success" onClick={() => navigate('/radius')} />
+        <StatCard title="Online Agora" value={onlineUsers.length} subtitle="2 em trial" icon={Wifi} color="success" />
         <StatCard title="Vouchers" value={availableVouchers} subtitle="Disponíveis" icon={Ticket} color="warning" onClick={() => navigate('/vouchers')} />
       </div>
 

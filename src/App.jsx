@@ -16,7 +16,6 @@ import Campaigns from '@/pages/Campaigns';
 import Logs from '@/pages/Logs';
 import Settings from '@/pages/Settings';
 import CaptivePortal from '@/pages/CaptivePortal';
-import RadiusMonitor from '@/pages/RadiusMonitor';
 import APMonitor from '@/pages/APMonitor';
 import HotspotPlans from '@/pages/HotspotPlans';
 import HotspotLogin from '@/pages/HotspotLogin';
@@ -41,7 +40,6 @@ const AuthenticatedApp = () => {
           <Route path="/hotspot-plans" element={<Navigate to="/plans" replace />} />
           <Route path="/vouchers" element={<Vouchers />} />
           <Route path="/campaigns" element={<Campaigns />} />
-          <Route path="/radius" element={<RadiusMonitor />} />
           <Route path="/ap-monitor" element={<APMonitor />} />
           <Route path="/logs" element={<Logs />} />
           <Route path="/settings" element={<Settings />} />
