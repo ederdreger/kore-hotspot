@@ -12,12 +12,13 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
     const vlanId = mikrotik.vlan_id || '';
     const vlanInterface = mikrotik.vlan_interface || 'vlan-hotspot';
     const network = mikrotik.hotspot_network || '192.168.50.0/24';
+    const snmpCommunity = mikrotik.snmp_community || 'public';
     const profileName = 'kore-hotspot-profile';
     const hotspotName = 'kore-hotspot';
 
     return `# Kore-HotSpot - Script de integração MikroTik
 # Cole este script no Terminal do MikroTik
-# Inclui liberação SSH/API para o sistema consultar status, se houver firewall ativo
+# Inclui configuração SNMP para coleta leve, evitando logs de SSH no MikroTik
 
 :local radiusAddress "${radiusHost}"
 :local radiusSecret "${radiusSecret}"
@@ -26,12 +27,21 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 :local vlanId "${vlanId}"
 :local vlanInterface "${vlanInterface}"
 :local hotspotNetwork "${network}"
+:local snmpCommunity "${snmpCommunity}"
 :local profileName "${profileName}"
 :local hotspotName "${hotspotName}"
 :local hotspotInterface $bridgeName
 
-# Libera SSH/API no firewall se existir filtro de entrada
-/ip firewall filter add chain=input protocol=tcp dst-port=22,8728 action=accept comment="Kore-HotSpot allow SSH/API" place-before=0 disabled=no
+# Ativa SNMP v2c somente leitura para o Kore-HotSpot
+/snmp set enabled=yes contact="Kore-HotSpot" location="Hotspot"
+:if ([:len [/snmp community find where name=$snmpCommunity]] = 0) do={
+  /snmp community add name=$snmpCommunity read-access=yes write-access=no disabled=no
+} else={
+  /snmp community set [find where name=$snmpCommunity] read-access=yes write-access=no disabled=no
+}
+
+# Libera SNMP no firewall se existir filtro de entrada
+/ip firewall filter add chain=input protocol=udp dst-port=161 action=accept comment="Kore-HotSpot allow SNMP" place-before=0 disabled=no
 
 # Valida interface fisica, cria bridge e adiciona a ether na bridge
 :if ([:len [/interface find where name=$physicalInterface]] = 0) do={
@@ -80,6 +90,8 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 /interface bridge print
 /interface bridge port print
 /interface vlan print
+/snmp print
+/snmp community print
 /radius print
 /ip hotspot print
 /ip hotspot profile print`;
@@ -110,7 +122,7 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 
         <div className="p-6 space-y-4 overflow-y-auto max-h-[calc(90vh-88px)]">
           <div className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-xs text-warning">
-Antes de copiar, confirme o Host RADIUS, Shared Secret, interface ether, bridge e VLAN opcional. O Hotspot será aplicado na bridge ou na VLAN criada sobre ela.
+Antes de copiar, confirme o Host RADIUS, Shared Secret, comunidade SNMP, interface ether, bridge e VLAN opcional. A coleta de status será feita via SNMP, sem SSH.
           </div>
 
           <pre className="bg-background border border-border rounded-xl p-4 text-xs font-mono text-foreground overflow-x-auto whitespace-pre-wrap leading-relaxed">

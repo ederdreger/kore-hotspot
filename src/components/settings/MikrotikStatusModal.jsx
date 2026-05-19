@@ -27,9 +27,8 @@ export default function MikrotikStatusModal({ mikrotik, token, onClose }) {
     setLoading(true);
     const res = await base44.functions.invoke('mikrotikStatus', {
       host: mikrotik.host,
-      port: mikrotik.port || '22',
-      user: mikrotik.user,
-      password: mikrotik.password,
+      snmp_port: mikrotik.snmp_port || '161',
+      snmp_community: mikrotik.snmp_community || 'public',
       token,
     });
     setStatus(res.data);
@@ -50,7 +49,7 @@ export default function MikrotikStatusModal({ mikrotik, token, onClose }) {
             </div>
             <div>
               <h3 className="font-semibold text-sm text-foreground">Status do MikroTik</h3>
-              <p className="text-xs text-muted-foreground font-mono">{mikrotik.host}:{mikrotik.port || '22'} · {mikrotik.user}</p>
+              <p className="text-xs text-muted-foreground font-mono">{mikrotik.host}:{mikrotik.snmp_port || '161'} · SNMP</p>
             </div>
           </div>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
@@ -59,7 +58,7 @@ export default function MikrotikStatusModal({ mikrotik, token, onClose }) {
         <div className="p-6 space-y-4">
           {loading ? (
             <div className="flex items-center gap-3 text-sm text-muted-foreground">
-              <RefreshCw className="w-4 h-4 animate-spin text-primary" /> Verificando conexão SSH e status do RouterOS...
+              <RefreshCw className="w-4 h-4 animate-spin text-primary" /> Coletando status via SNMP...
             </div>
           ) : status?.error ? (
             <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive flex gap-3">
@@ -69,7 +68,7 @@ export default function MikrotikStatusModal({ mikrotik, token, onClose }) {
           ) : (
             <div className="rounded-xl border border-success/30 bg-success/10 p-4 text-sm text-success flex gap-3">
               <CheckCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-              <span>Equipamento online e respondendo comandos RouterOS.</span>
+              <span>Equipamento online e respondendo via SNMP.</span>
             </div>
           )}
 

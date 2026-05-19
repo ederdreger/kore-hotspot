@@ -1,5 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
-import { Client } from 'npm:ssh2@1.16.0';
+import snmp from 'npm:net-snmp@3.14.0';
 
 async function requireAdmin(base44, token) {
   if (!token) throw new Error('Sessão administrativa não enviada');
@@ -10,69 +10,68 @@ async function requireAdmin(base44, token) {
 }
 
 function normalizeHost(host) {
-  return String(host || '').trim().replace(/^ssh:\/\//i, '').replace(/^https?:\/\//i, '').split('/')[0].split(':')[0];
+  return String(host || '').trim().replace(/^snmp:\/\//i, '').replace(/^https?:\/\//i, '').split('/')[0].split(':')[0];
 }
 
-function sshExec(host, port, username, password, command) {
+function readSnmp(host, community, port, oids) {
   return new Promise((resolve, reject) => {
-    const conn = new Client();
-    let output = '';
-    let settled = false;
-    const finish = (err, value) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      conn.end();
-      if (err) reject(err); else resolve(String(value || '').trim());
-    };
-    const timer = setTimeout(() => {
-      conn.destroy();
-      finish(new Error('Timeout ao executar comando SSH em ' + host + ':' + port));
-    }, 20000);
-
-    conn.on('ready', () => {
-      conn.exec(command, (err, stream) => {
-        if (err) return finish(err);
-        stream.on('data', d => { output += d.toString(); });
-        stream.stderr.on('data', d => { output += d.toString(); });
-        stream.on('close', () => finish(null, output));
-      });
+    const session = snmp.createSession(host, community, {
+      port: parseInt(port) || 161,
+      version: snmp.Version2c,
+      timeout: 5000,
+      retries: 1,
+      transport: 'udp4',
     });
 
-    conn.on('keyboard-interactive', (name, instructions, lang, prompts, done) => done([password]));
-    conn.on('error', err => finish(err));
-
-    conn.connect({
-      host: normalizeHost(host),
-      port: parseInt(port) || 22,
-      username,
-      password,
-      tryKeyboard: true,
-      readyTimeout: 20000,
-      algorithms: {
-        cipher: ['aes256-cbc', 'aes128-cbc'],
-        serverHostKey: ['ssh-rsa', 'rsa-sha2-256', 'rsa-sha2-512', 'ecdsa-sha2-nistp256', 'ecdsa-sha2-nistp384', 'ecdsa-sha2-nistp521'],
-        kex: [
-          'curve25519-sha256', 'curve25519-sha256@libssh.org',
-          'ecdh-sha2-nistp256', 'ecdh-sha2-nistp384', 'ecdh-sha2-nistp521',
-          'diffie-hellman-group14-sha256', 'diffie-hellman-group14-sha1',
-          'diffie-hellman-group-exchange-sha256', 'diffie-hellman-group1-sha1'
-        ],
-        hmac: ['hmac-sha2-256', 'hmac-sha2-512', 'hmac-sha1'],
-      },
+    session.get(oids, (error, varbinds) => {
+      session.close();
+      if (error) return reject(error);
+      const result = {};
+      varbinds.forEach((varbind, index) => {
+        if (!snmp.isVarbindError(varbind)) {
+          result[oids[index]] = varbind.value;
+        }
+      });
+      resolve(result);
     });
   });
 }
 
-function extractValue(output, key) {
-  const line = String(output || '').split(/\r?\n/).find(item => item.trim().startsWith(key + '='));
-  return line ? line.split('=').slice(1).join('=').trim() : '';
+function toText(value) {
+  if (value === undefined || value === null) return '';
+  if (value instanceof Uint8Array || Buffer.isBuffer(value)) return Buffer.from(value).toString('utf8');
+  return String(value);
 }
+
+function toNumber(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function formatTicks(value) {
+  const ticks = toNumber(value);
+  if (ticks === null) return null;
+  const seconds = Math.floor(ticks / 100);
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return `${days}d ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
+}
+
+const OIDS = {
+  sysDescr: '1.3.6.1.2.1.1.1.0',
+  sysName: '1.3.6.1.2.1.1.5.0',
+  uptime: '1.3.6.1.2.1.1.3.0',
+  cpuLoad: '1.3.6.1.4.1.14988.1.1.3.14.0',
+  totalMemory: '1.3.6.1.4.1.14988.1.1.3.2.0',
+  freeMemory: '1.3.6.1.4.1.14988.1.1.3.3.0',
+  hotspotActive: '1.3.6.1.4.1.14988.1.1.5.1.0',
+};
 
 Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
   const body = await req.json().catch(() => ({}));
-  const { host, port = '22', user: sshUser = 'admin', password = '', token } = body;
+  const { host, snmp_port = '161', snmp_community = 'public', token } = body;
 
   try {
     await requireAdmin(base44, token);
@@ -84,55 +83,33 @@ Deno.serve(async (req) => {
 
   try {
     const cleanHost = normalizeHost(host);
-    const resourceCommand = ':put ("uptime=" . [/system resource get uptime]); :put ("version=" . [/system resource get version]); :put ("board-name=" . [/system resource get board-name]); :put ("cpu-load=" . [/system resource get cpu-load]); :put ("free-memory=" . [/system resource get free-memory]); :put ("total-memory=" . [/system resource get total-memory])';
-    const resOutput = await sshExec(cleanHost, port, sshUser, password, resourceCommand);
-    const uptime = extractValue(resOutput, 'uptime');
-    const version = extractValue(resOutput, 'version');
-    const boardName = extractValue(resOutput, 'board-name');
-    const cpuLoad = extractValue(resOutput, 'cpu-load');
-    const freeMemory = extractValue(resOutput, 'free-memory');
-    const totalMemory = extractValue(resOutput, 'total-memory');
+    const data = await readSnmp(cleanHost, snmp_community, snmp_port, Object.values(OIDS));
+    const versionText = toText(data[OIDS.sysDescr]);
 
-    if (!uptime && !version && !boardName) {
-      return Response.json({
-        error: `SSH conectou em ${cleanHost}:${port}, mas o RouterOS não respondeu aos comandos de leitura. Execute no terminal: /system resource get uptime`
-      }, { status: 200 });
+    if (!versionText && !data[OIDS.uptime]) {
+      return Response.json({ error: `SNMP respondeu em ${cleanHost}:${snmp_port}, mas não retornou dados do sistema.` }, { status: 200 });
     }
-
-    let activeUsers = 0;
-    let hotspotCount = 0;
-    let radiusHotspotCount = 0;
-    try {
-      const serviceOutput = await sshExec(cleanHost, port, sshUser, password,
-        ':put ("active-users=" . [:len [/ip hotspot active find]]); :put ("hotspot-count=" . [:len [/ip hotspot find]]); :put ("radius-hotspot-count=" . [:len [/radius find where service~"hotspot"]])');
-      activeUsers = parseInt(extractValue(serviceOutput, 'active-users')) || 0;
-      hotspotCount = parseInt(extractValue(serviceOutput, 'hotspot-count')) || 0;
-      radiusHotspotCount = parseInt(extractValue(serviceOutput, 'radius-hotspot-count')) || 0;
-    } catch (_) {}
 
     return Response.json({
       connected: true,
-      uptime: uptime || null,
-      cpu_load: cpuLoad !== '' ? (parseInt(cpuLoad) || 0) : null,
-      free_memory: parseInt(freeMemory) || null,
-      total_memory: parseInt(totalMemory) || null,
+      protocol: 'SNMP',
+      uptime: formatTicks(data[OIDS.uptime]),
+      cpu_load: toNumber(data[OIDS.cpuLoad]),
+      free_memory: toNumber(data[OIDS.freeMemory]),
+      total_memory: toNumber(data[OIDS.totalMemory]),
       temperature: null,
-      board_name: boardName || null,
-      version: version || null,
-      active_users: activeUsers,
-      hotspot_count: hotspotCount,
-      radius_hotspot_count: radiusHotspotCount,
+      board_name: toText(data[OIDS.sysName]) || null,
+      version: versionText || null,
+      active_users: toNumber(data[OIDS.hotspotActive]),
+      hotspot_count: null,
+      radius_hotspot_count: null,
     });
   } catch (err) {
-    let msg = err.message;
-    if (msg.includes('Timeout') || msg.includes('timeout')) {
-      msg = `O MikroTik aceitou o SSH, mas demorou para responder aos comandos RouterOS em ${normalizeHost(host)}:${port}.`;
-    } else if (msg.includes('refused') || msg.includes('ECONNREFUSED')) {
-      msg = `Conexão SSH recusada em ${host}:${port} — verifique se o SSH está ativo no MikroTik`;
-    } else if (msg.includes('Authentication') || msg.includes('auth')) {
-      msg = `Falha de autenticação SSH — verifique usuário e senha`;
-    } else if (msg.includes('ENETUNREACH') || msg.includes('network')) {
-      msg = `IP ${host} inacessível — verifique se o endereço é acessível pela internet`;
+    let msg = err.message || 'Falha ao consultar SNMP';
+    if (msg.includes('RequestTimedOut') || msg.includes('timed out')) {
+      msg = `Sem resposta SNMP em ${normalizeHost(host)}:${snmp_port} — verifique se o SNMP está ativo e liberado no firewall`;
+    } else if (msg.includes('NoSuchName') || msg.includes('authorization')) {
+      msg = 'Comunidade SNMP inválida ou sem permissão de leitura';
     }
     return Response.json({ error: msg }, { status: 200 });
   }

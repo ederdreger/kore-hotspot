@@ -16,6 +16,8 @@ const EMPTY = {
   port: '22',
   user: 'admin',
   password: '',
+  snmp_community: 'public',
+  snmp_port: '161',
   physical_interface: 'ether1',
   bridge_name: 'bridge-hotspot',
   vlan_id: '',
@@ -69,6 +71,8 @@ export default function MikrotikList() {
       port: mt.port || '22',
       user: mt.user || 'admin',
       password: mt.password || '',
+      snmp_community: mt.snmp_community || 'public',
+      snmp_port: mt.snmp_port || '161',
       physical_interface: mt.physical_interface || mt.hotspot_interface || 'ether1',
       bridge_name: mt.bridge_name || 'bridge-hotspot',
       vlan_id: mt.vlan_id || '',
@@ -80,8 +84,8 @@ export default function MikrotikList() {
   };
 
   const handleSave = async () => {
-    if (!form.name || !form.host || !form.user || !form.password) {
-      toast.error('Nome, IP, usuário e senha são obrigatórios');
+    if (!form.name || !form.host || !form.snmp_community) {
+      toast.error('Nome, IP e comunidade SNMP são obrigatórios');
       return;
     }
 
@@ -115,7 +119,9 @@ export default function MikrotikList() {
     { key: 'name', label: 'Nome / Identificação', placeholder: 'Ex: Praça Central AP01' },
     { key: 'host', label: 'IP do MikroTik', placeholder: '192.168.88.1' },
     { key: 'port', label: 'Porta de acesso', placeholder: '22' },
-    { key: 'user', label: 'Usuário de acesso', placeholder: 'admin' },
+    { key: 'user', label: 'Usuário SSH', placeholder: 'admin' },
+    { key: 'snmp_community', label: 'Comunidade SNMP', placeholder: 'public' },
+    { key: 'snmp_port', label: 'Porta SNMP', placeholder: '161' },
     { key: 'physical_interface', label: 'Interface física (ether)', placeholder: 'ether1' },
     { key: 'bridge_name', label: 'Bridge Hotspot', placeholder: 'bridge-hotspot' },
     { key: 'vlan_id', label: 'VLAN ID (opcional)', placeholder: '100' },
@@ -127,7 +133,7 @@ export default function MikrotikList() {
     <div>
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
-        <p className="text-xs text-muted-foreground">Cadastre o equipamento, bridge, ether e VLAN para gerar o script profissional do MikroTik</p>
+        <p className="text-xs text-muted-foreground">Cadastre SNMP, bridge, ether e VLAN para coletar métricas sem gerar logs SSH no MikroTik</p>
         <Button size="sm" onClick={openNew} className="gap-1.5">
           <Plus className="w-3.5 h-3.5" />
           Cadastrar MikroTik
@@ -167,7 +173,7 @@ export default function MikrotikList() {
                 <button
                   onClick={() => setStatusMt(mt)}
                   className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-success/10 hover:bg-success/20 text-success transition-colors text-xs font-medium"
-                  title="Verificar status via SSH"
+                  title="Verificar status via SNMP"
                 >
                   <Activity className="w-3.5 h-3.5" />
                   Status
@@ -224,7 +230,7 @@ export default function MikrotikList() {
               ))}
               {/* Password */}
               <div className="col-span-2">
-                <Label className="text-xs text-muted-foreground mb-1.5 block">Senha de acesso</Label>
+                <Label className="text-xs text-muted-foreground mb-1.5 block">Senha SSH (opcional, não usada na coleta SNMP)</Label>
                 <div className="relative">
                   <Input
                     type={showPass ? 'text' : 'password'}
