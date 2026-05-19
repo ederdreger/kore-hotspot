@@ -57,7 +57,8 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 # Valida porta fisica
 :if ([:len [/interface find where name="${physicalInterface}"]] = 0) do={ :error "ERRO: interface fisica ${physicalInterface} nao encontrada" }
 
-# SSH e SNMP para coleta
+# SSH e SNMP para coleta de Performance (Dashboard)
+# Habilita SNMP para monitoramento em tempo real (CPU, Memoria e Uso de Interface)
 /ip service set ssh disabled=no port=${sshPort}
 /snmp set enabled=yes contact="Kore-HotSpot" location="Hotspot" trap-version=2
 /snmp community remove [find where name="${snmpCommunity}"]

@@ -10,6 +10,7 @@ import ConversionFunnelChart from '@/components/charts/ConversionFunnelChart';
 import BandwidthByPlanChart from '@/components/charts/BandwidthByPlanChart';
 import HotspotHeatmap from '@/components/charts/HotspotHeatmap';
 import FinancialSummary from '@/components/charts/FinancialSummary';
+import SnmpPerformanceDashboard from '@/components/charts/SnmpPerformanceDashboard';
 import { useNavigate } from 'react-router-dom';
 
 const trafficData = [];
@@ -22,6 +23,7 @@ export default function Dashboard() {
   const [plans, setPlans] = useState([]);
   const [vouchers, setVouchers] = useState([]);
   const [logs, setLogs] = useState([]);
+  const [primaryMikrotik, setPrimaryMikrotik] = useState(null);
 
   useEffect(() => {
     base44.entities.Client.list('-created_date', 100).then(setClients).catch(() => {});
@@ -29,6 +31,9 @@ export default function Dashboard() {
     base44.entities.Plan.list().then(setPlans).catch(() => {});
     base44.entities.Voucher.list('-created_date', 50).then(setVouchers).catch(() => {});
     base44.entities.AuditLog.list('-created_date', 10).then(setLogs).catch(() => {});
+    base44.entities.Setting.filter({ category: 'mikrotik_device' }).then(res => {
+      if (res.length > 0) setPrimaryMikrotik(JSON.parse(res[0].value));
+    }).catch(() => {});
   }, []);
 
   const activeClients = clients.filter(c => c.status === 'active').length;
@@ -53,6 +58,9 @@ export default function Dashboard() {
         <StatCard title="Online Agora" value={onlineUsers.length} subtitle="2 em trial" icon={Wifi} color="success" onClick={() => navigate('/radius')} />
         <StatCard title="Vouchers" value={availableVouchers} subtitle="Disponíveis" icon={Ticket} color="warning" onClick={() => navigate('/vouchers')} />
       </div>
+
+      {/* SNMP Performance Monitor */}
+      {primaryMikrotik && <SnmpPerformanceDashboard mikrotik={primaryMikrotik} />}
 
       {/* Main Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
