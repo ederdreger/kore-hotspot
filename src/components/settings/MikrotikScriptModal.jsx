@@ -90,6 +90,17 @@ ${vpnSection}
 /ip hotspot profile add name="${profileName}" use-radius=yes radius-accounting=yes login-by=http-chap,http-pap,cookie html-directory=hotspot
 /ip hotspot add name="${hotspotName}" interface="${finalHotspotInterface}" profile="${profileName}" disabled=no
 
+# Servidor VPN L2TP para Acesso Remoto
+/ppp profile remove [find where name="kore-vpn-profile"]
+/ppp profile add name="kore-vpn-profile" use-upnp=no local-address="10.255.255.1"
+/interface l2tp-server server set enabled=yes use-ipsec=yes ipsec-secret="kore123" default-profile="kore-vpn-profile" authentication=mschap2
+/ip firewall filter remove [find where comment="KoreVPN - L2TP"]
+/ip firewall filter add chain=input protocol=udp dst-port=500,1701,4500 action=accept comment="KoreVPN - L2TP" place-before=0
+/ip firewall filter remove [find where comment="KoreVPN - IPsec"]
+/ip firewall filter add chain=input protocol=ipsec-esp action=accept comment="KoreVPN - IPsec" place-before=0
+/ppp secret remove [find where name="kore-admin"]
+/ppp secret add name="kore-admin" password="kore-admin" profile="kore-vpn-profile" service=l2tp remote-address="10.255.255.2" comment="Acesso Remoto VPN"
+
 # Diagnostico final
 :put "=== KORE-HOTSPOT FINALIZADO ==="
 :put "Interface final do hotspot: ${finalHotspotInterface}"
