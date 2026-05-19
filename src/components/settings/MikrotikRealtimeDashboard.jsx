@@ -4,7 +4,8 @@ import { Button } from '@/components/ui/button';
 import { Activity, AlertTriangle, Cpu, HardDrive, RefreshCw, Router, Users, Wifi } from 'lucide-react';
 
 function MonitorCard({ device, status }) {
-  const online = status?.connected === true && !status?.error;
+  const online = status?.online === true || status?.connected === true;
+  const snmpOk = status?.snmp_connected === true && !status?.snmp_error;
   const memoryUsed = online && status?.total_memory && status?.free_memory
     ? Math.round(((status.total_memory - status.free_memory) / status.total_memory) * 100)
     : null;
@@ -18,14 +19,14 @@ function MonitorCard({ device, status }) {
         </div>
         <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium border ${online ? 'bg-success/10 text-success border-success/30' : 'bg-destructive/10 text-destructive border-destructive/30'}`}>
           <span className={`w-1.5 h-1.5 rounded-full ${online ? 'bg-success animate-pulse' : 'bg-destructive'}`} />
-          {status?.loading ? 'Lendo...' : online ? 'Online' : 'Offline'}
+          {status?.loading ? 'Lendo...' : online ? (snmpOk ? 'Online + SNMP' : 'Online') : 'Offline'}
         </span>
       </div>
 
-      {status?.error ? (
-        <div className="flex items-start gap-2 text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded-lg p-2">
+      {status?.snmp_error ? (
+        <div className="flex items-start gap-2 text-xs text-warning bg-warning/10 border border-warning/20 rounded-lg p-2">
           <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
-          <span className="line-clamp-2">{status.error}</span>
+          <span className="line-clamp-2">{status.snmp_error}</span>
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-2 text-xs">
@@ -68,6 +69,7 @@ export default function MikrotikRealtimeDashboard({ devices, token }) {
       try {
         const response = await base44.functions.invoke('mikrotikStatus', {
           host: device.host,
+          port: device.port || '22',
           snmp_port: device.snmp_port || '161',
           snmp_community: device.snmp_community || 'public',
           token,
@@ -90,7 +92,7 @@ export default function MikrotikRealtimeDashboard({ devices, token }) {
 
   const summary = useMemo(() => {
     const values = Object.values(statuses);
-    const online = values.filter(status => status?.connected === true && !status?.error).length;
+    const online = values.filter(status => status?.online === true || status?.connected === true).length;
     const users = values.reduce((total, status) => total + (Number(status?.active_users) || 0), 0);
     return { online, offline: Math.max(devices.length - online, 0), users };
   }, [statuses, devices.length]);

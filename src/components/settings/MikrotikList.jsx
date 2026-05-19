@@ -19,7 +19,7 @@ const EMPTY = {
   snmp_community: 'public',
   snmp_port: '161',
   physical_interface: 'ether1',
-  bridge_name: 'bridge-hotspot',
+  bridge_name: '',
   vlan_id: '',
   vlan_interface: 'vlan-hotspot',
   hotspot_network: '192.168.1.0/24',
@@ -74,7 +74,7 @@ export default function MikrotikList() {
       snmp_community: mt.snmp_community || 'public',
       snmp_port: mt.snmp_port || '161',
       physical_interface: mt.physical_interface || mt.hotspot_interface || 'ether1',
-      bridge_name: mt.bridge_name || 'bridge-hotspot',
+      bridge_name: mt.bridge_name || '',
       vlan_id: mt.vlan_id || '',
       vlan_interface: mt.vlan_interface || 'vlan-hotspot',
       hotspot_network: mt.hotspot_network || '192.168.1.0/24',
@@ -90,7 +90,8 @@ export default function MikrotikList() {
     }
 
     setSaving(true);
-    const deviceData = { ...form, hotspot_interface: form.bridge_name };
+    const hotspotInterface = form.vlan_id ? form.vlan_interface : (form.bridge_name || form.physical_interface);
+    const deviceData = { ...form, hotspot_interface: hotspotInterface };
     const blob = JSON.stringify(deviceData);
     let savedDevice;
 
@@ -123,7 +124,7 @@ export default function MikrotikList() {
     { key: 'snmp_community', label: 'Comunidade SNMP', placeholder: 'public' },
     { key: 'snmp_port', label: 'Porta SNMP', placeholder: '161' },
     { key: 'physical_interface', label: 'Interface física (ether)', placeholder: 'ether1' },
-    { key: 'bridge_name', label: 'Bridge Hotspot', placeholder: 'bridge-hotspot' },
+    { key: 'bridge_name', label: 'Bridge Hotspot (opcional)', placeholder: 'bridge-hotspot' },
     { key: 'vlan_id', label: 'VLAN ID (opcional)', placeholder: '100' },
     { key: 'vlan_interface', label: 'Nome da VLAN', placeholder: 'vlan-hotspot' },
     { key: 'hotspot_network', label: 'Rede Hotspot', placeholder: '192.168.1.0/24' },
@@ -133,7 +134,7 @@ export default function MikrotikList() {
     <div>
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
-        <p className="text-xs text-muted-foreground">Cadastre SNMP, bridge, ether e VLAN para coletar métricas sem gerar logs SSH no MikroTik</p>
+        <p className="text-xs text-muted-foreground">O status usa ping/SSH e a coleta de métricas usa SNMP; bridge e VLAN são opcionais conforme o cenário</p>
         <Button size="sm" onClick={openNew} className="gap-1.5">
           <Plus className="w-3.5 h-3.5" />
           Cadastrar MikroTik

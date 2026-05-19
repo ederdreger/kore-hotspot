@@ -17,8 +17,8 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
   const script = useMemo(() => {
     const radiusHost = radius.radius_host || mikrotik.host || 'SEU_IP_RADIUS';
     const radiusSecret = radius.radius_secret || mikrotik.radius_secret || generateRadiusSecret(mikrotik);
-    const physicalInterface = mikrotik.physical_interface || mikrotik.hotspot_interface || 'ether1';
-    const bridgeName = mikrotik.bridge_name || mikrotik.hotspot_interface || 'bridge-hotspot';
+    const physicalInterface = mikrotik.physical_interface || 'ether1';
+    const bridgeName = mikrotik.bridge_name || '';
     const vlanId = mikrotik.vlan_id || '';
     const vlanInterface = mikrotik.vlan_interface || 'vlan-hotspot';
     const network = mikrotik.hotspot_network || '192.168.50.0/24';
@@ -42,7 +42,7 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 :local snmpCommunity "${snmpCommunity}"
 :local profileName "${profileName}"
 :local hotspotName "${hotspotName}"
-:local hotspotInterface $bridgeName
+:local hotspotInterface $physicalInterface
 
 # Ativa SNMP v2c somente leitura para o Kore-HotSpot
 /snmp set enabled=yes contact="Kore-HotSpot" location="Hotspot"
@@ -55,25 +55,32 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 # Libera SNMP no firewall se existir filtro de entrada
 /ip firewall filter add chain=input protocol=udp dst-port=161 action=accept comment="Kore-HotSpot allow SNMP" place-before=0 disabled=no
 
-# Valida interface fisica, cria bridge e adiciona a ether na bridge
+# Valida interface fisica
 :if ([:len [/interface find where name=$physicalInterface]] = 0) do={
   :error ("Interface fisica nao encontrada: " . $physicalInterface)
 }
 
-:if ([:len [/interface bridge find where name=$bridgeName]] = 0) do={
-  /interface bridge add name=$bridgeName comment="Kore-HotSpot bridge"
+# Regra MikroTik: se bridge foi informada, cria a bridge e vincula a ether nela
+:if ([:len $bridgeName] > 0) do={
+  :if ([:len [/interface bridge find where name=$bridgeName]] = 0) do={
+    /interface bridge add name=$bridgeName comment="Kore-HotSpot bridge"
+  }
+
+  :if ([:len [/interface bridge port find where bridge=$bridgeName interface=$physicalInterface]] = 0) do={
+    /interface bridge port add bridge=$bridgeName interface=$physicalInterface comment="Kore-HotSpot uplink"
+  }
+
+  :set hotspotInterface $bridgeName
 }
 
-:if ([:len [/interface bridge port find where bridge=$bridgeName interface=$physicalInterface]] = 0) do={
-  /interface bridge port add bridge=$bridgeName interface=$physicalInterface comment="Kore-HotSpot uplink"
-}
-
-# VLAN opcional: se VLAN ID for informado, o Hotspot sera aplicado na VLAN criada sobre a bridge
+# Regra MikroTik: se somente VLAN e ether foram informadas, cria VLAN direto na ether, sem bridge
+# Se bridge tambem foi informada, cria VLAN sobre a bridge
 :if ([:len $vlanId] > 0) do={
+  :local vlanBaseInterface $hotspotInterface
   :if ([:len [/interface vlan find where name=$vlanInterface]] = 0) do={
-    /interface vlan add name=$vlanInterface interface=$bridgeName vlan-id=$vlanId comment="Kore-HotSpot VLAN"
+    /interface vlan add name=$vlanInterface interface=$vlanBaseInterface vlan-id=$vlanId comment="Kore-HotSpot VLAN"
   } else={
-    /interface vlan set [find where name=$vlanInterface] interface=$bridgeName vlan-id=$vlanId
+    /interface vlan set [find where name=$vlanInterface] interface=$vlanBaseInterface vlan-id=$vlanId
   }
   :set hotspotInterface $vlanInterface
 }
@@ -134,7 +141,7 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 
         <div className="p-6 space-y-4 overflow-y-auto max-h-[calc(90vh-88px)]">
           <div className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-xs text-warning">
-Antes de copiar, confirme o Host RADIUS, comunidade SNMP, interface ether, bridge e VLAN opcional. A chave RADIUS será gerada automaticamente e o identificador padrão será Kore-HotSpot.
+Antes de copiar, confirme o Host RADIUS, comunidade SNMP, ether, bridge e VLAN. Se informar bridge+ether+VLAN, a VLAN será criada na bridge; se informar apenas ether+VLAN, a VLAN será criada direto na ether.
           </div>
 
           <pre className="bg-background border border-border rounded-xl p-4 text-xs font-mono text-foreground overflow-x-auto whitespace-pre-wrap leading-relaxed">
