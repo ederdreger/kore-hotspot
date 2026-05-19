@@ -284,7 +284,7 @@ export default function HotspotPlans() {
           <Zap className="w-12 h-12 mb-3 opacity-20" />
           <p className="font-medium text-foreground">Nenhum plano encontrado</p>
           <p className="text-xs mt-1">
-            {filter !== 'all' ? 'Altere o filtro ou crie um novo plano' : 'Crie seu primeiro plano de velocidade hotspot'}
+            {filter !== 'all' ? 'Altere o filtro ou crie um novo plano' : 'Crie seu primeiro plano de velocidade'}
           </p>
           {filter === 'all' && (
             <Button onClick={openCreate} className="mt-4 bg-primary text-primary-foreground gap-2" size="sm">
@@ -306,7 +306,7 @@ export default function HotspotPlans() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Zap className="w-5 h-5 text-primary" />
-              {editing ? 'Editar Plano' : 'Novo Plano Hotspot'}
+              {editing ? 'Editar Plano' : 'Novo Plano'}
             </DialogTitle>
           </DialogHeader>
 

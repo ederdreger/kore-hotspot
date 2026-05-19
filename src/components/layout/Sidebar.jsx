@@ -10,7 +10,6 @@ const navItems = [
   { label: 'Clientes', icon: Users, path: '/clients' },
   { label: 'Prospectos', icon: UserSearch, path: '/prospects' },
   { label: 'Planos', icon: Zap, path: '/plans' },
-  { label: 'Planos Hotspot', icon: Wifi, path: '/hotspot-plans' },
   { label: 'Vouchers', icon: Ticket, path: '/vouchers' },
   { label: 'Campanhas', icon: Megaphone, path: '/campaigns' },
   { label: 'RADIUS Monitor', icon: Radio, path: '/radius', highlight: true },

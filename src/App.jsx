@@ -11,7 +11,6 @@ import AppLayout from '@/components/layout/AppLayout';
 import Dashboard from '@/pages/Dashboard';
 import Clients from '@/pages/Clients';
 import Prospects from '@/pages/Prospects';
-import Plans from '@/pages/Plans';
 import Vouchers from '@/pages/Vouchers';
 import Campaigns from '@/pages/Campaigns';
 import Logs from '@/pages/Logs';
@@ -38,8 +37,8 @@ const AuthenticatedApp = () => {
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/clients" element={<Clients />} />
           <Route path="/prospects" element={<Prospects />} />
-          <Route path="/plans" element={<Plans />} />
-          <Route path="/hotspot-plans" element={<HotspotPlans />} />
+          <Route path="/plans" element={<HotspotPlans />} />
+          <Route path="/hotspot-plans" element={<Navigate to="/plans" replace />} />
           <Route path="/vouchers" element={<Vouchers />} />
           <Route path="/campaigns" element={<Campaigns />} />
           <Route path="/radius" element={<RadiusMonitor />} />

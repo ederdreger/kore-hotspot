@@ -28,6 +28,24 @@ function sanitizeUser(user) {
   };
 }
 
+function normalizeText(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function uniqueUsers(users) {
+  const seen = new Set();
+  return (users || []).filter((user) => {
+    const emailKey = normalizeText(user.email);
+    const nameKey = normalizeText(user.full_name);
+    const key = `${emailKey}|${nameKey}`;
+    if (seen.has(key) || seen.has(emailKey) || (nameKey && seen.has(nameKey))) return false;
+    seen.add(key);
+    seen.add(emailKey);
+    if (nameKey) seen.add(nameKey);
+    return true;
+  });
+}
+
 async function ensureDefaults(base44) {
   const created = [];
   for (const admin of DEFAULT_USERS) {
@@ -40,6 +58,9 @@ async function ensureDefaults(base44) {
         status: 'active',
         password_hash
       });
+      for (const duplicate of existing.slice(1)) {
+        await base44.asServiceRole.entities.AdminUser.delete(duplicate.id);
+      }
     } else {
       await base44.asServiceRole.entities.AdminUser.create({ ...admin, status: 'active', password_hash });
       created.push(admin.email);
@@ -112,8 +133,8 @@ Deno.serve(async (req) => {
     const currentUser = await requireAdmin(base44, token);
 
     if (action === 'listUsers') {
-      const users = await base44.asServiceRole.entities.AdminUser.list('-created_date', 200);
-      return Response.json({ users: users.map(sanitizeUser) });
+      const users = await base44.asServiceRole.entities.AdminUser.list('-updated_date', 200);
+      return Response.json({ users: uniqueUsers(users).map(sanitizeUser) });
     }
 
     if (action === 'createUser') {
@@ -121,8 +142,10 @@ Deno.serve(async (req) => {
       if (!email || !password) return Response.json({ error: 'E-mail e senha são obrigatórios' }, { status: 400 });
       if (String(password).length < 8) return Response.json({ error: 'A senha deve ter no mínimo 8 caracteres' }, { status: 400 });
       const normalizedEmail = String(email).trim().toLowerCase();
-      const existing = await base44.asServiceRole.entities.AdminUser.filter({ email: normalizedEmail });
-      if (existing?.length) return Response.json({ error: 'Usuário já existe' }, { status: 400 });
+      const normalizedName = normalizeText(full_name || normalizedEmail.split('@')[0]);
+      const existing = await base44.asServiceRole.entities.AdminUser.list('-created_date', 200);
+      const duplicate = existing.find((user) => normalizeText(user.email) === normalizedEmail || normalizeText(user.full_name) === normalizedName);
+      if (duplicate) return Response.json({ error: 'Já existe usuário com este e-mail ou nome' }, { status: 400 });
       const password_hash = await hashPassword(password, normalizedEmail);
       const created = await base44.asServiceRole.entities.AdminUser.create({
         email: normalizedEmail,
@@ -137,7 +160,13 @@ Deno.serve(async (req) => {
     if (action === 'updateUser') {
       if (currentUser.role !== 'admin') return Response.json({ error: 'Acesso negado' }, { status: 403 });
       const updateData = { role: role || 'user', status: role === 'inactive' ? 'inactive' : 'active' };
-      if (full_name) updateData.full_name = full_name;
+      if (full_name) {
+        const normalizedName = normalizeText(full_name);
+        const existing = await base44.asServiceRole.entities.AdminUser.list('-created_date', 200);
+        const duplicate = existing.find((user) => user.id !== userId && normalizeText(user.full_name) === normalizedName);
+        if (duplicate) return Response.json({ error: 'Já existe usuário com este nome' }, { status: 400 });
+        updateData.full_name = full_name;
+      }
       if (newPassword) {
         if (String(newPassword).length < 8) return Response.json({ error: 'A senha deve ter no mínimo 8 caracteres' }, { status: 400 });
         const targetUsers = await base44.asServiceRole.entities.AdminUser.filter({ id: userId });
