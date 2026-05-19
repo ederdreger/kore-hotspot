@@ -17,8 +17,16 @@ function normalizeHost(host) {
 // Tenta via SNMP (Pode ser bloqueado em ambientes Serverless/Edge)
 function getSnmpData(host, community) {
   return new Promise((resolve, reject) => {
+    let handled = false;
+    const timer = setTimeout(() => {
+      if (!handled) {
+        handled = true;
+        reject(new Error('Timeout SNMP'));
+      }
+    }, 4000);
+
     try {
-      const session = snmp.createSession(host, community || 'public', { timeout: 2000, retries: 1 });
+      const session = snmp.createSession(host, community || 'public', { timeout: 1500, retries: 1 });
       const oids = [
         "1.3.6.1.2.1.25.3.3.1.2.1",     // CPU Load (Core 1)
         "1.3.6.1.2.1.25.2.3.1.5.65536", // Mem Total
@@ -26,12 +34,26 @@ function getSnmpData(host, community) {
         "1.3.6.1.2.1.31.1.1.1.6.1",     // RX Bytes (If 1)
         "1.3.6.1.2.1.31.1.1.1.10.1"     // TX Bytes (If 1)
       ];
+      
+      session.on('error', (err) => {
+        if (!handled) {
+          handled = true;
+          clearTimeout(timer);
+          try { session.close(); } catch(e){}
+          reject(err);
+        }
+      });
 
       session.get(oids, (error, varbinds) => {
+        if (handled) return;
+        handled = true;
+        clearTimeout(timer);
+        
         if (error) {
-          session.close();
+          try { session.close(); } catch(e){}
           return reject(error);
         }
+        
         const data = {};
         if (!snmp.isVarbindError(varbinds[0])) data.cpu = varbinds[0].value;
         if (!snmp.isVarbindError(varbinds[1])) data.memTotal = varbinds[1].value;
@@ -39,17 +61,21 @@ function getSnmpData(host, community) {
         if (!snmp.isVarbindError(varbinds[3])) data.rxBytes = varbinds[3].value;
         if (!snmp.isVarbindError(varbinds[4])) data.txBytes = varbinds[4].value;
         
-        session.close();
+        try { session.close(); } catch(e){}
         resolve(data);
       });
     } catch (err) {
-      reject(err);
+      if (!handled) {
+        handled = true;
+        clearTimeout(timer);
+        reject(err);
+      }
     }
   });
 }
 
 // Fallback via SSH (Garante o funcionamento se o UDP for bloqueado)
-function getSshData(host, port, username, password) {
+function getSshData(host, port, username, password, interfaceName = 'ether1') {
   return new Promise((resolve, reject) => {
     const conn = new Client();
     let out = '';
@@ -60,7 +86,7 @@ function getSshData(host, port, username, password) {
 
     conn.on('ready', () => {
       // Coleta CPU, Memória e Tráfego da interface principal em um único comando
-      const cmd = `/system resource print; /interface monitor-traffic [find default-name=ether1] once as-value`;
+      const cmd = `/system resource print; /interface monitor-traffic [find name="${interfaceName}"] once as-value`;
       conn.exec(cmd, (err, stream) => {
         if (err) { clearTimeout(timer); conn.end(); return reject(err); }
         stream.on('data', d => { out += d.toString(); });
@@ -111,7 +137,7 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') return Response.json({ error: 'Method not allowed' }, { status: 405 });
   
   const body = await req.json().catch(() => ({}));
-  const { host, port = '22', user = 'admin', password = '', community = 'public', token } = body;
+  const { host, port = '22', user = 'admin', password = '', community = 'public', interface_name = 'ether1', token } = body;
 
   try {
     await requireAdmin(base44, token);
@@ -141,7 +167,7 @@ Deno.serve(async (req) => {
     } catch (snmpErr) {
       // 2. Fallback via SSH se SNMP falhar (Ex: Ambiente Cloud Edge sem UDP)
       method = 'SSH (Fallback)';
-      const sshData = await getSshData(cleanHost, port, user, password);
+      const sshData = await getSshData(cleanHost, port, user, password, interface_name);
       result = {
         cpu: sshData.cpu,
         memTotal: sshData.memTotal,
@@ -158,6 +184,11 @@ Deno.serve(async (req) => {
       data: result
     });
   } catch (err) {
-    return Response.json({ success: false, error: err.message }, { status: 500 });
+    let msg = err.message || 'Falha ao conectar via SNMP/SSH';
+    if (msg.includes('Timeout')) msg = `Timeout ao conectar em ${cleanHost} via SNMP/SSH`;
+    else if (msg.includes('Authentication')) msg = `Usuário ou senha inválidos para o MikroTik`;
+    else if (msg.includes('refused')) msg = `Conexão recusada em ${cleanHost}`;
+    
+    return Response.json({ success: false, error: msg }, { status: 200 });
   }
 });

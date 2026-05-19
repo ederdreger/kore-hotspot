@@ -14,7 +14,11 @@ export default function SnmpPerformanceDashboard({ mikrotik, token }) {
     
     let isSubscribed = true;
     
+    let isFetching = false;
+    
     const fetchPerformance = async () => {
+      if (isFetching) return;
+      isFetching = true;
       try {
         const res = await base44.functions.invoke('mikrotikPerformance', {
           host: mikrotik.host,
@@ -22,6 +26,7 @@ export default function SnmpPerformanceDashboard({ mikrotik, token }) {
           user: mikrotik.user,
           password: mikrotik.password,
           community: mikrotik.snmp_community || 'public',
+          interface_name: mikrotik.physical_interface || 'ether1',
           token: token
         });
         
@@ -43,10 +48,18 @@ export default function SnmpPerformanceDashboard({ mikrotik, token }) {
             return newData;
           });
         } else if (res.data?.error) {
-          if (isSubscribed) setError(res.data.error);
+          if (isSubscribed) {
+            setError(res.data.error);
+            setCurrent(prev => ({ ...prev, protocol: 'Offline' }));
+          }
         }
       } catch (e) {
-        if (isSubscribed) setError('Erro de conexão com SNMP/SSH');
+        if (isSubscribed) {
+          setError('Erro de conexão com SNMP/SSH');
+          setCurrent(prev => ({ ...prev, protocol: 'Offline' }));
+        }
+      } finally {
+        isFetching = false;
       }
     };
 
