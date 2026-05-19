@@ -47,8 +47,10 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
     const vpnSection = mikrotik.vpn_enabled ? `
 # --- VPN L2TP/IPsec CLIENT ---
 # Conecta o equipamento na Matriz (VPN)
+/ppp profile remove [find where name="kore-vpn-profile"]
+/ppp profile add name="kore-vpn-profile" use-upnp=no
 /interface l2tp-client remove [find where name="l2tp-vpn"]
-/interface l2tp-client add connect-to="${mikrotik.vpn_server}" name="l2tp-vpn" user="${mikrotik.vpn_user}" password="${mikrotik.vpn_password}" profile=default-encryption use-ipsec=yes ipsec-secret="${mikrotik.vpn_secret}" disabled=no
+/interface l2tp-client add connect-to="${radius.vpn_server_host || ''}" name="l2tp-vpn" user="${mikrotik.vpn_user}" password="${mikrotik.vpn_password}" profile="kore-vpn-profile" use-ipsec=yes ipsec-secret="${radius.vpn_ipsec_secret || ''}" disabled=no
 /ip route remove [find where comment="Rota Radius via VPN"]
 /ip route add dst-address=${radiusHost} gateway="l2tp-vpn" comment="Rota Radius via VPN"
 # -----------------------------
@@ -63,6 +65,8 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 /radius remove [find where comment="${radiusName}"]
 /ip hotspot remove [find where name="${hotspotName}"]
 /ip hotspot profile remove [find where name="${profileName}"]
+/interface l2tp-client remove [find where name="l2tp-vpn"]
+/ppp profile remove [find where name="kore-vpn-profile"]
 
 # Valida porta fisica
 :if ([:len [/interface find where name="${physicalInterface}"]] = 0) do={ :error "ERRO: interface fisica ${physicalInterface} nao encontrada" }
@@ -90,16 +94,13 @@ ${vpnSection}
 /ip hotspot profile add name="${profileName}" use-radius=yes radius-accounting=yes login-by=http-chap,http-pap,cookie html-directory=hotspot
 /ip hotspot add name="${hotspotName}" interface="${finalHotspotInterface}" profile="${profileName}" disabled=no
 
-# Servidor VPN L2TP para Acesso Remoto
-/ppp profile remove [find where name="kore-vpn-profile"]
-/ppp profile add name="kore-vpn-profile" use-upnp=no local-address="10.255.255.1"
-/interface l2tp-server server set enabled=yes use-ipsec=yes ipsec-secret="kore123" default-profile="kore-vpn-profile" authentication=mschap2
-/ip firewall filter remove [find where comment="KoreVPN - L2TP"]
-/ip firewall filter add chain=input protocol=udp dst-port=500,1701,4500 action=accept comment="KoreVPN - L2TP" place-before=0
-/ip firewall filter remove [find where comment="KoreVPN - IPsec"]
-/ip firewall filter add chain=input protocol=ipsec-esp action=accept comment="KoreVPN - IPsec" place-before=0
-/ppp secret remove [find where name="kore-admin"]
-/ppp secret add name="kore-admin" password="kore-admin" profile="kore-vpn-profile" service=l2tp remote-address="10.255.255.2" comment="Acesso Remoto VPN"
+${vpnSection}
+# RADIUS Hotspot
+/radius add service=hotspot address=${radiusHost} secret="${radiusSecret}" authentication-port=1812 accounting-port=1813 timeout=3s disabled=no comment="${radiusName}"
+
+# Perfil e servidor Hotspot na interface final ${finalHotspotInterface}
+/ip hotspot profile add name="${profileName}" use-radius=yes radius-accounting=yes login-by=http-chap,http-pap,cookie html-directory=hotspot
+/ip hotspot add name="${hotspotName}" interface="${finalHotspotInterface}" profile="${profileName}" disabled=no
 
 # Diagnostico final
 :put "=== KORE-HOTSPOT FINALIZADO ==="

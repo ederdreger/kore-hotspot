@@ -52,10 +52,10 @@ export default function MikrotikList() {
       try { return { _id: s.id, ...JSON.parse(s.value) }; } catch { return null; }
     }).filter(Boolean);
     setMikrotiks(parsed);
-    const radius = await base44.entities.Setting.filter({ category: 'radius' }).catch(() => []);
-    const radiusMap = {};
-    radius.forEach(s => { radiusMap[s.key] = s.value; });
-    setRadiusSettings(radiusMap);
+    const settings = await base44.entities.Setting.list().catch(() => []);
+    const settingsMap = {};
+    settings.forEach(s => { settingsMap[s.key] = s.value; });
+    setRadiusSettings(settingsMap);
     setLoading(false);
   };
 
@@ -282,26 +282,11 @@ export default function MikrotikList() {
                 
                 {form.vpn_enabled && (
                   <div className="grid grid-cols-2 gap-4 bg-secondary/20 p-4 rounded-xl border border-border">
-                    <div>
-                      <Label className="text-xs text-muted-foreground mb-1.5 block">IP/Host do Servidor VPN (Matriz)</Label>
-                      <Input
-                        value={form.vpn_server}
-                        onChange={e => setForm({ ...form, vpn_server: e.target.value })}
-                        placeholder="Ex: vpn.matriz.com"
-                        className="bg-input border-border h-9 text-sm font-mono"
-                      />
+                    <div className="col-span-2 text-xs text-info mb-2">
+                      Nota: O IP da VPN Matriz e o Segredo IPsec agora são buscados globalmente em Configurações &gt; VPN L2TP Matriz.
                     </div>
                     <div>
-                      <Label className="text-xs text-muted-foreground mb-1.5 block">Segredo IPsec</Label>
-                      <Input
-                        value={form.vpn_secret}
-                        onChange={e => setForm({ ...form, vpn_secret: e.target.value })}
-                        placeholder="Ex: segredo123"
-                        className="bg-input border-border h-9 text-sm font-mono"
-                      />
-                    </div>
-                    <div>
-                      <Label className="text-xs text-muted-foreground mb-1.5 block">Usuário VPN</Label>
+                      <Label className="text-xs text-muted-foreground mb-1.5 block">Usuário VPN (Criado na Matriz)</Label>
                       <Input
                         value={form.vpn_user}
                         onChange={e => setForm({ ...form, vpn_user: e.target.value })}

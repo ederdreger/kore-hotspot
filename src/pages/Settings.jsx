@@ -3,7 +3,7 @@ import { base44 } from '@/api/base44Client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Server, Shield, Database, Globe, Save, RefreshCw, Eye, EyeOff, CheckCircle, Wifi, Search, CreditCard } from 'lucide-react';
+import { Server, Shield, Database, Globe, Save, RefreshCw, Eye, EyeOff, CheckCircle, Wifi, Search, CreditCard, TerminalSquare, Copy, X } from 'lucide-react';
 import MikrotikList from '@/components/settings/MikrotikList';
 import RadiusAutoConfig from '@/components/settings/RadiusAutoConfig';
 
@@ -36,12 +36,22 @@ const defaultSettings = {
   smtp_password: '',
   smtp_from_email: '',
   smtp_from_name: 'Kore-HotSpot',
+  // VPN
+  vpn_server_host: '',
+  vpn_ipsec_secret: '',
 };
 
 const sections = [
   { id: 'mikrotik', label: 'MikroTik', icon: Server, color: 'text-primary', custom: true },
   {
     id: 'radius', label: 'FreeRADIUS', icon: Shield, color: 'text-info', custom: true
+  },
+  {
+    id: 'vpn', label: 'VPN L2TP Matriz', icon: Shield, color: 'text-primary',
+    fields: [
+      { key: 'vpn_server_host', label: 'IP Público do Servidor VPN (Matriz / VPS)' },
+      { key: 'vpn_ipsec_secret', label: 'Segredo IPsec Global', secret: true },
+    ]
   },
   {
     id: 'ixc', label: 'IXC Soft', icon: Globe, color: 'text-success',
@@ -93,6 +103,27 @@ export default function Settings() {
   const [ixcTestCpf, setIxcTestCpf] = useState('');
   const [ixcTestResult, setIxcTestResult] = useState(null);
   const [ixcTesting, setIxcTesting] = useState(false);
+
+  const [showVpnScript, setShowVpnScript] = useState(false);
+  const [copiedVpn, setCopiedVpn] = useState(false);
+
+  const getVpnScript = () => {
+    return `# Script para o Servidor VPN L2TP/IPsec (Matriz/VPS)
+# Cole este script no New Terminal do seu MikroTik (CHR) na VPS
+
+/ppp profile remove [find where name="kore-vpn-profile"]
+/ppp profile add name="kore-vpn-profile" use-upnp=no local-address="10.255.255.1"
+
+/interface l2tp-server server set enabled=yes use-ipsec=yes ipsec-secret="${settings.vpn_ipsec_secret || 'SUA_SENHA_AQUI'}" default-profile="kore-vpn-profile" authentication=mschap2
+
+/ip firewall filter remove [find where comment="KoreVPN - L2TP"]
+/ip firewall filter add chain=input protocol=udp dst-port=500,1701,4500 action=accept comment="KoreVPN - L2TP" place-before=0
+
+/ip firewall filter remove [find where comment="KoreVPN - IPsec"]
+/ip firewall filter add chain=input protocol=ipsec-esp action=accept comment="KoreVPN - IPsec" place-before=0
+
+:put "=== SERVIDOR VPN L2TP CONFIGURADO COM SUCESSO ==="`;
+  };
 
   useEffect(() => {
     base44.entities.Setting.list().then(saved => {
@@ -176,6 +207,43 @@ export default function Settings() {
         </div>
       </div>
 
+      {/* Modals */}
+      {showVpnScript && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="bg-card border border-border rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden">
+            <div className="p-4 border-b border-border flex justify-between items-center">
+              <h3 className="font-semibold text-sm flex items-center gap-2">
+                <TerminalSquare className="w-4 h-4" /> Script para o Servidor VPS
+              </h3>
+              <Button variant="ghost" size="icon" onClick={() => setShowVpnScript(false)} className="h-8 w-8">
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+            <div className="p-4">
+              <p className="text-sm text-muted-foreground mb-3">
+                Abra o New Terminal do seu MikroTik (Matriz) e cole o script abaixo:
+              </p>
+              <div className="relative group">
+                <pre className="bg-secondary/50 p-4 rounded-lg text-xs font-mono text-foreground whitespace-pre-wrap border border-border">
+                  {getVpnScript()}
+                </pre>
+                <Button 
+                  size="sm" 
+                  className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                  onClick={() => {
+                    navigator.clipboard.writeText(getVpnScript());
+                    setCopiedVpn(true);
+                    setTimeout(() => setCopiedVpn(false), 2000);
+                  }}
+                >
+                  {copiedVpn ? <CheckCircle className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4" />}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Content */}
       <div className="flex-1 min-w-0">
         <div className="bg-card border border-border rounded-xl p-6">
@@ -246,6 +314,20 @@ export default function Settings() {
               
 
               
+              {activeSection === 'vpn' && (
+                <div className="col-span-1 md:col-span-2 mt-4 pt-6 border-t border-border">
+                  <div className="mb-6 p-4 rounded-xl bg-primary/10 border border-primary/20">
+                    <h3 className="text-sm font-semibold text-primary mb-1">Servidor VPN (Matriz / VPS)</h3>
+                    <p className="text-xs text-primary/80 leading-relaxed">
+                      Se você utiliza um MikroTik Cloud Hosted Router (CHR) em uma VPS para ser a Matriz da rede, gere o script abaixo e cole no Terminal desse equipamento para prepará-lo como Servidor L2TP. <strong>Certifique-se de salvar as configurações acima antes de gerar o script.</strong>
+                    </p>
+                  </div>
+                  <Button type="button" onClick={() => setShowVpnScript(true)} className="gap-2 bg-secondary hover:bg-secondary/80 text-secondary-foreground">
+                    <TerminalSquare className="w-4 h-4" /> Gerar Script do Servidor
+                  </Button>
+                </div>
+              )}
+
               {activeSection === 'ixc' && (
                 <div className="col-span-1 md:col-span-2 mt-4 pt-6 border-t border-border">
                   <div className="mb-6 p-4 rounded-xl bg-primary/10 border border-primary/20">

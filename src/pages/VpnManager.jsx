@@ -226,24 +226,11 @@ export default function VpnManager() {
                 </p>
               </div>
 
-              {mikrotiks.length > 0 && (
-                <div className="pt-4 border-t border-border mt-4">
-                  <Label>Provisionar Servidor L2TP</Label>
-                  <p className="text-xs text-muted-foreground mb-3 mt-1">
-                    Ative o servidor L2TP e regras de firewall automaticamente no MikroTik selecionado como matriz.
-                  </p>
-                  <div className="space-y-2">
-                    {mikrotiks.map(m => (
-                      <div key={m.id} className="flex items-center justify-between p-2 rounded-lg bg-secondary/50">
-                        <span className="text-sm font-medium">{m.name}</span>
-                        <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => handleProvisionServer(m)}>
-                          Ativar Servidor
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+              <div className="pt-4 border-t border-border mt-4">
+                <p className="text-xs text-muted-foreground mb-3">
+                  Para gerar o script de provisionamento do seu Servidor VPN (MikroTik CHR na VPS), vá em <strong>Configurações &gt; VPN L2TP Matriz</strong>.
+                </p>
+              </div>
             </div>
           </div>
           
