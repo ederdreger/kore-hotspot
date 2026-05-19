@@ -149,11 +149,13 @@ export default function VpnManager() {
   }, []);
 
   const getClientScript = (account) => {
-    return `/ppp profile remove [find where name="kore-vpn-profile"]
-/ppp profile add name="kore-vpn-profile" use-upnp=no
-/interface l2tp-client add connect-to="${globalVpnIp || '<IP_PUBLICO_DA_SUA_VPS>'}" name="l2tp-matriz" user="${account.username}" password="${account.password}" profile="kore-vpn-profile" use-ipsec=yes ipsec-secret="${ipsecSecret}" disabled=no
-/ip route add dst-address=10.255.255.1 gateway=l2tp-matriz comment="Rota para a Matriz"
-# Use o IP ${account.remote_ip} no sistema para gerenciar este MikroTik natteado.`;
+    const serverIp = globalVpnIp || 'COLOQUE_O_IP_DA_SUA_VPS_AQUI';
+    return `:do { /interface l2tp-client remove [find name="l2tp-matriz"] } on-error={}
+:do { /ip route remove [find comment="Rota para a Matriz"] } on-error={}
+
+/interface l2tp-client add connect-to="${serverIp}" name="l2tp-matriz" user="${account.username}" password="${account.password}" profile="default" use-ipsec=yes ipsec-secret="${ipsecSecret}" disabled=no
+/ip route add dst-address=10.255.255.1/32 gateway=l2tp-matriz comment="Rota para a Matriz"
+# Tunnel criado! Use o IP ${account.remote_ip} no sistema para gerenciar.`;
   };
 
   const copyToClipboard = (text) => {
