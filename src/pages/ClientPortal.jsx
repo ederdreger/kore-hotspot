@@ -41,25 +41,16 @@ export default function ClientPortal() {
   const handleCheckout = async (plan) => {
     setProcessing(true);
     try {
-      // Como o gateway oficial foi ignorado, faremos uma simulação de pagamento via PIX que libera o acesso instantaneamente.
-      toast.info(`Simulando pagamento PIX para o plano ${plan.name}...`);
-      
-      const res = await base44.functions.invoke('renewClientPlan', {
+      toast.info("Gerando link de pagamento Mercado Pago...");
+      const res = await base44.functions.invoke('createMercadoPagoCheckout', {
          clientId: client.id,
          planId: plan.id
       });
       
-      if (res.data.success) {
-         toast.success(res.data.message);
-         // Atualiza o cliente localmente para refletir a mudança
-         setClient({
-           ...client,
-           status: 'active',
-           plan_id: plan.id,
-           plan_name: plan.name
-         });
+      if (res.data.success && res.data.url) {
+         window.location.href = res.data.url;
       } else {
-         toast.error(res.data.error || "Erro ao processar renovação.");
+         toast.error(res.data.error || "Erro ao gerar checkout do Mercado Pago.");
       }
     } catch (e) {
       toast.error(e.response?.data?.error || "Erro de comunicação com o servidor.");
