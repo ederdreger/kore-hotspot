@@ -63,17 +63,28 @@ export default function MikrotikList() {
   };
 
   const handleSave = async () => {
-    if (!form.name || !form.host) { toast.error('Nome e Host são obrigatórios'); return; }
+    if (!form.name || !form.host || !form.user || !form.password) {
+      toast.error('Nome, IP, usuário e senha são obrigatórios');
+      return;
+    }
+
     setSaving(true);
-    const blob = JSON.stringify({ ...form });
+    const deviceData = { ...form };
+    const blob = JSON.stringify(deviceData);
+    let savedDevice;
+
     if (editing) {
       await base44.entities.Setting.update(editing._id, { key: `mikrotik_device_${editing._id}`, value: blob, category: 'mikrotik_device', label: form.name });
+      savedDevice = { ...editing, ...deviceData };
     } else {
       const created = await base44.entities.Setting.create({ key: `mikrotik_device_${Date.now()}`, value: blob, category: 'mikrotik_device', label: form.name });
+      savedDevice = { _id: created.id, ...deviceData };
     }
+
     toast.success(editing ? 'MikroTik atualizado!' : 'MikroTik cadastrado!');
     setSaving(false);
     setShowForm(false);
+    setScriptMt(savedDevice);
     load();
   };
 
@@ -85,9 +96,9 @@ export default function MikrotikList() {
 
   const fields = [
     { key: 'name', label: 'Nome / Identificação', placeholder: 'Ex: Praça Central AP01' },
-    { key: 'host', label: 'Host / IP', placeholder: '192.168.88.1' },
-    { key: 'port', label: 'Porta SSH', placeholder: '22' },
-    { key: 'user', label: 'Usuário', placeholder: 'admin' },
+    { key: 'host', label: 'IP do MikroTik', placeholder: '192.168.88.1' },
+    { key: 'port', label: 'Porta de acesso', placeholder: '22' },
+    { key: 'user', label: 'Usuário de acesso', placeholder: 'admin' },
     { key: 'hotspot_interface', label: 'Interface Hotspot', placeholder: 'ether1' },
     { key: 'hotspot_network', label: 'Rede Hotspot', placeholder: '192.168.1.0/24' },
   ];
@@ -164,7 +175,7 @@ export default function MikrotikList() {
             <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-border">
               <div className="flex items-center gap-2">
                 <Server className="w-4 h-4 text-primary" />
-                <h3 className="font-semibold text-foreground text-sm">{editing ? 'Editar MikroTik' : 'Cadastrar MikroTik'}</h3>
+                <h3 className="font-semibold text-foreground text-sm">{editing ? 'Editar MikroTik' : 'Cadastrar MikroTik e gerar script'}</h3>
               </div>
               <button onClick={() => setShowForm(false)} className="text-muted-foreground hover:text-foreground transition-colors">
                 <X className="w-4 h-4" />
@@ -184,7 +195,7 @@ export default function MikrotikList() {
               ))}
               {/* Password */}
               <div className="col-span-2">
-                <Label className="text-xs text-muted-foreground mb-1.5 block">Senha</Label>
+                <Label className="text-xs text-muted-foreground mb-1.5 block">Senha de acesso</Label>
                 <div className="relative">
                   <Input
                     type={showPass ? 'text' : 'password'}
@@ -203,7 +214,7 @@ export default function MikrotikList() {
               <Button variant="outline" size="sm" onClick={() => setShowForm(false)} className="border-border">Cancelar</Button>
               <Button size="sm" onClick={handleSave} disabled={saving} className="bg-primary text-primary-foreground gap-2">
                 {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />}
-                {editing ? 'Atualizar' : 'Cadastrar'}
+                {editing ? 'Atualizar e gerar script' : 'Cadastrar e gerar script' }
               </Button>
             </div>
           </div>
