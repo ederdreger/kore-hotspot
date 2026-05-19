@@ -29,6 +29,8 @@ export default function MikrotikStatusModal({ mikrotik, token, onClose }) {
       const res = await base44.functions.invoke('mikrotikStatus', {
         host: mikrotik.host,
         port: mikrotik.port || '22',
+        user: mikrotik.user || 'admin',
+        password: mikrotik.password || '',
         snmp_port: mikrotik.snmp_port || '161',
         snmp_community: mikrotik.snmp_community || 'public',
         token,
@@ -61,7 +63,7 @@ export default function MikrotikStatusModal({ mikrotik, token, onClose }) {
             </div>
             <div>
               <h3 className="font-semibold text-sm text-foreground">Status do MikroTik</h3>
-              <p className="text-xs text-muted-foreground font-mono">{mikrotik.host} · SSH {mikrotik.port || '22'} · SNMP {mikrotik.snmp_port || '161'}</p>
+              <p className="text-xs text-muted-foreground font-mono">{mikrotik.host} · Porta {mikrotik.port || '22'}</p>
             </div>
           </div>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
@@ -70,26 +72,23 @@ export default function MikrotikStatusModal({ mikrotik, token, onClose }) {
         <div className="p-6 space-y-4">
           {loading ? (
             <div className="flex items-center gap-3 text-sm text-muted-foreground">
-              <RefreshCw className="w-4 h-4 animate-spin text-primary" /> Verificando ping, SSH e coleta SNMP...
+              <RefreshCw className="w-4 h-4 animate-spin text-primary" /> Verificando comunicação e coletando métricas...
             </div>
           ) : (
             <div className={`rounded-xl border p-4 text-sm flex gap-3 ${online ? 'border-success/30 bg-success/10 text-success' : 'border-destructive/30 bg-destructive/10 text-destructive'}`}>
               {online ? <CheckCircle className="w-4 h-4 mt-0.5 flex-shrink-0" /> : <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />}
-              <span>{online ? 'Equipamento online. Veja abaixo o status do SNMP e SSH.' : 'Equipamento sem resposta por ping e SSH.'}</span>
+              <span>{online ? 'Comunicação estabelecida com sucesso.' : (status?.error || status?.snmp_error || 'Equipamento sem resposta. Verifique as credenciais e porta.')}</span>
             </div>
           )}
 
-          {!loading && status && (
+          {!loading && status && online && (
             <div className="grid grid-cols-2 gap-3">
-              <div className="bg-background border border-border rounded-xl p-3"><p className="text-xs text-muted-foreground">Ping</p><p className="text-sm font-semibold">{status.ping?.online ? `Online${status.ping.latency_ms ? ` · ${status.ping.latency_ms}ms` : ''}` : 'Sem resposta'}</p></div>
-              <div className="bg-background border border-border rounded-xl p-3"><p className="text-xs text-muted-foreground">SSH</p><p className="text-sm font-semibold">{status.ssh?.reachable ? `Porta ${status.ssh.port} aberta` : `Porta ${status.ssh?.port || mikrotik.port || '22'} fechada`}</p></div>
-              <div className="bg-background border border-border rounded-xl p-3 col-span-2"><p className="text-xs text-muted-foreground">SNMP</p><p className={`text-sm font-semibold ${snmpOk ? 'text-success' : 'text-destructive'}`}>{snmpOk ? 'Coletando informações' : (status.snmp_error || 'SNMP sem resposta')}</p></div>
-              {snmpOk && <div className="bg-background border border-border rounded-xl p-3"><p className="text-xs text-muted-foreground">Uptime</p><p className="text-sm font-semibold">{formatRouterUptime(status.uptime)}</p></div>}
-              {snmpOk && <div className="bg-background border border-border rounded-xl p-3"><p className="text-xs text-muted-foreground">CPU</p><p className="text-sm font-semibold">{status.cpu_load ?? 'N/A'}%</p></div>}
-              {snmpOk && <div className="bg-background border border-border rounded-xl p-3"><p className="text-xs text-muted-foreground">Versão</p><p className="text-sm font-semibold">{status.version || 'N/A'}</p></div>}
-              {snmpOk && <div className="bg-background border border-border rounded-xl p-3"><p className="text-xs text-muted-foreground">Hotspot</p><p className="text-sm font-semibold">{status.hotspot_count ?? 0} servidor(es)</p></div>}
-              {snmpOk && <div className="bg-background border border-border rounded-xl p-3"><p className="text-xs text-muted-foreground">Usuários ativos</p><p className="text-sm font-semibold">{status.active_users ?? 0}</p></div>}
-              {snmpOk && <div className="bg-background border border-border rounded-xl p-3"><p className="text-xs text-muted-foreground">RADIUS Hotspot</p><p className="text-sm font-semibold">{status.radius_hotspot_count ?? 0} configurado(s)</p></div>}
+              <div className="bg-background border border-border rounded-xl p-3"><p className="text-xs text-muted-foreground">Uptime</p><p className="text-sm font-semibold">{status.uptime || 'N/A'}</p></div>
+              <div className="bg-background border border-border rounded-xl p-3"><p className="text-xs text-muted-foreground">CPU</p><p className="text-sm font-semibold">{status.cpu_load ?? 'N/A'}%</p></div>
+              <div className="bg-background border border-border rounded-xl p-3"><p className="text-xs text-muted-foreground">Versão</p><p className="text-sm font-semibold">{status.version || 'N/A'}</p></div>
+              <div className="bg-background border border-border rounded-xl p-3"><p className="text-xs text-muted-foreground">Modelo</p><p className="text-sm font-semibold">{status.board_name || 'N/A'}</p></div>
+              <div className="bg-background border border-border rounded-xl p-3"><p className="text-xs text-muted-foreground">Usuários ativos</p><p className="text-sm font-semibold">{status.active_users ?? 0}</p></div>
+              <div className="bg-background border border-border rounded-xl p-3"><p className="text-xs text-muted-foreground">Protocolo de coleta</p><p className="text-sm font-semibold text-primary">{status.protocol || 'SSH'}</p></div>
             </div>
           )}
 

@@ -1,6 +1,6 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+import { Client } from 'npm:ssh2@1.16.0';
 import snmp from 'npm:net-snmp@3.14.0';
-import { Buffer } from 'node:buffer';
 
 async function requireAdmin(base44, token) {
   if (!token) throw new Error('Sessão administrativa não enviada');
@@ -11,76 +11,80 @@ async function requireAdmin(base44, token) {
 }
 
 function normalizeHost(host) {
-  return String(host || '').trim().replace(/^snmp:\/\//i, '').replace(/^https?:\/\//i, '').split('/')[0].split(':')[0];
+  return String(host || '').trim().replace(/^ssh:\/\//i, '').replace(/^snmp:\/\//i, '').replace(/^https?:\/\//i, '').split('/')[0].split(':')[0];
 }
 
-function readSnmp(host, community, port, oids) {
+function sshExec(host, port, username, password, commands) {
   return new Promise((resolve, reject) => {
-    const session = snmp.createSession(host, community, {
-      port: parseInt(port) || 161,
-      version: snmp.Version2c,
-      timeout: 2000,
-      retries: 0,
-      transport: 'udp4',
-    });
+    const conn = new Client();
+    const results = [];
+    const timer = setTimeout(() => {
+      conn.destroy();
+      reject(new Error('Timeout SSH'));
+    }, 15000);
 
-    session.get(oids, (error, varbinds) => {
-      session.close();
-      if (error) return reject(error);
-      const result = {};
-      varbinds.forEach((varbind, index) => {
-        if (!snmp.isVarbindError(varbind)) {
-          result[oids[index]] = varbind.value;
-        }
+    const runNext = (stream, cmds, idx) => {
+      if (idx >= cmds.length) {
+        clearTimeout(timer);
+        conn.end();
+        resolve(results);
+        return;
+      }
+      let out = '';
+      conn.exec(cmds[idx], (err, s) => {
+        if (err) { clearTimeout(timer); conn.end(); return reject(err); }
+        s.on('data', d => { out += d.toString(); });
+        s.stderr.on('data', d => { out += d.toString(); });
+        s.on('close', () => {
+          results.push({ cmd: cmds[idx], output: out.trim() });
+          runNext(stream, cmds, idx + 1);
+        });
       });
-      resolve(result);
+    };
+
+    conn.on('ready', () => runNext(null, commands, 0));
+    conn.on('keyboard-interactive', (name, instructions, lang, prompts, finish) => finish([password]));
+    conn.on('error', err => { clearTimeout(timer); reject(err); });
+    conn.connect({
+      host,
+      port: parseInt(port) || 22,
+      username,
+      password,
+      tryKeyboard: true,
+      readyTimeout: 10000,
+      algorithms: {
+        cipher: ['aes128-ctr', 'aes192-ctr', 'aes256-ctr', 'aes128-cbc', 'aes192-cbc', 'aes256-cbc'],
+        serverHostKey: ['ssh-rsa', 'rsa-sha2-256', 'rsa-sha2-512', 'ecdsa-sha2-nistp256', 'ecdsa-sha2-nistp384', 'ecdsa-sha2-nistp521'],
+        kex: [
+          'curve25519-sha256', 'curve25519-sha256@libssh.org',
+          'ecdh-sha2-nistp256', 'ecdh-sha2-nistp384', 'ecdh-sha2-nistp521',
+          'diffie-hellman-group14-sha256', 'diffie-hellman-group14-sha1',
+          'diffie-hellman-group-exchange-sha256', 'diffie-hellman-group1-sha1'
+        ],
+        hmac: ['hmac-sha2-256', 'hmac-sha2-512', 'hmac-sha1'],
+      },
     });
   });
 }
 
-function uncheckedPing() {
-  return { online: null, latency_ms: null, error: 'Ping ICMP não disponível no ambiente seguro da aplicação' };
+function parseResource(output) {
+  const data = {};
+  const lines = output.split('\n');
+  lines.forEach(line => {
+    if (line.includes('uptime:')) data.uptime = line.split('uptime:')[1].trim();
+    if (line.includes('version:')) data.version = line.split('version:')[1].trim();
+    if (line.includes('free-memory:')) data.freeMemory = parseInt(line.split('free-memory:')[1].replace(/[^0-9]/g, '')) * 1024;
+    if (line.includes('total-memory:')) data.totalMemory = parseInt(line.split('total-memory:')[1].replace(/[^0-9]/g, '')) * 1024;
+    if (line.includes('cpu-load:')) data.cpuLoad = parseInt(line.split('cpu-load:')[1].replace(/[^0-9]/g, ''));
+    if (line.includes('board-name:')) data.boardName = line.split('board-name:')[1].trim();
+  });
+  return data;
 }
-
-function uncheckedSsh(port) {
-  return { reachable: null, port: parseInt(port) || 22, error: 'Teste SSH direto desativado para evitar timeout; use SNMP para coleta' };
-}
-
-function toText(value) {
-  if (value === undefined || value === null) return '';
-  if (value instanceof Uint8Array || Buffer.isBuffer(value)) return Buffer.from(value).toString('utf8');
-  return String(value);
-}
-
-function toNumber(value) {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : null;
-}
-
-function formatTicks(value) {
-  const ticks = toNumber(value);
-  if (ticks === null) return null;
-  const seconds = Math.floor(ticks / 100);
-  const days = Math.floor(seconds / 86400);
-  const hours = Math.floor((seconds % 86400) / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  return `${days}d ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
-}
-
-const OIDS = {
-  sysDescr: '1.3.6.1.2.1.1.1.0',
-  sysName: '1.3.6.1.2.1.1.5.0',
-  uptime: '1.3.6.1.2.1.1.3.0',
-  cpuLoad: '1.3.6.1.4.1.14988.1.1.3.14.0',
-  totalMemory: '1.3.6.1.4.1.14988.1.1.3.2.0',
-  freeMemory: '1.3.6.1.4.1.14988.1.1.3.3.0',
-  hotspotActive: '1.3.6.1.4.1.14988.1.1.5.1.0',
-};
 
 Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
   const body = await req.json().catch(() => ({}));
-  const { host, port = '22', snmp_port = '161', snmp_community = 'public', token } = body;
+  const { host, port = '22', user = 'admin', password = '', token } = body;
 
   try {
     await requireAdmin(base44, token);
@@ -89,61 +93,49 @@ Deno.serve(async (req) => {
   }
 
   if (!host) return Response.json({ error: 'host é obrigatório' }, { status: 400 });
-
   const cleanHost = normalizeHost(host);
-  const ping = uncheckedPing();
-  const ssh = uncheckedSsh(port);
 
   try {
-    const data = await Promise.race([
-      readSnmp(cleanHost, snmp_community, snmp_port, Object.values(OIDS)),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('SNMP timeout')), 3000)),
-    ]);
-    const versionText = toText(data[OIDS.sysDescr]);
-
-    if (!versionText && !data[OIDS.uptime]) {
-      return Response.json({
-        connected: false,
-        online: false,
-        ping,
-        ssh,
-        snmp_connected: false,
-        snmp_error: `SNMP respondeu em ${cleanHost}:${snmp_port}, mas não retornou dados do sistema.`,
-      }, { status: 200 });
-    }
+    // Check via SSH (fallback robusto para redes que bloqueiam UDP/SNMP)
+    const commands = [
+      '/system resource print',
+      '/ip hotspot print count-only',
+      '/ip hotspot active print count-only'
+    ];
+    
+    const results = await sshExec(cleanHost, port, user, password, commands);
+    const resourceText = results[0].output;
+    const hotspotCount = parseInt(results[1].output) || 0;
+    const activeUsers = parseInt(results[2].output) || 0;
+    
+    const resData = parseResource(resourceText);
 
     return Response.json({
       connected: true,
       online: true,
-      protocol: 'SNMP',
-      ping,
-      ssh,
-      snmp_connected: true,
-      uptime: formatTicks(data[OIDS.uptime]),
-      cpu_load: toNumber(data[OIDS.cpuLoad]),
-      free_memory: toNumber(data[OIDS.freeMemory]),
-      total_memory: toNumber(data[OIDS.totalMemory]),
-      temperature: null,
-      board_name: toText(data[OIDS.sysName]) || null,
-      version: versionText || null,
-      active_users: toNumber(data[OIDS.hotspotActive]),
-      hotspot_count: null,
-      radius_hotspot_count: null,
+      protocol: 'SSH',
+      snmp_connected: true, // mock para a UI existente
+      uptime: resData.uptime || null,
+      cpu_load: resData.cpuLoad || 0,
+      free_memory: resData.freeMemory || 0,
+      total_memory: resData.totalMemory || 0,
+      board_name: resData.boardName || null,
+      version: resData.version || null,
+      active_users: activeUsers,
+      hotspot_count: hotspotCount,
     });
   } catch (err) {
-    let msg = err.message || 'Falha ao consultar SNMP';
-    if (msg.includes('RequestTimedOut') || msg.includes('timed out')) {
-      msg = `Sem resposta SNMP em ${cleanHost}:${snmp_port} — verifique se o SNMP está ativo e liberado no firewall`;
-    } else if (msg.includes('NoSuchName') || msg.includes('authorization')) {
-      msg = 'Comunidade SNMP inválida ou sem permissão de leitura';
-    }
+    let msg = err.message || 'Falha ao conectar';
+    if (msg.includes('Timeout')) msg = `Timeout ao conectar em ${cleanHost}:${port} via SSH`;
+    else if (msg.includes('Authentication')) msg = `Usuário ou senha inválidos para o SSH do MikroTik`;
+    else if (msg.includes('refused')) msg = `Conexão SSH recusada na porta ${port}`;
+    
     return Response.json({
       connected: false,
       online: false,
-      ping,
-      ssh,
       snmp_connected: false,
       snmp_error: msg,
+      error: msg,
     }, { status: 200 });
   }
 });

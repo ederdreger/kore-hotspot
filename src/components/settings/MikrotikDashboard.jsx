@@ -43,7 +43,7 @@ export default function MikrotikDashboard({ mikrotik, onClose }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [tests, setTests] = useState([
-    { id: 'snmp', label: 'Coleta SNMP', status: 'idle', detail: null },
+    { id: 'ssh', label: 'Coleta via SSH', status: 'idle', detail: null },
     { id: 'system', label: 'Dados do sistema', status: 'idle', detail: null },
     { id: 'hotspot', label: 'Hotspot Ativo', status: 'idle', detail: null },
     { id: 'users', label: 'Usuários Conectados', status: 'idle', detail: null },
@@ -58,6 +58,8 @@ export default function MikrotikDashboard({ mikrotik, onClose }) {
       const response = await base44.functions.invoke('mikrotikStatus', {
         host: mikrotik.host,
         port: mikrotik.port,
+        user: mikrotik.user || 'admin',
+        password: mikrotik.password || '',
         snmp_port: mikrotik.snmp_port || '161',
         snmp_community: mikrotik.snmp_community || 'public',
         token: getToken(),
@@ -86,7 +88,7 @@ export default function MikrotikDashboard({ mikrotik, onClose }) {
 
   const runTests = async () => {
     setTestRunning(true);
-    const steps = ['snmp', 'system', 'hotspot', 'users'];
+    const steps = ['ssh', 'system', 'hotspot', 'users'];
 
     for (const id of steps) {
       setTests(prev => prev.map(t => t.id === id ? { ...t, status: 'running', detail: null } : t));
@@ -95,9 +97,9 @@ export default function MikrotikDashboard({ mikrotik, onClose }) {
       let status = 'ok';
       let detail = null;
 
-      if (id === 'snmp') {
+      if (id === 'ssh') {
         status = isOnline ? 'ok' : 'error';
-        detail = isOnline ? `SNMP ${mikrotik.snmp_port || '161'} respondeu` : 'SNMP sem resposta';
+        detail = isOnline ? `SSH porta ${mikrotik.port || '22'} conectada` : 'SSH sem resposta';
       } else if (id === 'system') {
         status = isOnline ? 'ok' : 'error';
         detail = isOnline ? 'Métricas coletadas' : (metrics?.snmp_error || 'Sem dados');
