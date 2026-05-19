@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Server, Shield, Database, Globe, Save, RefreshCw, Eye, EyeOff, CheckCircle, Wifi, Search } from 'lucide-react';
 import MikrotikList from '@/components/settings/MikrotikList';
+import RadiusAutoConfig from '@/components/settings/RadiusAutoConfig';
 
 const defaultSettings = {
   // RADIUS
@@ -38,16 +39,7 @@ const defaultSettings = {
 const sections = [
   { id: 'mikrotik', label: 'MikroTik', icon: Server, color: 'text-primary', custom: true },
   {
-    id: 'radius', label: 'FreeRADIUS', icon: Shield, color: 'text-info',
-    fields: [
-      { key: 'radius_host', label: 'Host RADIUS' },
-      { key: 'radius_port', label: 'Porta' },
-      { key: 'radius_secret', label: 'Shared Secret', secret: true },
-      { key: 'radius_db_host', label: 'DB Host' },
-      { key: 'radius_db_name', label: 'DB Nome' },
-      { key: 'radius_db_user', label: 'DB Usuário' },
-      { key: 'radius_db_password', label: 'DB Senha', secret: true },
-    ]
+    id: 'radius', label: 'FreeRADIUS', icon: Shield, color: 'text-info', custom: true
   },
   {
     id: 'ixc', label: 'IXC Soft', icon: Globe, color: 'text-success',
@@ -214,7 +206,7 @@ export default function Settings() {
 
           {/* Section content */}
           {activeS.custom ? (
-            <MikrotikList />
+            activeS.id === 'mikrotik' ? <MikrotikList /> : <RadiusAutoConfig />
           ) : loading ? (
             <div className="grid grid-cols-2 gap-4">
               {Array(6).fill(0).map((_, i) => <div key={i} className="h-16 bg-secondary rounded-lg animate-pulse" />)}
@@ -244,16 +236,7 @@ export default function Settings() {
                 </div>
               ))}
               
-              {activeSection === 'radius' && (
-                <div className="col-span-1 md:col-span-2 mt-4 pt-6 border-t border-border">
-                  <div className="p-4 rounded-xl bg-info/10 border border-info/20">
-                    <h3 className="text-sm font-semibold text-info mb-1">Por que usar o FreeRADIUS?</h3>
-                    <p className="text-xs text-info/80 leading-relaxed">
-                      Como o MikroTik <strong>não tem integração direta com o IXC</strong>, o FreeRADIUS é a ferramenta central de utilidade para sua rede. Ele atua como o autenticador local que gerencia a conexão de forma perfeita para todos os acessos dos clientes (tanto os validados pelo IXC quanto os novos cadastros feitos aqui).
-                    </p>
-                  </div>
-                </div>
-              )}
+
               
               {activeSection === 'ixc' && (
                 <div className="col-span-1 md:col-span-2 mt-4 pt-6 border-t border-border">
