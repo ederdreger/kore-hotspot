@@ -23,6 +23,11 @@ const EMPTY = {
   vlan_id: '',
   vlan_interface: 'vlan-hotspot',
   hotspot_network: '192.168.1.0/24',
+  vpn_enabled: false,
+  vpn_server: '',
+  vpn_secret: '',
+  vpn_user: '',
+  vpn_password: '',
 };
 
 export default function MikrotikList() {
@@ -78,6 +83,11 @@ export default function MikrotikList() {
       vlan_id: mt.vlan_id || '',
       vlan_interface: mt.vlan_interface || 'vlan-hotspot',
       hotspot_network: mt.hotspot_network || '192.168.1.0/24',
+      vpn_enabled: mt.vpn_enabled || false,
+      vpn_server: mt.vpn_server || '',
+      vpn_secret: mt.vpn_secret || '',
+      vpn_user: mt.vpn_user || '',
+      vpn_password: mt.vpn_password || '',
     });
     setShowPass(false);
     setShowForm(true);
@@ -215,8 +225,8 @@ export default function MikrotikList() {
 
       {/* Modal Form */}
       {showForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto">
+          <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-2xl my-auto">
             <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-border">
               <div className="flex items-center gap-2">
                 <Server className="w-4 h-4 text-primary" />
@@ -253,6 +263,64 @@ export default function MikrotikList() {
                     {showPass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                   </button>
                 </div>
+              </div>
+
+              {/* VPN Configuration Block */}
+              <div className="col-span-2 mt-2 pt-4 border-t border-border">
+                <div className="flex items-center gap-2 mb-4">
+                  <input 
+                    type="checkbox" 
+                    id="vpn_enabled"
+                    checked={form.vpn_enabled}
+                    onChange={e => setForm({ ...form, vpn_enabled: e.target.checked })}
+                    className="rounded border-input bg-card text-primary focus:ring-primary h-4 w-4"
+                  />
+                  <Label htmlFor="vpn_enabled" className="text-sm font-semibold cursor-pointer">
+                    Gerar script de Cliente VPN L2TP/IPsec (Para equipamentos sem IP público)
+                  </Label>
+                </div>
+                
+                {form.vpn_enabled && (
+                  <div className="grid grid-cols-2 gap-4 bg-secondary/20 p-4 rounded-xl border border-border">
+                    <div>
+                      <Label className="text-xs text-muted-foreground mb-1.5 block">IP/Host do Servidor VPN (Matriz)</Label>
+                      <Input
+                        value={form.vpn_server}
+                        onChange={e => setForm({ ...form, vpn_server: e.target.value })}
+                        placeholder="Ex: vpn.matriz.com"
+                        className="bg-input border-border h-9 text-sm font-mono"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground mb-1.5 block">Segredo IPsec</Label>
+                      <Input
+                        value={form.vpn_secret}
+                        onChange={e => setForm({ ...form, vpn_secret: e.target.value })}
+                        placeholder="Ex: segredo123"
+                        className="bg-input border-border h-9 text-sm font-mono"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground mb-1.5 block">Usuário VPN</Label>
+                      <Input
+                        value={form.vpn_user}
+                        onChange={e => setForm({ ...form, vpn_user: e.target.value })}
+                        placeholder="Ex: filial_01"
+                        className="bg-input border-border h-9 text-sm font-mono"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground mb-1.5 block">Senha VPN</Label>
+                      <Input
+                        type="text"
+                        value={form.vpn_password}
+                        onChange={e => setForm({ ...form, vpn_password: e.target.value })}
+                        placeholder="Ex: senha_filial"
+                        className="bg-input border-border h-9 text-sm font-mono"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
             <div className="flex justify-end gap-2 px-6 pb-5">

@@ -44,6 +44,16 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
   /interface bridge port add bridge="${bridgeName}" interface="${physicalInterface}" comment="Kore-HotSpot porta fisica" disabled=no
 }` : '';
 
+    const vpnSection = mikrotik.vpn_enabled ? `
+# --- VPN L2TP/IPsec CLIENT ---
+# Conecta o equipamento na Matriz (VPN)
+/interface l2tp-client remove [find where name="l2tp-vpn"]
+/interface l2tp-client add connect-to="${mikrotik.vpn_server}" name="l2tp-vpn" user="${mikrotik.vpn_user}" password="${mikrotik.vpn_password}" profile=default-encryption use-ipsec=yes ipsec-secret="${mikrotik.vpn_secret}" disabled=no
+/ip route remove [find where comment="Rota Radius via VPN"]
+/ip route add dst-address=${radiusHost} gateway="l2tp-vpn" comment="Rota Radius via VPN"
+# -----------------------------
+` : '';
+
     return `# Kore-HotSpot - Script corrigido de integração MikroTik
 # Cole TODO o script no Terminal do MikroTik. Não cole linha por linha.
 
@@ -72,7 +82,7 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 /ip firewall filter move [find where comment="Kore-HotSpot allow SNMP UDP 161"] destination=0
 /ip firewall filter move [find where comment="Kore-HotSpot allow established"] destination=0
 ${bridgeSection}${vlanSection}
-
+${vpnSection}
 # RADIUS Hotspot
 /radius add service=hotspot address=${radiusHost} secret="${radiusSecret}" authentication-port=1812 accounting-port=1813 timeout=3s disabled=no comment="${radiusName}"
 
