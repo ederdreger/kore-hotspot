@@ -9,11 +9,12 @@ import { Label } from '@/components/ui/label';
 import { Plus, Search, RefreshCw, Wifi, UserCheck, Trash2, Edit, Shield, Network } from 'lucide-react';
 import { toast } from 'sonner';
 
-const emptyForm = { name: '', cpf: '', email: '', phone: '', city: '', address: '', plan_id: '', status: 'active', notes: '', source: 'manual' };
+const emptyForm = { name: '', cpf: '', email: '', phone: '', city: '', address: '', plan_id: '', status: 'active', notes: '', source: 'manual', mikrotikId: 'none', username: '', password: '' };
 
 export default function Clients() {
   const [clients, setClients] = useState([]);
   const [plans, setPlans] = useState([]);
+  const [mikrotiks, setMikrotiks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -24,12 +25,17 @@ export default function Clients() {
 
   const load = async () => {
     setLoading(true);
-    const [cls, pls] = await Promise.all([
+    const [cls, pls, mtiksRaw] = await Promise.all([
       base44.entities.Client.list('-created_date', 200),
-      base44.entities.Plan.filter({ status: 'active' })
+      base44.entities.Plan.filter({ status: 'active' }),
+      base44.entities.Setting.filter({ category: 'mikrotik_device' })
     ]);
+    const mtiks = mtiksRaw.map(s => {
+      try { return { id: s.id, ...JSON.parse(s.value) }; } catch { return null; }
+    }).filter(Boolean);
     setClients(cls);
     setPlans(pls);
+    setMikrotiks(mtiks);
     setLoading(false);
   };
 
@@ -42,29 +48,67 @@ export default function Clients() {
     return matchSearch && matchStatus;
   });
 
-  const openCreate = () => { setEditing(null); setForm(emptyForm); setShowDialog(true); };
+  const openCreate = () => { 
+    setEditing(null); 
+    setForm({ ...emptyForm, mikrotikId: mikrotiks.length > 0 ? mikrotiks[0].id : 'none' }); 
+    setShowDialog(true); 
+  };
   const openEdit = (c) => {
     setEditing(c);
-    setForm({ name: c.name || '', cpf: c.cpf || '', email: c.email || '', phone: c.phone || '', city: c.city || '', address: c.address || '', plan_id: c.plan_id || '', status: c.status || 'active', notes: c.notes || '', source: c.source || 'manual' });
+    setForm({ ...emptyForm, ...c });
     setShowDialog(true);
   };
 
   const handleSave = async () => {
     setSaving(true);
     const plan = plans.find(p => p.id === form.plan_id);
-    const data = { ...form, plan_name: plan?.name || '', mikrotik_profile: plan?.mikrotik_profile_name || '', radius_username: form.radius_username || form.cpf || form.email.split('@')[0], provisioned_at: new Date().toISOString() };
-    if (editing) {
-      await base44.entities.Client.update(editing.id, data);
-      await base44.entities.AuditLog.create({ action: 'update_client', entity_type: 'client', entity_id: editing.id, entity_name: form.name, status: 'success', message: `Cliente ${form.name} atualizado` });
-      toast.success('Cliente atualizado!');
-    } else {
-      const c = await base44.entities.Client.create(data);
-      await base44.entities.AuditLog.create({ action: 'create_client', entity_type: 'client', entity_id: c.id, entity_name: form.name, status: 'success', message: `Cliente ${form.name} criado e provisionado` });
-      toast.success('Cliente criado e provisionado!');
+    const username = form.username || form.cpf || (form.email ? form.email.split('@')[0] : form.name.toLowerCase().replace(/\s+/g, ''));
+    
+    const data = { 
+      ...form, 
+      plan_name: plan?.name || '', 
+      mikrotik_profile: plan?.mikrotik_profile_name || 'default', 
+      radius_username: username, 
+      radius_password: form.password || '',
+      provisioned_at: new Date().toISOString() 
+    };
+    
+    try {
+      if (editing) {
+        await base44.entities.Client.update(editing.id, data);
+        await base44.entities.AuditLog.create({ action: 'update_client', entity_type: 'client', entity_id: editing.id, entity_name: form.name, status: 'success', message: `Cliente ${form.name} atualizado` });
+        toast.success('Cliente atualizado!');
+      } else {
+        const c = await base44.entities.Client.create(data);
+        await base44.entities.AuditLog.create({ action: 'create_client', entity_type: 'client', entity_id: c.id, entity_name: form.name, status: 'success', message: `Cliente ${form.name} criado` });
+        
+        if (form.mikrotikId && form.mikrotikId !== 'none') {
+          const mtik = mikrotiks.find(m => m.id === form.mikrotikId);
+          if (mtik) {
+            await base44.functions.invoke('mikrotikAddUser', {
+              host: mtik.host,
+              port: mtik.port,
+              user: mtik.user,
+              password: mtik.password,
+              username: username,
+              userPassword: form.password,
+              profile: plan?.mikrotik_profile_name || 'default',
+              server: 'all'
+            });
+            await base44.entities.AuditLog.create({ action: 'provision_mikrotik', entity_type: 'mikrotik', entity_id: c.id, entity_name: c.name, status: 'success', message: `Provisionamento MikroTik SSH: ${form.name}` });
+            toast.success('Cliente criado e provisionado via SSH!');
+          }
+        } else {
+          toast.success('Cliente criado!');
+        }
+      }
+      setShowDialog(false);
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.error || e.message || 'Erro ao salvar cliente');
+    } finally {
+      setSaving(false);
     }
-    setShowDialog(false);
-    load();
-    setSaving(false);
   };
 
   const handleDelete = async (c) => {
@@ -174,14 +218,40 @@ export default function Clients() {
             <DialogTitle>{editing ? 'Editar Cliente' : 'Novo Cliente'}</DialogTitle>
           </DialogHeader>
           <div className="grid grid-cols-2 gap-3 mt-2">
-            {[['name','Nome Completo',true,1],['cpf','CPF',true,1],['email','E-mail',true,1],['phone','Telefone',false,1],['city','Cidade',false,1],['address','Endereço',false,2]].map(([field, label, req, cols]) => (
+            {!editing && (
+              <div className="col-span-2 p-4 bg-primary/5 border border-primary/20 rounded-xl mb-2">
+                <Label className="text-sm text-primary font-bold mb-3 flex items-center gap-2"><Network className="w-4 h-4"/> Integração MikroTik (Cadastro Rápido)</Label>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="col-span-2">
+                    <Label className="text-xs text-muted-foreground mb-1 block">Equipamento</Label>
+                    <Select value={form.mikrotikId} onValueChange={v => setForm({ ...form, mikrotikId: v })}>
+                      <SelectTrigger className="h-9 bg-input border-border text-sm"><SelectValue placeholder="Não provisionar automaticamente" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Somente no Banco de Dados (Sem SSH)</SelectItem>
+                        {mikrotiks.map(m => <SelectItem key={m.id} value={m.id}>{m.name} ({m.host})</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label className="text-xs text-muted-foreground mb-1 block">Usuário Hotspot (Login)</Label>
+                    <Input value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} placeholder="Deixar vazio gera auto" className="bg-input border-border h-9 text-sm" />
+                  </div>
+                  <div>
+                    <Label className="text-xs text-muted-foreground mb-1 block">Senha Hotspot</Label>
+                    <Input value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} placeholder="Ex: 123456" className="bg-input border-border h-9 text-sm" />
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            {[['name','Nome Completo',true,1],['cpf','CPF (opcional)',false,1],['email','E-mail (opcional)',false,1],['phone','Telefone',false,1]].map(([field, label, req, cols]) => (
               <div key={field} className={cols === 2 ? 'col-span-2' : ''}>
                 <Label className="text-xs text-muted-foreground mb-1 block">{label}{req && ' *'}</Label>
                 <Input value={form[field]} onChange={e => setForm({ ...form, [field]: e.target.value })} className="bg-input border-border h-9 text-sm" />
               </div>
             ))}
             <div>
-              <Label className="text-xs text-muted-foreground mb-1 block">Plano</Label>
+              <Label className="text-xs text-muted-foreground mb-1 block">Velocidade / Plano *</Label>
               <Select value={form.plan_id} onValueChange={v => setForm({ ...form, plan_id: v })}>
                 <SelectTrigger className="h-9 bg-input border-border text-sm"><SelectValue placeholder="Selecionar plano" /></SelectTrigger>
                 <SelectContent>{plans.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent>
@@ -199,14 +269,10 @@ export default function Clients() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="col-span-2">
-              <Label className="text-xs text-muted-foreground mb-1 block">Observações</Label>
-              <Input value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} className="bg-input border-border h-9 text-sm" />
-            </div>
           </div>
           <div className="flex justify-end gap-2 mt-4">
             <Button variant="outline" onClick={() => setShowDialog(false)}>Cancelar</Button>
-            <Button onClick={handleSave} disabled={saving || !form.name || !form.cpf || !form.email} className="bg-primary text-primary-foreground">
+            <Button onClick={handleSave} disabled={saving || !form.name || !form.plan_id} className="bg-primary text-primary-foreground">
               {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : editing ? 'Salvar' : 'Criar & Provisionar'}
             </Button>
           </div>

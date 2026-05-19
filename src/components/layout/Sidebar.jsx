@@ -9,7 +9,6 @@ import { Server } from 'lucide-react';
 
 const navItems = [
   { label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard' },
-  { label: 'Cadastro Rápido', icon: Zap, path: '/quick-provision', highlight: true },
   { label: 'Clientes', icon: Users, path: '/clients' },
   { label: 'Equipamentos', icon: Server, path: '/mikrotiks' },
   { label: 'Planos', icon: Zap, path: '/plans' },

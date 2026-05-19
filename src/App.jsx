@@ -22,7 +22,6 @@ import HotspotPlans from '@/pages/HotspotPlans';
 import HotspotLogin from '@/pages/HotspotLogin';
 import UsersPage from '@/pages/Users';
 import Login from '@/pages/Login';
-import QuickProvision from '@/pages/QuickProvision';
 import MikrotikManager from '@/pages/MikrotikManager';
 
 // AuthenticatedApp: All admin routes are protected by ProtectedRoute
@@ -48,7 +47,6 @@ const AuthenticatedApp = () => {
           <Route path="/logs" element={<Logs />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/users" element={<UsersPage />} />
-          <Route path="/quick-provision" element={<QuickProvision />} />
           <Route path="/mikrotiks" element={<MikrotikManager />} />
         </Route>
       </Route>
