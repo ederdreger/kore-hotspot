@@ -12,12 +12,14 @@ import HotspotHeatmap from '@/components/charts/HotspotHeatmap';
 import FinancialSummary from '@/components/charts/FinancialSummary';
 import SnmpPerformanceDashboard from '@/components/charts/SnmpPerformanceDashboard';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/lib/AuthContext';
 
 const trafficData = [];
 const onlineUsers = [];
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const { getToken } = useAuth();
   const [clients, setClients] = useState([]);
   const [prospects, setProspects] = useState([]);
   const [plans, setPlans] = useState([]);
@@ -60,7 +62,7 @@ export default function Dashboard() {
       </div>
 
       {/* SNMP Performance Monitor */}
-      {primaryMikrotik && <SnmpPerformanceDashboard mikrotik={primaryMikrotik} />}
+      {primaryMikrotik && <SnmpPerformanceDashboard mikrotik={primaryMikrotik} token={getToken()} />}
 
       {/* Main Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

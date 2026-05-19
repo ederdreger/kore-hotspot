@@ -1,19 +1,16 @@
 import { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
-import { useAuth } from '@/lib/AuthContext';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Server, Activity, ArrowDown, ArrowUp, Cpu, MemoryStick } from 'lucide-react';
 import { format } from 'date-fns';
 
-export default function SnmpPerformanceDashboard({ mikrotik }) {
-  const { getToken } = useAuth();
+export default function SnmpPerformanceDashboard({ mikrotik, token }) {
   const [data, setData] = useState([]);
   const [current, setCurrent] = useState({ cpu: 0, memTotal: 0, memUsed: 0, rxMbps: 0, txMbps: 0, protocol: '' });
   const [error, setError] = useState('');
 
   useEffect(() => {
-    const sessionToken = getToken();
-    if (!mikrotik || !sessionToken) return;
+    if (!mikrotik || !token) return;
     
     let isSubscribed = true;
     
@@ -25,7 +22,7 @@ export default function SnmpPerformanceDashboard({ mikrotik }) {
           user: mikrotik.user,
           password: mikrotik.password,
           community: mikrotik.snmp_community || 'public',
-          token: sessionToken
+          token: token
         });
         
         if (res.data?.success && isSubscribed) {
@@ -60,7 +57,7 @@ export default function SnmpPerformanceDashboard({ mikrotik }) {
       isSubscribed = false;
       clearInterval(interval);
     };
-  }, [mikrotik, getToken]);
+  }, [mikrotik?.host, token]);
 
   if (!mikrotik) return null;
 
