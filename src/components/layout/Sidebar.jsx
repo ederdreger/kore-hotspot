@@ -5,15 +5,18 @@ import {
   Settings, ScrollText, Wifi, ChevronRight, X, Radio, Signal, UserCog
 } from 'lucide-react';
 
+import { Server } from 'lucide-react';
+
 const navItems = [
   { label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard' },
+  { label: 'Cadastro Rápido', icon: Zap, path: '/quick-provision', highlight: true },
   { label: 'Clientes', icon: Users, path: '/clients' },
-  { label: 'Prospectos', icon: UserSearch, path: '/prospects' },
+  { label: 'Equipamentos', icon: Server, path: '/mikrotiks' },
   { label: 'Planos', icon: Zap, path: '/plans' },
   { label: 'Vouchers', icon: Ticket, path: '/vouchers' },
   { label: 'Campanhas', icon: Megaphone, path: '/campaigns' },
-  { label: 'RADIUS Monitor', icon: Radio, path: '/radius', highlight: true },
-  { label: 'Monitor de APs', icon: Signal, path: '/ap-monitor', highlight: true },
+  { label: 'RADIUS Monitor', icon: Radio, path: '/radius' },
+  { label: 'Monitor de APs', icon: Signal, path: '/ap-monitor' },
   { label: 'Logs', icon: ScrollText, path: '/logs' },
   { label: 'Usuários', icon: UserCog, path: '/users' },
   { label: 'Configurações', icon: Settings, path: '/settings' },
