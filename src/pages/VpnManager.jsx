@@ -150,11 +150,19 @@ export default function VpnManager() {
 
   const getClientScript = (account) => {
     const serverIp = globalVpnIp || 'COLOQUE_O_IP_DA_SUA_VPS_AQUI';
-    return `:do { /interface l2tp-client remove [find name="l2tp-matriz"] } on-error={}
+    return `# Limpeza de configs antigas
+:do { /interface l2tp-client remove [find name="l2tp-matriz"] } on-error={}
+:do { /ppp profile remove [find name="kore-vpn-profile"] } on-error={}
 :do { /ip route remove [find comment="Rota para a Matriz"] } on-error={}
 
-/interface l2tp-client add connect-to="${serverIp}" name="l2tp-matriz" user="${account.username}" password="${account.password}" profile="default" use-ipsec=yes ipsec-secret="${ipsecSecret}" disabled=no
-/ip route add dst-address=10.255.255.1/32 gateway=l2tp-matriz comment="Rota para a Matriz"
+# Perfil forçando MSCHAPv2
+/ppp profile add name="kore-vpn-profile" use-encryption=yes use-mpls=default only-one=default
+:do { /ppp profile set [find name="kore-vpn-profile"] local-address=10.255.255.1 } on-error={}
+
+# Tunel cliente com protocolos estritos
+/interface l2tp-client add connect-to="${serverIp}" name="l2tp-matriz" user="${account.username}" password="${account.password}" profile="kore-vpn-profile" use-ipsec=yes ipsec-secret="${ipsecSecret}" allow=mschap2 disabled=no
+
+/ip route add dst-address=10.255.255.1/32 gateway="l2tp-matriz" comment="Rota para a Matriz"
 # Tunnel criado! Use o IP ${account.remote_ip} no sistema para gerenciar.`;
   };
 

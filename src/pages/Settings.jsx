@@ -139,6 +139,9 @@ conn L2TP-PSK-noNAT
     leftprotoport=17/1701
     right=%any
     rightprotoport=17/%any
+    dpddelay=30
+    dpdtimeout=120
+    dpdaction=clear
 EOF
 
 cat <<EOF > /etc/ipsec.secrets
