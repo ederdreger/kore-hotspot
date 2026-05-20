@@ -100,6 +100,7 @@ Deno.serve(async (req) => {
     if (msg.includes('Timeout')) msg = `Timeout ao conectar em ${server_host} via SSH`;
     else if (msg.includes('Authentication')) msg = `Usuário ou senha inválidos no servidor matriz`;
     else if (msg.includes('refused')) msg = `Conexão SSH recusada na matriz`;
+    else if (msg.includes('ENOTFOUND') || msg.includes('getaddrinfo')) msg = `DNS não encontrado: o endereço ${server_host} não existe na internet.`;
     return Response.json({ success: false, error: msg }, { status: 200 });
   }
 });
