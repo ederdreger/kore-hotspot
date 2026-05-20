@@ -139,25 +139,27 @@ config setup
     charondebug="ike 1, knl 1, cfg 0"
     uniqueids=no
 
+conn %default
+    keyexchange=ikev1
+    ikelifetime=60m
+    keylife=20m
+    rekeymargin=3m
+    keyingtries=1
+    authby=secret
+    ike=aes128-sha1-modp1024,aes256-sha1-modp1024,3des-sha1-modp1024!
+    esp=aes128-sha1,aes256-sha1,3des-sha1!
+
 conn L2TP-PSK-NAT
     rightsubnet=vhost:%priv
     also=L2TP-PSK-noNAT
 
 conn L2TP-PSK-noNAT
-    authby=secret
-    pfs=no
-    auto=add
-    keyingtries=3
-    rekey=no
-    ikelifetime=8h
-    keylife=1h
     type=transport
-    left=%defaultroute
+    left=%any
     leftprotoport=17/1701
     right=%any
     rightprotoport=17/%any
-    ike=aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024!
-    esp=aes256-sha1,aes128-sha1,3des-sha1!
+    auto=add
     dpddelay=15
     dpdtimeout=60
     dpdaction=clear
