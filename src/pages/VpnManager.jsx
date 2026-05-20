@@ -157,7 +157,6 @@ export default function VpnManager() {
 
 # Perfil forçando MSCHAPv2
 /ppp profile add name="kore-vpn-profile" use-encryption=yes use-mpls=default only-one=default
-:do { /ppp profile set [find name="kore-vpn-profile"] local-address=10.255.255.1 } on-error={}
 
 # Tunel cliente com protocolos estritos
 /interface l2tp-client add connect-to="${serverIp}" name="l2tp-matriz" user="${account.username}" password="${account.password}" profile="kore-vpn-profile" use-ipsec=yes ipsec-secret="${ipsecSecret}" allow=mschap2 disabled=no
