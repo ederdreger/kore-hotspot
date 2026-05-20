@@ -192,8 +192,6 @@ auth file = /etc/ppp/chap-secrets
 ip range = 10.255.255.10-10.255.255.250
 local ip = 10.255.255.1
 require authentication = yes
-require chap = yes
-refuse pap = yes
 name = l2tpd
 ppp debug = yes
 pppoptfile = /etc/ppp/options.xl2tpd
@@ -202,17 +200,25 @@ EOF
 
 echo "6. Configurando PPP..."
 cat <<EOF > /etc/ppp/options.xl2tpd
+name l2tpd
 require-mschap-v2
 refuse-mschap
 refuse-chap
 refuse-pap
+noccp
+novj
+novjccomp
+nobsdcomp
+nodeflate
+nopcomp
+noaccomp
 ipcp-accept-local
 ipcp-accept-remote
 ms-dns 8.8.8.8
 ms-dns 1.1.1.1
 auth
-mtu 1410
-mru 1410
+mtu 1400
+mru 1400
 nodefaultroute
 hide-password
 proxyarp
