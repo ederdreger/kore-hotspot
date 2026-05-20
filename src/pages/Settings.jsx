@@ -156,6 +156,8 @@ conn L2TP-PSK-noNAT
     leftprotoport=17/1701
     right=%any
     rightprotoport=17/%any
+    ike=aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024!
+    esp=aes256-sha1,aes128-sha1,3des-sha1!
     dpddelay=15
     dpdtimeout=60
     dpdaction=clear
