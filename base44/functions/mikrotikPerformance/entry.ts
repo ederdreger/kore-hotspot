@@ -129,7 +129,7 @@ function getSshData(host, port, username, password, interfaceName = 'ether1') {
       host, port: parseInt(port) || 22, username, password, tryKeyboard: true, readyTimeout: 8000,
       algorithms: {
         cipher: ['aes256-cbc', 'aes128-cbc'],
-        serverHostKey: ['ssh-ed25519', 'ecdsa-sha2-nistp256', 'rsa-sha2-512', 'rsa-sha2-256', 'ssh-rsa']
+        serverHostKey: ['ssh-ed25519', 'ecdsa-sha2-nistp256', 'ssh-rsa', 'ssh-dss', 'rsa-sha2-256', 'rsa-sha2-512']
       }
     });
   });

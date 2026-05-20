@@ -53,7 +53,7 @@ function sshExec(host, port, username, password, commands) {
       readyTimeout: 12000,
       algorithms: {
         cipher: ['aes256-cbc', 'aes128-cbc'],
-        serverHostKey: ['ssh-ed25519', 'ecdsa-sha2-nistp256', 'rsa-sha2-512', 'rsa-sha2-256', 'ssh-rsa']
+        serverHostKey: ['ssh-ed25519', 'ecdsa-sha2-nistp256', 'ssh-rsa', 'ssh-dss', 'rsa-sha2-256', 'rsa-sha2-512']
       },
     });
   });
