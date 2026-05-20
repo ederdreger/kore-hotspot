@@ -106,6 +106,17 @@ export default function Settings() {
 
   const [showVpnScript, setShowVpnScript] = useState(false);
   const [copiedVpn, setCopiedVpn] = useState(false);
+  const [showDiagnostic, setShowDiagnostic] = useState(false);
+  const [copiedDiag, setCopiedDiag] = useState(false);
+
+  const getDiagnosticScript = () => {
+    return `# 1. Primeiro, limpe as conexões "presas" que causam o erro "old tunnel is not closed yet":
+systemctl restart strongswan-starter
+systemctl restart xl2tpd
+
+# 2. Em seguida, execute este comando para escutar os logs em tempo real:
+tail -f /var/log/syslog /var/log/auth.log | grep -iE "charon|pluto|ipsec|xl2tpd|pppd|freeradius|radiusd"`;
+  };
 
   const getVpnScript = () => {
     return `#!/bin/bash
@@ -146,8 +157,8 @@ conn %default
     rekeymargin=3m
     keyingtries=1
     authby=secret
-    ike=aes128-sha1-modp1024,aes256-sha1-modp1024,3des-sha1-modp1024!
-    esp=aes128-sha1,aes256-sha1,3des-sha1!
+    ike=aes256-sha256-modp2048,aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024!
+    esp=aes256-sha256,aes256-sha1,aes128-sha1,3des-sha1!
 
 conn L2TP-PSK-NAT
     rightsubnet=vhost:%priv
@@ -300,6 +311,42 @@ echo "=== SERVIDOR L2TP/IPSEC CONFIGURADO COM SUCESSO ==="`;
       </div>
 
       {/* Modals */}
+      {showDiagnostic && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="bg-card border border-border rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="p-4 border-b border-border flex justify-between items-center flex-shrink-0">
+              <h3 className="font-semibold text-sm flex items-center gap-2 text-destructive">
+                <Search className="w-4 h-4" /> Diagnóstico e Logs (VPS)
+              </h3>
+              <Button variant="ghost" size="icon" onClick={() => setShowDiagnostic(false)} className="h-8 w-8">
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+            <div className="p-4 overflow-y-auto flex-1 scrollbar-thin">
+              <p className="text-sm text-muted-foreground mb-3 flex-shrink-0">
+                Acesse o terminal da sua VPS Linux e cole o comando abaixo. Ele vai exibir em tempo real <strong>exatamente onde a conexão está parando</strong> (seja no IPsec, L2TP, PPP ou FreeRADIUS):
+              </p>
+              <div className="relative group flex-1">
+                <pre className="bg-secondary/50 p-4 rounded-lg text-xs font-mono text-foreground whitespace-pre-wrap border border-border max-h-[60vh] overflow-y-auto scrollbar-thin">
+                  {getDiagnosticScript()}
+                </pre>
+                <Button 
+                  size="sm" 
+                  className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                  onClick={() => {
+                    navigator.clipboard.writeText(getDiagnosticScript());
+                    setCopiedDiag(true);
+                    setTimeout(() => setCopiedDiag(false), 2000);
+                  }}
+                >
+                  {copiedDiag ? <CheckCircle className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4" />}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showVpnScript && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
           <div className="bg-card border border-border rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
@@ -414,9 +461,14 @@ echo "=== SERVIDOR L2TP/IPSEC CONFIGURADO COM SUCESSO ==="`;
                       Se você utiliza uma VPS Linux (Ubuntu ou Debian) para ser a Matriz da rede e autenticar via FreeRADIUS, gere o script Bash abaixo e execute-o como <code>root</code> no terminal da sua VPS para instalar e configurar o servidor L2TP/IPsec. <strong>Certifique-se de salvar as configurações acima antes de gerar o script.</strong>
                     </p>
                   </div>
-                  <Button type="button" onClick={() => setShowVpnScript(true)} className="gap-2 bg-secondary hover:bg-secondary/80 text-secondary-foreground">
-                    <TerminalSquare className="w-4 h-4" /> Gerar Bash Script para a VPS (Linux)
-                  </Button>
+                  <div className="flex gap-3 flex-wrap">
+                    <Button type="button" onClick={() => setShowVpnScript(true)} className="gap-2 bg-secondary hover:bg-secondary/80 text-secondary-foreground">
+                      <TerminalSquare className="w-4 h-4" /> Script para a VPS (Instalação)
+                    </Button>
+                    <Button type="button" onClick={() => setShowDiagnostic(true)} className="gap-2 bg-destructive/10 hover:bg-destructive/20 text-destructive">
+                      <Search className="w-4 h-4" /> Diagnóstico da VPS (Logs em Tempo Real)
+                    </Button>
+                  </div>
                 </div>
               )}
 
