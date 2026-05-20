@@ -70,14 +70,15 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 :do { /ppp profile remove [find name="kore-vpn-profile"] } on-error={}
 :do { /ip route remove [find comment="Rota Radius via VPN"] } on-error={}
 
-# Cria perfil PPP especifico para manter as configuracoes de seguranca da VPN
-/ppp profile add name="kore-vpn-profile" use-encryption=yes
+# Cria perfil PPP especifico forçando MSCHAPv2 que é o padrão do Linux (xl2tpd)
+/ppp profile add name="kore-vpn-profile" use-encryption=yes use-mpls=default only-one=default
+:do { /ppp profile set [find name="kore-vpn-profile"] local-address=10.255.255.1 } on-error={}
 
-# Cria interface de tunel VPN apontando para a VPS (Matriz)
-/interface l2tp-client add connect-to="${vpnServerIp}" name="l2tp-vpn" user="${vpnUser}" password="${vpnPass}" profile="kore-vpn-profile" use-ipsec=yes ipsec-secret="${ipsecSec}" disabled=no
+# Cria interface de tunel VPN apontando para a VPS (Matriz) com os protocolos corretos
+/interface l2tp-client add connect-to="${vpnServerIp}" name="l2tp-vpn" user="${vpnUser}" password="${vpnPass}" profile="kore-vpn-profile" use-ipsec=yes ipsec-secret="${ipsecSec}" allow=mschap2 disabled=no
 
-# (A rota para o RADIUS sera gerada automaticamente pela criacao do túnel L2TP,
-# que vai inserir uma connected route para o IP 10.255.255.1)
+# Permite que o MikroTik alcance o RADIUS na VPN
+/ip route add dst-address=10.255.255.1/32 gateway="l2tp-vpn" comment="Rota Radius via VPN"
 # -----------------------------
 ` : '';
 
