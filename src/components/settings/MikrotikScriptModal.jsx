@@ -199,13 +199,13 @@ Você pode aplicar toda a configuração automaticamente (o sistema gerou as sen
               </p>
               <div className="relative group">
                 <pre className="bg-secondary/50 p-4 rounded-lg text-xs font-mono text-foreground whitespace-pre-wrap border border-border">
-                  {`echo '"${mikrotik.vpn_user}" l2tpd "${mikrotik.vpn_password}" *' >> /etc/ppp/chap-secrets\nsystemctl restart xl2tpd`}
+                  {`echo '"${mikrotik.vpn_user}" * "${mikrotik.vpn_password}" *' >> /etc/ppp/chap-secrets\nsystemctl restart xl2tpd`}
                 </pre>
                 <Button 
                   size="sm" 
                   className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity"
                   onClick={() => {
-                    navigator.clipboard.writeText(`echo '"${mikrotik.vpn_user}" l2tpd "${mikrotik.vpn_password}" *' >> /etc/ppp/chap-secrets\nsystemctl restart xl2tpd`);
+                    navigator.clipboard.writeText(`echo '"${mikrotik.vpn_user}" * "${mikrotik.vpn_password}" *' >> /etc/ppp/chap-secrets\nsystemctl restart xl2tpd`);
                     toast.success('Comando da VPS copiado!');
                   }}
                 >
