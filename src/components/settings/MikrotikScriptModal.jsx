@@ -16,13 +16,14 @@ function generateRadiusSecret(mikrotik) {
 
 export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
   const script = useMemo(() => {
-    const radiusHost = radius.radius_host || mikrotik.host || 'SEU_IP_RADIUS';
+    // IMPORTANTE: radius é um flat map { key: value } vindo do banco (Settings).
+    // NÃO usar mikrotik.host como fallback para radiusHost — ele é o IP local do próprio roteador!
+    const radiusHost = radius?.radius_host || radius?.vpn_server_host || 'COLOQUE_IP_DA_VPS_OU_RADIUS_AQUI';
     const radiusSecret = radius.radius_secret || mikrotik.radius_secret || generateRadiusSecret(mikrotik);
     const physicalInterface = mikrotik.physical_interface || 'ether1';
     const bridgeName = mikrotik.bridge_name || '';
     const vlanId = mikrotik.vlan_id || '';
     const vlanInterface = mikrotik.vlan_interface || 'vlan-hotspot';
-    const network = mikrotik.hotspot_network || '192.168.50.0/24';
     const snmpCommunity = mikrotik.snmp_community || 'public';
     const sshPort = mikrotik.port || '22';
     const radiusName = 'Kore-HotSpot';
@@ -44,17 +45,28 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
   /interface bridge port add bridge="${bridgeName}" interface="${physicalInterface}" comment="Kore-HotSpot porta fisica" disabled=no
 }` : '';
 
-    const serverIp = radius?.vpn_server_host || mikrotik?.vpn_server || 'COLOQUE_IP_DA_VPS_AQUI';
+    // IP do servidor VPN (VPS/Matriz) — NUNCA deve ser o IP local do MikroTik
+    const vpnServerIp = radius?.vpn_server_host || mikrotik?.vpn_server || 'COLOQUE_IP_PUBLICO_DA_VPS_AQUI';
     const ipsecSec = radius?.vpn_ipsec_secret || mikrotik?.vpn_secret || 'SUA_SENHA_IPSEC';
+    const vpnUser = mikrotik?.vpn_user || 'COLOQUE_USUARIO_VPN_AQUI';
+    const vpnPass = mikrotik?.vpn_password || 'COLOQUE_SENHA_VPN_AQUI';
+
+    // A rota deve apontar para o IP do RADIUS (na VPS), não para uma URL
+    // Garante que o dst-address seja sempre um IP válido
+    const radiusIpForRoute = (() => {
+      const candidate = radius?.radius_host || radius?.vpn_server_host || '';
+      // Valida se parece com um IP (não URL/hostname)
+      return /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(candidate) ? candidate : 'COLOQUE_IP_DO_RADIUS_AQUI';
+    })();
 
     const vpnSection = mikrotik.vpn_enabled ? `
 # --- VPN L2TP/IPsec CLIENT ---
-# Conecta o equipamento na Matriz (VPN)
+# Cria interface de tunel VPN apontando para a VPS (Matriz)
 :do { /interface l2tp-client remove [find name="l2tp-vpn"] } on-error={}
 :do { /ip route remove [find comment="Rota Radius via VPN"] } on-error={}
 
-/interface l2tp-client add connect-to="${serverIp}" name="l2tp-vpn" user="${mikrotik.vpn_user || 'korehotspot'}" password="${mikrotik.vpn_password || 'senha123'}" profile="default" use-ipsec=yes ipsec-secret="${ipsecSec}" disabled=no
-/ip route add dst-address=${radiusHost}/32 gateway="l2tp-vpn" comment="Rota Radius via VPN"
+/interface l2tp-client add connect-to="${vpnServerIp}" name="l2tp-vpn" user="${vpnUser}" password="${vpnPass}" profile="default" use-ipsec=yes ipsec-secret="${ipsecSec}" disabled=no
+/ip route add dst-address=${radiusIpForRoute}/32 gateway="l2tp-vpn" comment="Rota Radius via VPN"
 # -----------------------------
 ` : '';
 
