@@ -16,9 +16,16 @@ function generateRadiusSecret(mikrotik) {
 
 export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
   const script = useMemo(() => {
+    // Sanitiza URLs do sandbox para evitar que caiam no script
+    let cleanRadiusHost = radius?.radius_host || '';
+    if (cleanRadiusHost.includes('.base44.app')) cleanRadiusHost = '';
+    
+    let cleanVpnServer = radius?.vpn_server_host || mikrotik?.vpn_server || '';
+    if (cleanVpnServer.includes('.base44.app')) cleanVpnServer = '';
+
     // IMPORTANTE: radius é um flat map { key: value } vindo do banco (Settings).
     // NÃO usar mikrotik.host como fallback para radiusHost — ele é o IP local do próprio roteador!
-    const radiusHost = radius?.radius_host || radius?.vpn_server_host || 'COLOQUE_IP_DA_VPS_OU_RADIUS_AQUI';
+    const radiusHost = cleanRadiusHost || cleanVpnServer || 'COLOQUE_IP_DA_VPS_OU_RADIUS_AQUI';
     const radiusSecret = radius.radius_secret || mikrotik.radius_secret || generateRadiusSecret(mikrotik);
     const physicalInterface = mikrotik.physical_interface || 'ether1';
     const bridgeName = mikrotik.bridge_name || '';
@@ -46,7 +53,7 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 }` : '';
 
     // IP do servidor VPN (VPS/Matriz) — NUNCA deve ser o IP local do MikroTik
-    const vpnServerIp = radius?.vpn_server_host || mikrotik?.vpn_server || 'COLOQUE_IP_PUBLICO_DA_VPS_AQUI';
+    const vpnServerIp = cleanVpnServer || 'COLOQUE_IP_PUBLICO_DA_VPS_AQUI';
     const ipsecSec = radius?.vpn_ipsec_secret || mikrotik?.vpn_secret || 'SUA_SENHA_IPSEC';
     const vpnUser = mikrotik?.vpn_user || 'COLOQUE_USUARIO_VPN_AQUI';
     const vpnPass = mikrotik?.vpn_password || 'COLOQUE_SENHA_VPN_AQUI';
@@ -54,7 +61,7 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
     // A rota deve apontar para o IP do RADIUS (na VPS), não para uma URL
     // Garante que o dst-address seja sempre um IP válido
     const radiusIpForRoute = (() => {
-      const candidate = radius?.radius_host || radius?.vpn_server_host || '';
+      const candidate = cleanRadiusHost || cleanVpnServer || '';
       // Valida se parece com um IP (não URL/hostname)
       return /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(candidate) ? candidate : 'COLOQUE_IP_DO_RADIUS_AQUI';
     })();
