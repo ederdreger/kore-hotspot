@@ -77,7 +77,14 @@ export default function MikrotikStatusModal({ mikrotik, token, onClose }) {
           ) : (
             <div className={`rounded-xl border p-4 text-sm flex gap-3 ${online ? 'border-success/30 bg-success/10 text-success' : 'border-destructive/30 bg-destructive/10 text-destructive'}`}>
               {online ? <CheckCircle className="w-4 h-4 mt-0.5 flex-shrink-0" /> : <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />}
-              <span>{online ? 'Comunicação estabelecida com sucesso.' : (status?.error || 'Equipamento sem resposta. Verifique as credenciais SSH.')}</span>
+              <div className="flex flex-col gap-2">
+                <span>{online ? 'Comunicação estabelecida com sucesso.' : (status?.error || 'Equipamento sem resposta. Verifique as credenciais SSH.')}</span>
+                {!online && status?.debug_info && (
+                  <pre className="mt-2 p-2 bg-black/50 text-[10px] text-destructive-foreground rounded-lg overflow-x-auto font-mono max-h-32">
+                    {status.debug_info}
+                  </pre>
+                )}
+              </div>
             </div>
           )}
 

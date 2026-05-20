@@ -40,8 +40,9 @@ function sshExec(host, port, username, password, commands) {
       tryKeyboard: true,
       readyTimeout: 60000,
       algorithms: {
-        cipher: ['aes256-cbc', 'aes128-cbc'],
-        serverHostKey: ['ssh-ed25519', 'ecdsa-sha2-nistp256', 'ssh-rsa', 'ssh-dss']
+        serverHostKey: ['ssh-ed25519', 'ecdsa-sha2-nistp256', 'ecdsa-sha2-nistp384', 'ecdsa-sha2-nistp521', 'rsa-sha2-512', 'rsa-sha2-256', 'ssh-rsa'],
+        cipher: [ 'aes128-ctr', 'aes192-ctr', 'aes256-ctr', 'aes128-gcm', 'aes128-gcm@openssh.com', 'aes256-gcm', 'aes256-gcm@openssh.com', 'aes256-cbc', 'aes128-cbc' ],
+        kex: [ 'curve25519-sha256', 'curve25519-sha256@libssh.org', 'ecdh-sha2-nistp256', 'ecdh-sha2-nistp384', 'ecdh-sha2-nistp521', 'diffie-hellman-group-exchange-sha256', 'diffie-hellman-group14-sha256' ]
       },
     });
   });
@@ -74,6 +75,6 @@ Deno.serve(async (req) => {
 
     return Response.json({ success: true, results });
   } catch (err) {
-    return Response.json({ error: err.message }, { status: 500 });
+    return Response.json({ error: err.message, debug_info: err.stack || err.message }, { status: 500 });
   }
 });
