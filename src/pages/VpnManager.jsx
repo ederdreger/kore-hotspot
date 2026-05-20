@@ -295,13 +295,13 @@ export default function VpnManager() {
                                 </p>
                                 <div className="relative group">
                                   <pre className="bg-secondary/50 p-4 rounded-lg text-xs font-mono text-foreground whitespace-pre-wrap border border-border">
-                                    {`echo '"${acc.username}" l2tpd "${acc.password}" ${acc.remote_ip}' >> /etc/ppp/chap-secrets
+                                    {`echo '"${acc.username}" * "${acc.password}" ${acc.remote_ip}' >> /etc/ppp/chap-secrets
 systemctl restart xl2tpd`}
                                   </pre>
                                   <Button 
                                     size="sm" 
                                     className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity"
-                                    onClick={() => copyToClipboard(`echo '"${acc.username}" l2tpd "${acc.password}" ${acc.remote_ip}' >> /etc/ppp/chap-secrets\nsystemctl restart xl2tpd`)}
+                                    onClick={() => copyToClipboard(`echo '"${acc.username}" * "${acc.password}" ${acc.remote_ip}' >> /etc/ppp/chap-secrets\nsystemctl restart xl2tpd`)}
                                   >
                                     {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
                                   </Button>
