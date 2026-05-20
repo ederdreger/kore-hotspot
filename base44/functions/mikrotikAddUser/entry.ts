@@ -40,28 +40,8 @@ function sshExec(host, port, username, password, commands) {
       tryKeyboard: true,
       readyTimeout: 10000,
       algorithms: {
-        cipher: [
-          'aes256-cbc',
-          'aes128-cbc',
-          'aes192-cbc',
-          '3des-cbc'
-        ],
-        kex: [
-          'ecdh-sha2-nistp256',
-          'ecdh-sha2-nistp384',
-          'ecdh-sha2-nistp521',
-          'diffie-hellman-group-exchange-sha256',
-          'diffie-hellman-group14-sha1',
-          'diffie-hellman-group1-sha1'
-        ],
-        serverHostKey: [
-          'ssh-rsa',
-          'rsa-sha2-256',
-          'rsa-sha2-512',
-          'ecdsa-sha2-nistp256',
-          'ecdsa-sha2-nistp384',
-          'ecdsa-sha2-nistp521'
-        ],
+        cipher: ['aes256-cbc', 'aes128-cbc', '3des-cbc'],
+        serverHostKey: ['ssh-rsa', 'ssh-dss']
       },
     });
   });
