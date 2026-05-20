@@ -186,14 +186,41 @@ ${vpnSection}
           </button>
         </div>
 
-        <div className="p-6 space-y-4 overflow-y-auto max-h-[calc(90vh-88px)]">
+        <div className="p-6 space-y-6 overflow-y-auto max-h-[calc(90vh-88px)]">
           <div className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-xs text-warning">
 Você pode aplicar toda a configuração automaticamente (o sistema gerou as senhas de integração do RADIUS) clicando em "Aplicar Automático" ou copiar e colar no Terminal do MikroTik.
           </div>
 
-          <pre className="bg-background border border-border rounded-xl p-4 text-xs font-mono text-foreground overflow-x-auto whitespace-pre-wrap leading-relaxed">
-            {script}
-          </pre>
+          {mikrotik.vpn_enabled && (
+            <div>
+              <h4 className="font-semibold text-sm text-primary mb-2">1. Comando para o Servidor VPS (Linux)</h4>
+              <p className="text-xs text-muted-foreground mb-3">
+                Acesse o SSH da sua VPS como <code className="bg-secondary px-1 rounded">root</code> e rode este comando para autorizar o túnel VPN desta filial:
+              </p>
+              <div className="relative group">
+                <pre className="bg-secondary/50 p-4 rounded-lg text-xs font-mono text-foreground whitespace-pre-wrap border border-border">
+                  {`echo '"${mikrotik.vpn_user}" l2tpd "${mikrotik.vpn_password}" *' >> /etc/ppp/chap-secrets\nsystemctl restart xl2tpd`}
+                </pre>
+                <Button 
+                  size="sm" 
+                  className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                  onClick={() => {
+                    navigator.clipboard.writeText(`echo '"${mikrotik.vpn_user}" l2tpd "${mikrotik.vpn_password}" *' >> /etc/ppp/chap-secrets\nsystemctl restart xl2tpd`);
+                    toast.success('Comando da VPS copiado!');
+                  }}
+                >
+                  <Copy className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
+          )}
+
+          <div className={mikrotik.vpn_enabled ? "pt-4 border-t border-border" : ""}>
+            {mikrotik.vpn_enabled && <h4 className="font-semibold text-sm text-info mb-2">2. Script para a Filial (MikroTik Cliente)</h4>}
+            <pre className="bg-background border border-border rounded-xl p-4 text-xs font-mono text-foreground overflow-x-auto whitespace-pre-wrap leading-relaxed">
+              {script}
+            </pre>
+          </div>
 
           <div className="flex justify-between items-center mt-4">
             <Button size="sm" onClick={autoProvision} className="gap-2 bg-info hover:bg-info/90 text-white">
