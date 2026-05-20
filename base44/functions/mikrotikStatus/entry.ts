@@ -51,11 +51,7 @@ function sshExec(host, port, username, password, commands) {
       username,
       password,
       tryKeyboard: true,
-      readyTimeout: 10000,
-      algorithms: {
-        cipher: ['aes256-cbc', 'aes128-cbc'],
-        serverHostKey: ['ssh-rsa', 'rsa-sha2-256', 'rsa-sha2-512'],
-      },
+      readyTimeout: 10000
     });
   });
 }
