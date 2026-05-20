@@ -214,9 +214,21 @@ iptables -t nat -A POSTROUTING -s 10.255.255.0/24 -o eth0 -j MASQUERADE
 # Salvar iptables (pode exigir iptables-persistent)
 # netfilter-persistent save
 
+echo "Liberando sub-rede VPN no FreeRADIUS..."
+if [ -d "/etc/freeradius/3.0" ]; then
+  cat <<EOF >> /etc/freeradius/3.0/clients.conf
+
+client vpn_kore_hotspot {
+    ipaddr = 10.255.255.0/24
+    secret = ${settings.radius_secret || 'SEGREDO_RADIUS'}
+}
+EOF
+fi
+
 echo "Reiniciando serviços..."
 systemctl restart strongswan-starter
 systemctl restart xl2tpd
+systemctl restart freeradius
 
 echo "=== SERVIDOR VPN L2TP/IPsec LINUX CONFIGURADO COM SUCESSO ==="`;
   };

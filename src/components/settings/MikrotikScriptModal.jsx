@@ -25,7 +25,10 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 
     // IMPORTANTE: radius é um flat map { key: value } vindo do banco (Settings).
     // NÃO usar mikrotik.host como fallback para radiusHost — ele é o IP local do próprio roteador!
-    const radiusHost = cleanRadiusHost || cleanVpnServer || 'COLOQUE_IP_DA_VPS_OU_RADIUS_AQUI';
+    
+    // Se a VPN for usada, a autenticação RADIUS passa por dentro do túnel no IP local da Matriz (10.255.255.1)
+    // Isso evita o erro fatal de "Routing Loop", onde o túnel tenta enviar o tráfego por fora e a internet trava.
+    const radiusHost = mikrotik.vpn_enabled ? '10.255.255.1' : (cleanRadiusHost || cleanVpnServer || 'COLOQUE_IP_DA_VPS_OU_RADIUS_AQUI');
     const radiusSecret = radius.radius_secret || mikrotik.radius_secret || generateRadiusSecret(mikrotik);
     const physicalInterface = mikrotik.physical_interface || 'ether1';
     const bridgeName = mikrotik.bridge_name || '';
@@ -60,20 +63,21 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 
     // A rota deve apontar para o IP do RADIUS (na VPS), não para uma URL
     // Garante que o dst-address seja sempre um IP válido
-    const radiusIpForRoute = (() => {
-      const candidate = cleanRadiusHost || cleanVpnServer || '';
-      // Valida se parece com um IP (não URL/hostname)
-      return /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(candidate) ? candidate : 'COLOQUE_IP_DO_RADIUS_AQUI';
-    })();
-
     const vpnSection = mikrotik.vpn_enabled ? `
 # --- VPN L2TP/IPsec CLIENT ---
-# Cria interface de tunel VPN apontando para a VPS (Matriz)
+# Remove configuracoes antigas do tunel e rotas manuais
 :do { /interface l2tp-client remove [find name="l2tp-vpn"] } on-error={}
+:do { /ppp profile remove [find name="kore-vpn-profile"] } on-error={}
 :do { /ip route remove [find comment="Rota Radius via VPN"] } on-error={}
 
-/interface l2tp-client add connect-to="${vpnServerIp}" name="l2tp-vpn" user="${vpnUser}" password="${vpnPass}" profile="default" use-ipsec=yes ipsec-secret="${ipsecSec}" disabled=no
-/ip route add dst-address=${radiusIpForRoute}/32 gateway="l2tp-vpn" comment="Rota Radius via VPN"
+# Cria perfil PPP especifico para manter as configuracoes de seguranca da VPN
+/ppp profile add name="kore-vpn-profile" use-encryption=yes
+
+# Cria interface de tunel VPN apontando para a VPS (Matriz)
+/interface l2tp-client add connect-to="${vpnServerIp}" name="l2tp-vpn" user="${vpnUser}" password="${vpnPass}" profile="kore-vpn-profile" use-ipsec=yes ipsec-secret="${ipsecSec}" disabled=no
+
+# (A rota para o RADIUS sera gerada automaticamente pela criacao do túnel L2TP,
+# que vai inserir uma connected route para o IP 10.255.255.1)
 # -----------------------------
 ` : '';
 
