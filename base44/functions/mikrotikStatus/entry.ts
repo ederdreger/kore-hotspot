@@ -103,6 +103,8 @@ Deno.serve(async (req) => {
       '/interface print stats-detail without-paging'
     ];
     
+    // Log before connecting to help diagnose VPN routing issues
+    console.log(`[MikrotikStatus] Tentando conectar SSH em ${cleanHost}:${port} com usuario ${user}`);
     const results = await sshExec(cleanHost, port, user, password, commands);
     const resourceText = results[0].output;
     const hotspotCount = parseInt(results[1].output) || 0;
