@@ -82,7 +82,7 @@ function getSshData(host, port, username, password, interfaceName = 'ether1') {
     const timer = setTimeout(() => {
       conn.destroy();
       reject(new Error('Timeout SSH'));
-    }, 10000);
+    }, 60000);
 
     conn.on('ready', () => {
       // Coleta CPU, Memória e Tráfego da interface principal em um único comando
@@ -126,7 +126,7 @@ function getSshData(host, port, username, password, interfaceName = 'ether1') {
     conn.on('keyboard-interactive', (name, instr, lang, prompts, finish) => finish([password]));
     conn.on('error', err => { clearTimeout(timer); reject(err); });
     conn.connect({
-      host, port: parseInt(port) || 22, username, password, tryKeyboard: true, readyTimeout: 8000,
+      host, port: parseInt(port) || 22, username, password, tryKeyboard: true, readyTimeout: 60000,
       algorithms: {
         cipher: ['aes256-cbc', 'aes128-cbc'],
         serverHostKey: ['ssh-ed25519', 'ecdsa-sha2-nistp256', 'ssh-rsa', 'ssh-dss']

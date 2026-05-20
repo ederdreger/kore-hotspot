@@ -21,7 +21,7 @@ function sshExec(host, port, username, password, commands) {
     const timer = setTimeout(() => {
       conn.destroy();
       reject(new Error('Timeout SSH'));
-    }, 15000);
+    }, 60000);
 
     const runNext = (stream, cmds, idx) => {
       if (idx >= cmds.length) {
@@ -51,7 +51,7 @@ function sshExec(host, port, username, password, commands) {
       username,
       password,
       tryKeyboard: true,
-      readyTimeout: 10000,
+      readyTimeout: 60000,
       algorithms: {
         cipher: ['aes256-cbc', 'aes128-cbc'],
         serverHostKey: ['ssh-ed25519', 'ecdsa-sha2-nistp256', 'ssh-rsa', 'ssh-dss']
