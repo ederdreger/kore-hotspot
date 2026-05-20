@@ -40,8 +40,8 @@ function sshExec(host, port, username, password, commands) {
       tryKeyboard: true,
       readyTimeout: 10000,
       algorithms: {
-        cipher: ['aes256-cbc', 'aes128-cbc', '3des-cbc'],
-        serverHostKey: ['ssh-rsa', 'ssh-dss']
+        cipher: ['aes256-cbc', 'aes128-cbc'],
+        serverHostKey: ['ssh-ed25519', 'ecdsa-sha2-nistp256', 'rsa-sha2-512', 'rsa-sha2-256', 'ssh-rsa']
       },
     });
   });
