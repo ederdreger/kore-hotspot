@@ -137,7 +137,7 @@ export default function MikrotikList() {
 
   const fields = [
     { key: 'name', label: 'Nome / Identificação', placeholder: 'Ex: Praça Central AP01' },
-    { key: 'host', label: 'IP do MikroTik', placeholder: '192.168.88.1' },
+    { key: 'host', label: 'IP do MikroTik ou Cloud DDNS', placeholder: '192.168.88.1 ou xxx.sn.mynetname.net' },
     { key: 'port', label: 'Porta de acesso', placeholder: '22' },
     { key: 'user', label: 'Usuário SSH', placeholder: 'admin' },
     { key: 'snmp_community', label: 'Comunidade SNMP', placeholder: 'public' },
@@ -235,6 +235,12 @@ export default function MikrotikList() {
               <button onClick={() => setShowForm(false)} className="text-muted-foreground hover:text-foreground transition-colors">
                 <X className="w-4 h-4" />
               </button>
+            </div>
+            <div className="px-6 pt-4 pb-2 text-xs text-warning bg-warning/10 border-b border-warning/20">
+              <strong>Importante sobre IPs Dinâmicos e VPN:</strong> Se a internet deste MikroTik muda de IP toda hora e você usa a Matriz (VPN) como central, <strong>NÃO cadastre o IP Público dinâmico aqui</strong>.
+              Você tem duas opções: <br/>
+              1. <strong>(Recomendado) IP da VPN Matriz:</strong> Faça um DST-NAT na Matriz e cadastre aqui o <strong>IP da Matriz</strong> usando uma <strong>porta direcionada</strong> (ex: porta 2250). <br/>
+              2. <strong>Cloud DDNS:</strong> Ative o "IP Cloud" no MikroTik e cadastre o endereço <code>xxxx.sn.mynetname.net</code> em vez do IP.
             </div>
             <div className="p-6 grid grid-cols-2 gap-4">
               {fields.map(f => (
