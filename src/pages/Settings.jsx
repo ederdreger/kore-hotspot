@@ -153,8 +153,6 @@ ipsec saref = yes
 [lns default]
 ip range = 10.255.255.10-10.255.255.250
 local ip = 10.255.255.1
-require chap = yes
-refuse pap = yes
 require authentication = yes
 name = KoreVPN
 ppp debug = yes
@@ -162,7 +160,7 @@ pppoptfile = /etc/ppp/options.xl2tpd
 length bit = yes
 EOF
 
-echo "Configurando PPP com integração RADIUS..."
+echo "Configurando PPP para o Túnel L2TP (Autenticação Local Localizada)..."
 cat <<EOF > /etc/ppp/options.xl2tpd
 ipcp-accept-local
 ipcp-accept-remote
@@ -179,34 +177,13 @@ debug
 lock
 proxyarp
 connect-delay 5000
-# Ativando plugins RADIUS
-plugin radius.so
-plugin radattr.so
-EOF
-
-# O pppd no Ubuntu/Debian costuma usar /etc/radiusclient ou /etc/radcli
-mkdir -p /etc/radiusclient
-cat <<EOF > /etc/radiusclient/radiusclient.conf
-auth_order radius, local
-login_tries 4
-login_timeout 60
-nologin /etc/nologin
-issue /etc/radiusclient/issue
-authserver ${settings.radius_host || '127.0.0.1'}:${settings.radius_port || '1812'}
-acctserver ${settings.radius_host || '127.0.0.1'}:${parseInt(settings.radius_port || '1812')+1}
-servers /etc/radiusclient/servers
-dictionary /etc/radiusclient/dictionary
-login_radius /usr/sbin/login.radius
-seqfile /var/run/radius.seq
-mapfile /etc/radiusclient/port-id-map
-default_realm
-radius_timeout 10
-radius_retries 3
-bindaddr *
-EOF
-
-cat <<EOF > /etc/radiusclient/servers
-${settings.radius_host || '127.0.0.1'}  ${settings.radius_secret || 'SEGREDO_RADIUS'}
+require-mschap-v2
+refuse-pap
+refuse-chap
+refuse-mschap
+# Não usamos o plugin RADIUS aqui para L2TP!
+# Os roteadores MikroTik filiais vão conectar nesta VPS como clientes do túnel usando o arquivo chap-secrets,
+# E DEPOIS, por dentro do túnel, vão encaminhar os pedidos de Hotspot para a porta RADIUS (1812).
 EOF
 
 # Aplicando regras de Firewall (NAT)
@@ -258,6 +235,8 @@ echo "=== SERVIDOR VPN L2TP/IPsec LINUX CONFIGURADO COM SUCESSO ==="`;
     existing.forEach(s => { existingMap[s.key] = s.id; });
 
     const section = sections.find(s => s.id === activeSection);
+    if (!section || !section.fields) return;
+
     const promises = section.fields.map(field => {
       const value = settings[field.key] || '';
       if (existingMap[field.key]) {
