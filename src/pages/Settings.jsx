@@ -151,7 +151,8 @@ EOF
 echo "Configurando L2TP (xl2tpd)..."
 cat <<EOF > /etc/xl2tpd/xl2tpd.conf
 [global]
-ipsec saref = yes
+listen-addr = 0.0.0.0
+ipsec saref = no
 
 [lns default]
 ip range = 10.255.255.10-10.255.255.250
