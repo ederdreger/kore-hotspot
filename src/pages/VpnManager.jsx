@@ -276,31 +276,58 @@ export default function VpnManager() {
 
                       {showScript === acc.id && (
                         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
-                          <div className="bg-card border border-border rounded-xl shadow-2xl w-full max-w-lg overflow-hidden">
-                            <div className="p-4 border-b border-border flex justify-between items-center">
+                          <div className="bg-card border border-border rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden max-h-[90vh] flex flex-col">
+                            <div className="p-4 border-b border-border flex justify-between items-center shrink-0">
                               <h3 className="font-semibold text-sm flex items-center gap-2">
-                                <TerminalSquare className="w-4 h-4" /> Script para o Cliente (NAT)
+                                <TerminalSquare className="w-4 h-4" /> Scripts de Configuração
                               </h3>
                               <Button variant="ghost" size="icon" onClick={() => setShowScript(null)} className="h-8 w-8">
                                 X
                               </Button>
                             </div>
-                            <div className="p-4">
-                              <p className="text-sm text-muted-foreground mb-3">
-                                Cole este script no New Terminal do MikroTik do cliente.
-                              </p>
-                              <div className="relative group">
-                                <pre className="bg-secondary/50 p-4 rounded-lg text-xs font-mono text-foreground whitespace-pre-wrap border border-border">
-                                  {getClientScript(acc)}
-                                </pre>
-                                <Button 
-                                  size="sm" 
-                                  className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity"
-                                  onClick={() => copyToClipboard(getClientScript(acc))}
-                                >
-                                  {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                                </Button>
+                            <div className="p-4 overflow-y-auto space-y-6">
+                              
+                              {/* Comando VPS (Servidor) */}
+                              <div>
+                                <h4 className="font-semibold text-sm text-primary mb-2">1. Comando para o Servidor VPS (Linux)</h4>
+                                <p className="text-xs text-muted-foreground mb-3">
+                                  Acesse o SSH da sua VPS como <code className="bg-secondary px-1 rounded">root</code> e rode este comando para adicionar o usuário no arquivo de senhas do L2TP. Como o banco de dados do FreeRADIUS fica restrito, gerenciar as contas L2TP pelo arquivo local <code>chap-secrets</code> é mais seguro e direto:
+                                </p>
+                                <div className="relative group">
+                                  <pre className="bg-secondary/50 p-4 rounded-lg text-xs font-mono text-foreground whitespace-pre-wrap border border-border">
+                                    {`echo '"${acc.username}" l2tpd "${acc.password}" ${acc.remote_ip}' >> /etc/ppp/chap-secrets
+systemctl restart xl2tpd`}
+                                  </pre>
+                                  <Button 
+                                    size="sm" 
+                                    className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                                    onClick={() => copyToClipboard(`echo '"${acc.username}" l2tpd "${acc.password}" ${acc.remote_ip}' >> /etc/ppp/chap-secrets\nsystemctl restart xl2tpd`)}
+                                  >
+                                    {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                                  </Button>
+                                </div>
                               </div>
+
+                              {/* Comando MikroTik (Cliente) */}
+                              <div className="pt-4 border-t border-border">
+                                <h4 className="font-semibold text-sm text-info mb-2">2. Script para a Filial (MikroTik Cliente)</h4>
+                                <p className="text-xs text-muted-foreground mb-3">
+                                  Após criar o usuário na VPS, cole este script no <strong>New Terminal</strong> do MikroTik da filial:
+                                </p>
+                                <div className="relative group">
+                                  <pre className="bg-secondary/50 p-4 rounded-lg text-xs font-mono text-foreground whitespace-pre-wrap border border-border">
+                                    {getClientScript(acc)}
+                                  </pre>
+                                  <Button 
+                                    size="sm" 
+                                    className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                                    onClick={() => copyToClipboard(getClientScript(acc))}
+                                  >
+                                    {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                                  </Button>
+                                </div>
+                              </div>
+
                             </div>
                           </div>
                         </div>

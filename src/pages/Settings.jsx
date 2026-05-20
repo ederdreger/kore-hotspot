@@ -187,7 +187,7 @@ EOF
 # O pppd no Ubuntu/Debian costuma usar /etc/radiusclient ou /etc/radcli
 mkdir -p /etc/radiusclient
 cat <<EOF > /etc/radiusclient/radiusclient.conf
-auth_order radius
+auth_order radius, local
 login_tries 4
 login_timeout 60
 nologin /etc/nologin
