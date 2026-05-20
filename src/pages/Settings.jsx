@@ -109,14 +109,31 @@ export default function Settings() {
 
   const getVpnScript = () => {
     return `#!/bin/bash
-# Script de Instalação do Servidor VPN L2TP/IPsec no Linux (Ubuntu/Debian)
-# Execute este script como root (sudo su) na sua VPS
+# Script Definitivo de L2TP/IPsec para VPS Linux (Ubuntu/Debian) - Compatibilidade Máxima MikroTik
 
-echo "Instalando pacotes necessários (strongswan, xl2tpd, ppp e freeradius)..."
+echo "1. Instalando pacotes..."
 apt-get update
-apt-get install -y strongswan xl2tpd ppp libpam-radius-auth freeradius freeradius-mysql
+apt-get install -y strongswan xl2tpd ppp iptables
 
-echo "Configurando IPsec (StrongSwan)..."
+echo "2. Habilitando Roteamento (IP Forwarding)..."
+cat <<EOF > /etc/sysctl.d/99-vpn.conf
+net.ipv4.ip_forward = 1
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+net.ipv4.conf.default.send_redirects = 0
+EOF
+sysctl -p /etc/sysctl.d/99-vpn.conf
+
+echo "3. Configurando Firewall (iptables)..."
+iptables -I INPUT -p udp --dport 500 -j ACCEPT
+iptables -I INPUT -p udp --dport 4500 -j ACCEPT
+iptables -I INPUT -p udp --dport 1701 -j ACCEPT
+iptables -I INPUT -p 50 -j ACCEPT
+iptables -I INPUT -p 51 -j ACCEPT
+iptables -t nat -I POSTROUTING -s 10.255.255.0/24 -j MASQUERADE
+
+echo "4. Configurando IPsec (StrongSwan)..."
 cat <<EOF > /etc/ipsec.conf
 config setup
     charondebug="ike 1, knl 1, cfg 0"
@@ -139,8 +156,8 @@ conn L2TP-PSK-noNAT
     leftprotoport=17/1701
     right=%any
     rightprotoport=17/%any
-    dpddelay=30
-    dpdtimeout=120
+    dpddelay=15
+    dpdtimeout=60
     dpdaction=clear
 EOF
 
@@ -148,70 +165,50 @@ cat <<EOF > /etc/ipsec.secrets
 : PSK "${settings.vpn_ipsec_secret || 'SUA_SENHA_IPSEC'}"
 EOF
 
-echo "Configurando L2TP (xl2tpd)..."
+echo "5. Configurando L2TP (xl2tpd)..."
 cat <<EOF > /etc/xl2tpd/xl2tpd.conf
 [global]
 listen-addr = 0.0.0.0
-ipsec saref = no
+port = 1701
+auth file = /etc/ppp/chap-secrets
 
 [lns default]
 ip range = 10.255.255.10-10.255.255.250
 local ip = 10.255.255.1
 require authentication = yes
+require chap = yes
+refuse pap = yes
 name = l2tpd
 ppp debug = yes
 pppoptfile = /etc/ppp/options.xl2tpd
 length bit = yes
 EOF
 
-echo "Configurando PPP para o Túnel L2TP (Autenticação Local Localizada)..."
+echo "6. Configurando PPP..."
 cat <<EOF > /etc/ppp/options.xl2tpd
+require-mschap-v2
+refuse-mschap
+refuse-chap
+refuse-pap
 ipcp-accept-local
 ipcp-accept-remote
 ms-dns 8.8.8.8
 ms-dns 1.1.1.1
-noccp
 auth
-crtscts
-idle 1800
 mtu 1410
 mru 1410
 nodefaultroute
-debug
-lock
+hide-password
 proxyarp
-connect-delay 5000
-require-mschap-v2
-refuse-pap
-refuse-chap
-refuse-mschap
-# Não usamos o plugin RADIUS aqui para L2TP!
-# Os roteadores MikroTik filiais vão conectar nesta VPS como clientes do túnel usando o arquivo chap-secrets,
-# E DEPOIS, por dentro do túnel, vão encaminhar os pedidos de Hotspot para a porta RADIUS (1812).
+lcp-echo-interval 30
+lcp-echo-failure 4
 EOF
 
-# Aplicando regras de Firewall (NAT)
-iptables -t nat -A POSTROUTING -s 10.255.255.0/24 -o eth0 -j MASQUERADE
-# Salvar iptables (pode exigir iptables-persistent)
-# netfilter-persistent save
-
-echo "Liberando sub-rede VPN no FreeRADIUS..."
-if [ -d "/etc/freeradius/3.0" ]; then
-  cat <<EOF >> /etc/freeradius/3.0/clients.conf
-
-client vpn_kore_hotspot {
-    ipaddr = 10.255.255.0/24
-    secret = ${settings.radius_secret || 'SEGREDO_RADIUS'}
-}
-EOF
-fi
-
-echo "Reiniciando serviços..."
+echo "7. Reiniciando serviços..."
 systemctl restart strongswan-starter
 systemctl restart xl2tpd
-systemctl restart freeradius
 
-echo "=== SERVIDOR VPN L2TP/IPsec LINUX CONFIGURADO COM SUCESSO ==="`;
+echo "=== SERVIDOR L2TP/IPSEC CONFIGURADO COM SUCESSO ==="`;
   };
 
   useEffect(() => {
