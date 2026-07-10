@@ -419,6 +419,24 @@ async function adminAuth(payload = {}) {
   throw new Error('Acao invalida');
 }
 
+async function remoteAdminAuth(payload = {}) {
+  const response = await fetch(`${VPN_API_URL}/api/admin/auth`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Kore-Token': VPN_API_TOKEN
+    },
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(data.error || 'Falha na autenticacao');
+    error.response = { data, status: response.status };
+    throw error;
+  }
+  return data;
+}
+
 async function clientAuth(payload = {}) {
   const db = readDb();
   const client = db.Client.find((item) => (
@@ -676,7 +694,10 @@ async function checkPixPayment(payload = {}) {
 
 async function invoke(functionName, payload) {
   const handlers = {
-    adminAuth,
+    adminAuth: async (body) => remoteAdminAuth(body).catch(async (error) => {
+      if (error.response?.status === 401) throw error;
+      return adminAuth(body);
+    }),
     clientAuth,
     vpnCreateUser,
     vpnStatus,

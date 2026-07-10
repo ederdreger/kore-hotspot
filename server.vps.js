@@ -2,9 +2,11 @@ const http = require('http');
 const { execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const PORT = Number(process.env.PORT || 8081);
 const TOKEN = process.env.KORE_VPN_API_TOKEN || 'kore-vpn-api-2026';
+const DEFAULT_ADMIN_PASSWORD = process.env.KORE_ADMIN_PASSWORD || 'Admin12345';
 const CHAP = '/etc/ppp/chap-secrets';
 const KEY_DIR = '/opt/kore-hotspot-vpn-api/keys';
 const KEY_PATH = path.join(KEY_DIR, 'kore-api_rsa');
@@ -12,12 +14,18 @@ const PUB_PATH = `${KEY_PATH}.pub`;
 const DATA_DIR = '/opt/kore-hotspot-vpn-api/data';
 const CAPTIVE_DB = path.join(DATA_DIR, 'captive-prospects.json');
 const ENTITY_FILES = {
+  admins: path.join(DATA_DIR, 'admin-users.json'),
+  admin_sessions: path.join(DATA_DIR, 'admin-sessions.json'),
   clients: path.join(DATA_DIR, 'clients.json'),
   plans: path.join(DATA_DIR, 'plans.json'),
   vouchers: path.join(DATA_DIR, 'vouchers.json'),
   settings: path.join(DATA_DIR, 'settings.json'),
   payments: path.join(DATA_DIR, 'payments.json')
 };
+const DEFAULT_ADMINS = [
+  { email: 'demo@spedynet.com.br', full_name: 'Administrador Demo', role: 'admin' },
+  { email: 'spedynet@spedynet.com.br', full_name: 'Administrador Spedynet', role: 'admin' }
+];
 const radiusRateCache = new Map();
 
 function send(res, status, data, headers = {}) {
@@ -530,6 +538,172 @@ function readJson(file, fallback = []) {
 function writeJson(file, value) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.writeFileSync(file, JSON.stringify(value, null, 2));
+}
+
+function normalizeEmail(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function passwordHash(password, salt = crypto.randomBytes(16).toString('hex')) {
+  const hash = crypto.pbkdf2Sync(String(password || ''), salt, 120000, 32, 'sha256').toString('hex');
+  return `${salt}:${hash}`;
+}
+
+function verifyPassword(password, stored) {
+  if (!stored) return false;
+  if (!String(stored).includes(':')) return stored === password;
+  const [salt, expected] = String(stored).split(':');
+  const actual = crypto.pbkdf2Sync(String(password || ''), salt, 120000, 32, 'sha256').toString('hex');
+  try {
+    return crypto.timingSafeEqual(Buffer.from(actual, 'hex'), Buffer.from(expected, 'hex'));
+  } catch {
+    return false;
+  }
+}
+
+function publicAdmin(user) {
+  if (!user) return null;
+  const { password, password_hash, ...safeUser } = user;
+  return safeUser;
+}
+
+function ensureDefaultAdmins({ resetPassword = false } = {}) {
+  const users = readJson(ENTITY_FILES.admins, []);
+  let changed = false;
+  for (const admin of DEFAULT_ADMINS) {
+    const email = normalizeEmail(admin.email);
+    const existing = users.find(user => normalizeEmail(user.email) === email);
+    if (!existing) {
+      const id = `admin_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      users.push({
+        id,
+        _id: id,
+        ...admin,
+        email,
+        status: 'active',
+        password_hash: passwordHash(DEFAULT_ADMIN_PASSWORD),
+        created_date: new Date().toISOString(),
+        updated_date: new Date().toISOString()
+      });
+      changed = true;
+    } else {
+      existing.role = 'admin';
+      existing.status = 'active';
+      existing.updated_date = new Date().toISOString();
+      if (resetPassword || (!existing.password_hash && !existing.password)) {
+        existing.password_hash = passwordHash(DEFAULT_ADMIN_PASSWORD);
+        delete existing.password;
+      }
+      changed = true;
+    }
+  }
+  if (changed) writeJson(ENTITY_FILES.admins, users);
+  return users;
+}
+
+function createAdminSession(user) {
+  const sessions = readJson(ENTITY_FILES.admin_sessions, []);
+  const id = `session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const session = {
+    id,
+    _id: id,
+    token: crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(24).toString('hex'),
+    admin_user_id: user.id || user._id,
+    email: user.email,
+    role: user.role,
+    expires_at: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7).toISOString(),
+    created_date: new Date().toISOString()
+  };
+  writeJson(ENTITY_FILES.admin_sessions, [session, ...sessions].slice(0, 5000));
+  return session;
+}
+
+function getAdminSession(token) {
+  const sessions = readJson(ENTITY_FILES.admin_sessions, []);
+  const session = sessions.find(item => item.token === token);
+  if (!session || new Date(session.expires_at) < new Date()) return null;
+  return session;
+}
+
+async function adminAuth(payload = {}) {
+  const action = payload.action || 'login';
+  if (action === 'resetDefaults') {
+    const users = ensureDefaultAdmins({ resetPassword: true });
+    writeJson(ENTITY_FILES.admin_sessions, []);
+    return { success: true, email: DEFAULT_ADMINS.map(user => user.email).join(' / '), password: DEFAULT_ADMIN_PASSWORD, users: users.map(publicAdmin) };
+  }
+
+  ensureDefaultAdmins();
+  const users = readJson(ENTITY_FILES.admins, []);
+
+  if (action === 'login') {
+    const email = normalizeEmail(payload.email);
+    const admin = users.find(user => normalizeEmail(user.email) === email);
+    if (!admin || admin.status === 'inactive' || !verifyPassword(payload.password, admin.password_hash || admin.password)) {
+      throw Object.assign(new Error('E-mail ou senha invalidos'), { status: 401 });
+    }
+    const session = createAdminSession(admin);
+    return { token: session.token, user: publicAdmin(admin) };
+  }
+
+  if (action === 'validate') {
+    const session = getAdminSession(payload.token);
+    if (!session) throw Object.assign(new Error('Sessao expirada'), { status: 401 });
+    const admin = users.find(user => user.id === session.admin_user_id || user._id === session.admin_user_id);
+    return { user: publicAdmin(admin) };
+  }
+
+  if (action === 'logout') {
+    const sessions = readJson(ENTITY_FILES.admin_sessions, []);
+    writeJson(ENTITY_FILES.admin_sessions, sessions.filter(session => session.token !== payload.token));
+    return { success: true };
+  }
+
+  const session = getAdminSession(payload.token);
+  if (!session) throw Object.assign(new Error('Sessao expirada'), { status: 401 });
+
+  if (action === 'listUsers') return { users: users.map(publicAdmin) };
+
+  if (action === 'createUser') {
+    const id = `admin_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const user = {
+      id,
+      _id: id,
+      email: normalizeEmail(payload.email),
+      full_name: payload.full_name || payload.email,
+      role: payload.role || 'user',
+      status: payload.role === 'inactive' ? 'inactive' : 'active',
+      password_hash: passwordHash(payload.password || DEFAULT_ADMIN_PASSWORD),
+      created_date: new Date().toISOString(),
+      updated_date: new Date().toISOString()
+    };
+    writeJson(ENTITY_FILES.admins, [user, ...users]);
+    return { user: publicAdmin(user) };
+  }
+
+  if (action === 'updateUser') {
+    const updated = users.map(user => {
+      if (user.id !== payload.userId && user._id !== payload.userId) return user;
+      return {
+        ...user,
+        full_name: payload.full_name || user.full_name,
+        role: payload.role || user.role,
+        status: payload.role === 'inactive' ? 'inactive' : 'active',
+        password_hash: payload.newPassword ? passwordHash(payload.newPassword) : (user.password_hash || passwordHash(user.password || DEFAULT_ADMIN_PASSWORD)),
+        password: undefined,
+        updated_date: new Date().toISOString()
+      };
+    });
+    writeJson(ENTITY_FILES.admins, updated);
+    return { success: true };
+  }
+
+  if (action === 'deleteUser') {
+    writeJson(ENTITY_FILES.admins, users.filter(user => user.id !== payload.userId && user._id !== payload.userId));
+    return { success: true };
+  }
+
+  throw new Error('Acao invalida');
 }
 
 function normalizeDigits(value) {
@@ -1390,6 +1564,7 @@ const server = http.createServer(async (req, res) => {
       const pub = fs.readFileSync(PUB_PATH, 'utf8').trim();
       return send(res, 200, { public_key: pub, public_key_url: 'http://190.8.174.155:8081/public/kore-api.pub' });
     }
+    if (req.method === 'POST' && req.url === '/api/admin/auth') return send(res, 200, await adminAuth(await readBody(req)));
     if (req.method === 'GET' && req.url === '/api/radius/status') return send(res, 200, await radiusStatus());
     if (req.method === 'GET' && req.url === '/api/radius/sessions') return send(res, 200, await radiusSessions());
     if (req.method === 'GET' && req.url === '/api/captive/prospects') return send(res, 200, { prospects: readCaptiveDb() });
@@ -1419,7 +1594,7 @@ const server = http.createServer(async (req, res) => {
 
     return send(res, 404, { error: 'rota nao encontrada' });
   } catch (error) {
-    return send(res, 500, { error: error.message });
+    return send(res, error.status || 500, { error: error.message });
   }
 });
 

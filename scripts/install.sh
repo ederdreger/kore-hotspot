@@ -14,6 +14,7 @@ DOMAIN="${DOMAIN:-}"
 CERTBOT_EMAIL="${CERTBOT_EMAIL:-admin@spedynet.com.br}"
 ENABLE_SSL="${ENABLE_SSL:-auto}"
 API_TOKEN="${API_TOKEN:-}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-Admin12345}"
 NODE_MAJOR="${NODE_MAJOR:-20}"
 AUTO_UPDATE="${AUTO_UPDATE:-true}"
 PUBLIC_URL=""
@@ -118,6 +119,7 @@ Type=simple
 WorkingDirectory=${API_DIR}
 Environment=PORT=8081
 Environment=KORE_VPN_API_TOKEN=${API_TOKEN}
+Environment=KORE_ADMIN_PASSWORD=${ADMIN_PASSWORD}
 Environment=KORE_PUBLIC_URL=${PUBLIC_URL}
 ExecStart=/usr/bin/node ${API_DIR}/server.js
 Restart=always
@@ -238,6 +240,7 @@ ENABLE_SSL=${ENABLE_SSL}
 PUBLIC_URL=${PUBLIC_URL}
 API_URL=${API_URL}
 API_TOKEN=${API_TOKEN}
+ADMIN_PASSWORD=${ADMIN_PASSWORD}
 RELEASE_CHANNEL=latest
 EOF
 
@@ -294,7 +297,7 @@ SSL:          $([ -n "$DOMAIN" ] && echo "Let's Encrypt para ${DOMAIN}" || echo 
 
 Usuario inicial do painel:
   E-mail: demo@spedynet.com.br
-  Senha:  Admin12345
+  Senha:  ${ADMIN_PASSWORD}
 
 Para atualizar manualmente:
   sudo kore-hotspot-update

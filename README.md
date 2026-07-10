@@ -56,6 +56,7 @@ Variáveis úteis:
 - `CERTBOT_EMAIL`: e-mail usado no Let's Encrypt.
 - `ENABLE_SSL`: `auto`, `true` ou `false`. Em `auto`, tenta emitir certificado quando `DOMAIN` estiver definido.
 - `API_TOKEN`: token usado pelo painel para falar com a API.
+- `ADMIN_PASSWORD`: senha inicial dos administradores padrão.
 - `REPO_URL`: repositório Git usado pelo instalador.
 - `REPO_SLUG`: identificador GitHub, exemplo `ederdreger/kore-hotspot`.
 - `BRANCH`: branch para instalação quando não houver release.
