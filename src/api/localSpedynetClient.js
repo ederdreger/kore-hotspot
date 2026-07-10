@@ -701,7 +701,7 @@ async function checkPixPayment(payload = {}) {
 async function invoke(functionName, payload) {
   const handlers = {
     adminAuth: async (body) => remoteAdminAuth(body).catch(async (error) => {
-      if (error.response?.status === 401) throw error;
+      if (error.response?.status) throw error;
       return adminAuth(body);
     }),
     clientAuth,

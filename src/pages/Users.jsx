@@ -169,7 +169,7 @@ export default function UsersPage() {
     resetForm();
   };
 
-  const UserForm = ({ onSubmit, edit = false }) => (
+  const renderUserForm = (onSubmit, edit = false) => (
     <form onSubmit={onSubmit} className="p-6 space-y-4">
       <div>
         <Label className="text-xs text-muted-foreground mb-1.5 block">E-mail</Label>
@@ -272,7 +272,7 @@ export default function UsersPage() {
               <h3 className="font-semibold text-sm">{showEdit ? 'Editar usuario' : 'Criar usuario'}</h3>
               <button onClick={closeModal} className="text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
             </div>
-            <UserForm onSubmit={showEdit ? handleUpdate : handleCreate} edit={showEdit} />
+            {renderUserForm(showEdit ? handleUpdate : handleCreate, showEdit)}
           </div>
         </div>
       )}
