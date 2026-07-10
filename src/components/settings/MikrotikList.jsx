@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { base44 } from '@/api/base44Client';
+import { spedynet } from '@/api/spedynetClient';
 import { useAuth } from '@/lib/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,8 +14,9 @@ const EMPTY = {
   name: '',
   host: '',
   port: '22',
-  user: 'admin',
+  user: 'kore-api',
   password: '',
+  ssh_auth_method: 'key',
   snmp_community: 'public',
   snmp_port: '161',
   physical_interface: 'ether1',
@@ -42,20 +43,44 @@ export default function MikrotikList() {
   const [scriptMt, setScriptMt] = useState(null);
   const [statusMt, setStatusMt] = useState(null);
   const [radiusSettings, setRadiusSettings] = useState({});
+  const [vpnAccounts, setVpnAccounts] = useState([]);
+
+  const nextVpnIp = (devices = mikrotiks, accounts = vpnAccounts) => {
+    const used = new Set([
+      '10.255.255.1',
+      ...devices.map((mt) => mt.vpn_remote_ip || mt.remote_ip || mt.host),
+      ...accounts.map((account) => account.remote_ip)
+    ].filter((ip) => /^10\.255\.255\.\d+$/.test(String(ip || ''))));
+
+    for (let last = 2; last <= 254; last += 1) {
+      const ip = `10.255.255.${last}`;
+      if (!used.has(ip)) return ip;
+    }
+    return '';
+  };
+
+  const makeVpnCredentials = (name = 'filial') => {
+    const clean = String(name || 'filial').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'filial';
+    return {
+      user: `kore-${clean}`.slice(0, 28),
+      password: `Kore-${Math.random().toString(36).slice(2, 8)}@${Math.floor(100 + Math.random() * 900)}`
+    };
+  };
 
   const load = async () => {
     setLoading(true);
     // Each mikrotik is stored as a group of Settings with category="mikrotik" and key prefix "mt_{id}_field"
     // Simpler approach: store each router as a single Setting JSON blob with category="mikrotik_device"
-    const all = await base44.entities.Setting.filter({ category: 'mikrotik_device' }).catch(() => []);
+    const all = await spedynet.entities.Setting.filter({ category: 'mikrotik_device' }).catch(() => []);
     const parsed = all.map(s => {
       try { return { _id: s.id, ...JSON.parse(s.value) }; } catch { return null; }
     }).filter(Boolean);
     setMikrotiks(parsed);
-    const settings = await base44.entities.Setting.list().catch(() => []);
+    const settings = await spedynet.entities.Setting.list().catch(() => []);
     const settingsMap = {};
     settings.forEach(s => { settingsMap[s.key] = s.value; });
     setRadiusSettings(settingsMap);
+    setVpnAccounts(await spedynet.entities.VpnAccount.list('-created_date', 200).catch(() => []));
     setLoading(false);
   };
 
@@ -76,6 +101,7 @@ export default function MikrotikList() {
       port: mt.port || '22',
       user: mt.user || 'admin',
       password: mt.password || '',
+      ssh_auth_method: mt.ssh_auth_method || 'key',
       snmp_community: mt.snmp_community || 'public',
       snmp_port: mt.snmp_port || '161',
       physical_interface: mt.physical_interface || mt.hotspot_interface || 'ether1',
@@ -99,14 +125,31 @@ export default function MikrotikList() {
       return;
     }
 
+    if (form.vpn_enabled) {
+      if (!/^10\.255\.255\.\d+$/.test(String(form.host || ''))) {
+        toast.error('Com VPN habilitada, o IP do equipamento deve ser um IP reservado da VPN: 10.255.255.x');
+        return;
+      }
+      const conflict = [
+        ...mikrotiks.filter((mt) => mt._id !== editing?._id).map((mt) => mt.vpn_remote_ip || mt.remote_ip || mt.host),
+        ...vpnAccounts.map((account) => account.remote_ip)
+      ].some((ip) => ip === form.host);
+      if (conflict) {
+        toast.error(`O IP VPN ${form.host} já está reservado. Escolha outro IP.`);
+        return;
+      }
+    }
+
     setSaving(true);
     const hotspotInterface = form.vlan_id ? form.vlan_interface : (form.bridge_name || form.physical_interface);
     
     // Auto-generate a secure RADIUS secret and integration user if not exists
     const integrationSecret = editing?.radius_secret || `Kore-${Math.random().toString(36).substr(2, 8).toUpperCase()}-HotSpot`;
     
+    const vpnIp = form.vpn_enabled && /^10\.255\.255\.\d+$/.test(String(form.host || '')) ? form.host : '';
     const deviceData = { 
       ...form, 
+      vpn_remote_ip: vpnIp,
       hotspot_interface: hotspotInterface,
       radius_secret: integrationSecret
     };
@@ -115,10 +158,10 @@ export default function MikrotikList() {
     let savedDevice;
 
     if (editing) {
-      await base44.entities.Setting.update(editing._id, { key: `mikrotik_device_${editing._id}`, value: blob, category: 'mikrotik_device', label: form.name });
+      await spedynet.entities.Setting.update(editing._id, { key: `mikrotik_device_${editing._id}`, value: blob, category: 'mikrotik_device', label: form.name });
       savedDevice = { ...editing, ...deviceData };
     } else {
-      const created = await base44.entities.Setting.create({ key: `mikrotik_device_${Date.now()}`, value: blob, category: 'mikrotik_device', label: form.name });
+      const created = await spedynet.entities.Setting.create({ key: `mikrotik_device_${Date.now()}`, value: blob, category: 'mikrotik_device', label: form.name });
       savedDevice = { _id: created.id, ...deviceData };
     }
 
@@ -130,7 +173,7 @@ export default function MikrotikList() {
   };
 
   const handleDelete = async (mt) => {
-    await base44.entities.Setting.delete(mt._id);
+    await spedynet.entities.Setting.delete(mt._id);
     toast.info(`${mt.name} removido`);
     load();
   };
@@ -256,7 +299,26 @@ export default function MikrotikList() {
               ))}
               {/* Password */}
               <div className="col-span-2">
-                <Label className="text-xs text-muted-foreground mb-1.5 block">Senha SSH (opcional, não usada na coleta SNMP)</Label>
+                <Label className="text-xs text-muted-foreground mb-1.5 block">Modo de autenticação SSH</Label>
+                <div className="grid grid-cols-2 gap-2 mb-3">
+                  <button
+                    type="button"
+                    onClick={() => setForm({ ...form, ssh_auth_method: 'key', user: form.user || 'kore-api' })}
+                    className={`h-9 rounded-lg border text-xs font-medium transition-colors ${form.ssh_auth_method !== 'password' ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-secondary/30 text-muted-foreground'}`}
+                  >
+                    SSH Key
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setForm({ ...form, ssh_auth_method: 'password' })}
+                    className={`h-9 rounded-lg border text-xs font-medium transition-colors ${form.ssh_auth_method === 'password' ? 'border-warning bg-warning/10 text-warning' : 'border-border bg-secondary/30 text-muted-foreground'}`}
+                  >
+                    Senha
+                  </button>
+                </div>
+                <Label className="text-xs text-muted-foreground mb-1.5 block">
+                  Senha SSH {form.ssh_auth_method !== 'password' ? '(fallback opcional)' : ''}
+                </Label>
                 <div className="relative">
                   <Input
                     type={showPass ? 'text' : 'password'}
@@ -278,7 +340,17 @@ export default function MikrotikList() {
                     type="checkbox" 
                     id="vpn_enabled"
                     checked={form.vpn_enabled}
-                    onChange={e => setForm({ ...form, vpn_enabled: e.target.checked })}
+                    onChange={e => {
+                      const checked = e.target.checked;
+                      const creds = makeVpnCredentials(form.name);
+                      setForm({
+                        ...form,
+                        vpn_enabled: checked,
+                        host: checked && !/^10\.255\.255\.\d+$/.test(String(form.host || '')) ? (nextVpnIp() || form.host) : form.host,
+                        vpn_user: checked && !form.vpn_user ? creds.user : form.vpn_user,
+                        vpn_password: checked && !form.vpn_password ? creds.password : form.vpn_password,
+                      });
+                    }}
                     className="rounded border-input bg-card text-primary focus:ring-primary h-4 w-4"
                   />
                   <Label htmlFor="vpn_enabled" className="text-sm font-semibold cursor-pointer">

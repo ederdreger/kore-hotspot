@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { base44 } from '@/api/base44Client';
+import { spedynet } from '@/api/spedynetClient';
 import { Button } from '@/components/ui/button';
-import { LogOut, Zap, Clock, Shield, CreditCard, Activity, Wifi, CheckCircle2 } from 'lucide-react';
+import { LogOut, Zap, CreditCard, Activity, Wifi, CheckCircle2, Copy, QrCode } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function ClientPortal() {
@@ -11,6 +11,7 @@ export default function ClientPortal() {
   const [plans, setPlans] = useState([]);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
+  const [pixPayment, setPixPayment] = useState(null);
 
   useEffect(() => {
     const clientId = localStorage.getItem('portal_client_id');
@@ -21,7 +22,7 @@ export default function ClientPortal() {
 
     const loadData = async () => {
       try {
-        const res = await base44.functions.invoke('getClientPortalData', { clientId });
+        const res = await spedynet.functions.invoke('getClientPortalData', { clientId });
         if (res.data.success) {
           setClient(res.data.client);
           setPlans(res.data.plans);
@@ -42,7 +43,7 @@ export default function ClientPortal() {
     setProcessing(true);
     try {
       toast.info("Gerando link de pagamento Mercado Pago...");
-      const res = await base44.functions.invoke('createMercadoPagoCheckout', {
+      const res = await spedynet.functions.invoke('createMercadoPagoCheckout', {
          clientId: client.id,
          planId: plan.id
       });
@@ -56,6 +57,74 @@ export default function ClientPortal() {
       toast.error(e.response?.data?.error || "Erro de comunicação com o servidor.");
     }
     setProcessing(false);
+  };
+
+  const handlePlanAction = async (plan) => {
+    setProcessing(true);
+    try {
+      const planType = plan.plan_type || (plan.is_trial ? 'trial' : Number(plan.price || 0) > 0 ? 'paid' : 'free');
+      if (planType !== 'paid') {
+        const res = await spedynet.functions.invoke('activateFreePlan', {
+          clientId: client.id,
+          planId: plan.id
+        });
+        if (res.data.success) {
+          setClient(res.data.client);
+          toast.success('Plano gratuito liberado.');
+        } else {
+          toast.error(res.data.error || 'Erro ao liberar plano gratuito.');
+        }
+        return;
+      }
+
+      toast.info('Gerando Pix...');
+      const res = await spedynet.functions.invoke('createPixPayment', {
+        clientId: client.id,
+        planId: plan.id
+      });
+
+      if (res.data.success && res.data.payment) {
+        setPixPayment(res.data.payment);
+        toast.success('Pix gerado. Aguardando pagamento.');
+      } else {
+        toast.error(res.data.error || 'Erro ao gerar Pix.');
+      }
+    } catch (e) {
+      toast.error(e.response?.data?.error || e.message || 'Erro de comunicacao com o servidor.');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const checkPayment = async () => {
+    if (!pixPayment) return;
+    setProcessing(true);
+    try {
+      const res = await spedynet.functions.invoke('checkPixPayment', {
+        id: pixPayment.id,
+        provider_payment_id: pixPayment.provider_payment_id
+      });
+      if (res.data.success) {
+        setPixPayment(res.data.payment);
+        if (res.data.payment.status === 'approved') {
+          const fresh = await spedynet.functions.invoke('getClientPortalData', { clientId: client.id });
+          if (fresh.data.success) setClient(fresh.data.client);
+          toast.success('Pagamento aprovado e acesso liberado.');
+        } else {
+          toast.info(`Pagamento: ${res.data.payment.status || 'pendente'}`);
+        }
+      }
+    } catch (e) {
+      toast.error(e.response?.data?.error || e.message || 'Erro ao verificar pagamento.');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const copyPix = async () => {
+    if (!pixPayment?.qr_code) return;
+    await navigator.clipboard.writeText(pixPayment.qr_code);
+    toast.success('Codigo Pix copiado.');
   };
 
   const handleLogout = () => {
@@ -94,6 +163,52 @@ export default function ClientPortal() {
       </nav>
 
       <main className="max-w-6xl mx-auto p-4 sm:p-6 space-y-6">
+        {pixPayment && (
+          <div className="bg-card border border-primary/30 rounded-xl p-4 sm:p-6">
+            <div className="flex flex-col lg:flex-row gap-5">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-2">
+                  <QrCode className="w-5 h-5 text-primary" />
+                  <h2 className="text-lg font-bold">Pagamento Pix</h2>
+                </div>
+                <p className="text-sm text-muted-foreground mb-4">
+                  Plano {pixPayment.plan_name} - R$ {Number(pixPayment.amount || 0).toFixed(2)}
+                </p>
+                <div className="bg-secondary/70 border border-border rounded-lg p-3 break-all font-mono text-xs text-muted-foreground max-h-28 overflow-auto">
+                  {pixPayment.qr_code || 'Codigo Pix indisponivel'}
+                </div>
+                <div className="flex flex-wrap gap-2 mt-4">
+                  <Button onClick={copyPix} variant="outline" className="gap-2">
+                    <Copy className="w-4 h-4" /> Copiar Pix
+                  </Button>
+                  <Button onClick={checkPayment} disabled={processing} className="gap-2">
+                    {processing ? <Activity className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                    Verificar pagamento
+                  </Button>
+                  {pixPayment.whatsapp_url && (
+                    <Button asChild variant="outline">
+                      <a href={pixPayment.whatsapp_url} target="_blank" rel="noreferrer">Enviar no WhatsApp</a>
+                    </Button>
+                  )}
+                  <Button onClick={() => setPixPayment(null)} variant="ghost">Fechar</Button>
+                </div>
+                {pixPayment.status && (
+                  <p className="text-xs text-muted-foreground mt-3">Status: <span className="font-mono text-foreground">{pixPayment.status}</span></p>
+                )}
+              </div>
+              {pixPayment.qr_code_base64 && (
+                <div className="w-full max-w-56 mx-auto lg:mx-0 bg-white rounded-xl p-3 self-start">
+                  <img
+                    src={`data:image/png;base64,${pixPayment.qr_code_base64}`}
+                    alt="QR Code Pix"
+                    className="w-full aspect-square object-contain"
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Status Header */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="bg-card border border-border rounded-xl p-6 lg:col-span-2 relative overflow-hidden">
@@ -196,12 +311,12 @@ export default function ClientPortal() {
                   </ul>
 
                   <Button 
-                    onClick={() => handleCheckout(plan)} 
+                    onClick={() => handlePlanAction(plan)}
                     disabled={processing}
                     variant={isCurrent ? "outline" : "default"}
                     className={`w-full py-6 font-bold text-base ${isCurrent ? 'border-primary text-primary hover:bg-primary/10' : 'shadow-[0_0_15px_rgba(0,229,255,0.3)] hover:shadow-[0_0_25px_rgba(0,229,255,0.5)]'}`}
                   >
-                    {processing ? <Activity className="w-5 h-5 animate-spin" /> : isCurrent ? 'Renovar Acesso' : 'Assinar Plano'}
+                    {processing ? <Activity className="w-5 h-5 animate-spin" /> : (plan.plan_type || (plan.is_trial ? 'trial' : Number(plan.price || 0) > 0 ? 'paid' : 'free')) !== 'paid' ? 'Liberar Gratis' : isCurrent ? 'Renovar Acesso' : 'Pagar com Pix'}
                   </Button>
                 </div>
               );

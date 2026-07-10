@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { base44 } from '@/api/base44Client';
+import { spedynet } from '@/api/spedynetClient';
 import RadiusSessionsTable from '@/components/radius/RadiusSessionsTable';
 import RadiusQuotaAlerts from '@/components/radius/RadiusQuotaAlerts';
 import RadiusStatsBar from '@/components/radius/RadiusStatsBar';
@@ -10,21 +10,23 @@ export default function RadiusMonitor() {
   const [sessions, setSessions] = useState([]);
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(new Date());
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [actionLog, setActionLog] = useState([]);
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    const cls = await base44.entities.Client.list('-created_date', 50).catch(() => []);
+  const loadData = useCallback(async ({ silent = false } = {}) => {
+    if (silent) setRefreshing(true);
+    else setLoading(true);
+    const [cls, radius] = await Promise.all([
+      spedynet.entities.Client.list('-created_date', 50).catch(() => []),
+      spedynet.functions.invoke('radiusSessions', {}).catch(() => ({ data: { sessions: [] } }))
+    ]);
     setClients(cls);
-    
-    // In production these will come from FreeRADIUS SQL or API
-    // For now we set it to empty so test data is cleared
-    const sess = [];
-    setSessions(sess);
+    setSessions(radius.data?.sessions || []);
     setLastRefresh(new Date());
     setLoading(false);
+    setRefreshing(false);
   }, []);
 
   useEffect(() => {
@@ -34,7 +36,7 @@ export default function RadiusMonitor() {
   // Auto-refresh every 15s
   useEffect(() => {
     if (!autoRefresh) return;
-    const t = setInterval(loadData, 15000);
+    const t = setInterval(() => loadData({ silent: true }), 15000);
     return () => clearInterval(t);
   }, [autoRefresh, loadData]);
 
@@ -42,21 +44,21 @@ export default function RadiusMonitor() {
     setSessions(prev => prev.filter(s => s.id !== session.id));
     const entry = { time: new Date(), action: 'disconnect', user: session.username, detail: `Sessão encerrada via console — IP ${session.framedIp}`, status: 'success' };
     setActionLog(prev => [entry, ...prev].slice(0, 20));
-    await base44.entities.AuditLog.create({ action: 'radius_disconnect', entity_type: 'radius', entity_name: session.username, status: 'success', message: `Sessão RADIUS desconectada: ${session.username} (${session.framedIp})`, details: JSON.stringify({ nas: session.nasIp, mac: session.macAddress }) }).catch(() => {});
+    await spedynet.entities.AuditLog.create({ action: 'radius_disconnect', entity_type: 'radius', entity_name: session.username, status: 'success', message: `Sessão RADIUS desconectada: ${session.username} (${session.framedIp})`, details: JSON.stringify({ nas: session.nasIp, mac: session.macAddress }) }).catch(() => {});
   };
 
   const handleApplyProfile = async (session, profile) => {
     setSessions(prev => prev.map(s => s.id === session.id ? { ...s, planName: profile.label, downloadRate: profile.downloadRate, uploadRate: profile.uploadRate, status: profile.status || s.status } : s));
     const entry = { time: new Date(), action: 'profile', user: session.username, detail: `Perfil "${profile.label}" aplicado — ${profile.downloadRate}/${profile.uploadRate} Mbps`, status: 'info' };
     setActionLog(prev => [entry, ...prev].slice(0, 20));
-    await base44.entities.AuditLog.create({ action: 'radius_profile_change', entity_type: 'radius', entity_name: session.username, status: 'success', message: `Perfil de emergência aplicado: ${profile.label} → ${session.username}`, details: JSON.stringify({ profile: profile.label, framedIp: session.framedIp }) }).catch(() => {});
+    await spedynet.entities.AuditLog.create({ action: 'radius_profile_change', entity_type: 'radius', entity_name: session.username, status: 'success', message: `Perfil de emergência aplicado: ${profile.label} → ${session.username}`, details: JSON.stringify({ profile: profile.label, framedIp: session.framedIp }) }).catch(() => {});
   };
 
   const handleUnblock = async (session) => {
     setSessions(prev => prev.map(s => s.id === session.id ? { ...s, status: 'active', downloadRate: 2.0, uploadRate: 0.5 } : s));
     const entry = { time: new Date(), action: 'unblock', user: session.username, detail: `Quota resetada — acesso restaurado`, status: 'success' };
     setActionLog(prev => [entry, ...prev].slice(0, 20));
-    await base44.entities.AuditLog.create({ action: 'radius_quota_reset', entity_type: 'radius', entity_name: session.username, status: 'success', message: `Quota resetada para ${session.username}` }).catch(() => {});
+    await spedynet.entities.AuditLog.create({ action: 'radius_quota_reset', entity_type: 'radius', entity_name: session.username, status: 'success', message: `Quota resetada para ${session.username}` }).catch(() => {});
   };
 
   const quotaBlocked = sessions.filter(s => s.status === 'quota_exceeded');
@@ -83,8 +85,8 @@ export default function RadiusMonitor() {
             <span className={`w-1.5 h-1.5 rounded-full ${autoRefresh ? 'bg-success animate-pulse' : 'bg-muted-foreground'}`} />
             {autoRefresh ? 'Auto 15s' : 'Pausado'}
           </button>
-          <Button size="sm" variant="outline" onClick={loadData} disabled={loading} className="gap-1.5">
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+          <Button size="sm" variant="outline" onClick={() => loadData()} disabled={loading || refreshing} className="gap-1.5">
+            <RefreshCw className={`w-3.5 h-3.5 ${loading || refreshing ? 'animate-spin' : ''}`} />
             Atualizar
           </Button>
         </div>

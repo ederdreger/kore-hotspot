@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { base44 } from '@/api/base44Client';
+import { spedynet } from '@/api/spedynetClient';
 import { useAuth } from '@/lib/AuthContext';
 import { Button } from '@/components/ui/button';
 import {
@@ -55,7 +55,7 @@ export default function MikrotikDashboard({ mikrotik, onClose }) {
     else setLoading(true);
 
     try {
-      const response = await base44.functions.invoke('mikrotikStatus', {
+      const response = await spedynet.functions.invoke('mikrotikStatus', {
         host: mikrotik.host,
         port: mikrotik.port,
         user: mikrotik.user || 'admin',

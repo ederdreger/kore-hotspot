@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { base44 } from '@/api/base44Client';
+import { spedynet } from '@/api/spedynetClient';
 import { useAuth } from '@/lib/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -16,13 +16,7 @@ export default function VpnRealtimeMonitor({ mikrotik }) {
 
   const fetchData = async () => {
     try {
-      const res = await base44.functions.invoke('mikrotikStatus', {
-        host: mikrotik.host,
-        port: mikrotik.port,
-        user: mikrotik.user,
-        password: mikrotik.password,
-        token: getToken()
-      });
+      const res = await spedynet.functions.invoke('vpnStatus', { token: getToken() });
       
       const d = res.data;
       if (d.connected) {
@@ -56,7 +50,7 @@ export default function VpnRealtimeMonitor({ mikrotik }) {
   const handleDisconnect = async (username) => {
     setDisconnecting(username);
     try {
-      await base44.functions.invoke('mikrotikStatus', {
+      await spedynet.functions.invoke('mikrotikStatus', {
         host: mikrotik.host,
         port: mikrotik.port,
         user: mikrotik.user,

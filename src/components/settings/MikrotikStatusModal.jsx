@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { base44 } from '@/api/base44Client';
+import { spedynet } from '@/api/spedynetClient';
 import { Button } from '@/components/ui/button';
 import { Activity, AlertTriangle, CheckCircle, RefreshCw, Router, X } from 'lucide-react';
 
@@ -26,11 +26,12 @@ export default function MikrotikStatusModal({ mikrotik, token, onClose }) {
   const checkStatus = async () => {
     setLoading(true);
     try {
-      const res = await base44.functions.invoke('mikrotikStatus', {
+      const res = await spedynet.functions.invoke('mikrotikStatus', {
         host: mikrotik.host,
         port: mikrotik.port || '22',
         user: mikrotik.user || 'admin',
         password: mikrotik.password || '',
+        auth_method: mikrotik.ssh_auth_method || 'key',
         snmp_port: mikrotik.snmp_port || '161',
         snmp_community: mikrotik.snmp_community || 'public',
         token,

@@ -1,21 +1,17 @@
-import { useState, useEffect } from 'react';
-import { base44 } from '@/api/base44Client';
+import { useState, useEffect, useCallback } from 'react';
+import { spedynet } from '@/api/spedynetClient';
 import StatCard from '@/components/ui/StatCard';
 import StatusBadge from '@/components/ui/StatusBadge';
-import { Users, UserSearch, Zap, Ticket, Wifi, Activity, Clock, TrendingUp, AlertCircle, CheckCircle } from 'lucide-react';
+import { Users, UserSearch, Zap, Ticket, Wifi, Activity, TrendingDown, TrendingUp, AlertCircle, CheckCircle } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import ConversionFunnelChart from '@/components/charts/ConversionFunnelChart';
 import BandwidthByPlanChart from '@/components/charts/BandwidthByPlanChart';
-import HotspotHeatmap from '@/components/charts/HotspotHeatmap';
 import FinancialSummary from '@/components/charts/FinancialSummary';
 import SnmpPerformanceDashboard from '@/components/charts/SnmpPerformanceDashboard';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/lib/AuthContext';
-
-const trafficData = [];
-const onlineUsers = [];
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -26,17 +22,50 @@ export default function Dashboard() {
   const [vouchers, setVouchers] = useState([]);
   const [logs, setLogs] = useState([]);
   const [primaryMikrotik, setPrimaryMikrotik] = useState(null);
+  const [onlineUsers, setOnlineUsers] = useState([]);
+  const [trafficData, setTrafficData] = useState([]);
+  const [networkTotals, setNetworkTotals] = useState({ download: 0, upload: 0 });
+  const [onlinePage, setOnlinePage] = useState(1);
+  const onlinePageSize = 20;
+
+  const loadRadiusData = useCallback(async () => {
+    const res = await spedynet.functions.invoke('radiusSessions', {}).catch(() => ({ data: { sessions: [] } }));
+    const sessions = res.data?.sessions || [];
+    const download = sessions.reduce((sum, s) => sum + Number(s.downloadRate || 0), 0);
+    const upload = sessions.reduce((sum, s) => sum + Number(s.uploadRate || 0), 0);
+    setOnlineUsers(sessions.map((s) => ({
+      name: s.fullName && s.fullName !== '-' ? s.fullName : s.username,
+      ip: s.framedIp,
+      status: s.status || 'active',
+      time: s.sessionTime || '-',
+      plan: s.planName || '-',
+      downloadRate: Number(s.downloadRate || 0),
+      uploadRate: Number(s.uploadRate || 0)
+    })));
+    setNetworkTotals({ download, upload });
+    setTrafficData(prev => {
+      const next = [...prev, {
+        time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+        download: Number(download.toFixed(2)),
+        upload: Number(upload.toFixed(2))
+      }];
+      return next.slice(-24);
+    });
+  }, []);
 
   useEffect(() => {
-    base44.entities.Client.list('-created_date', 100).then(setClients).catch(() => {});
-    base44.entities.Prospect.list('-created_date', 100).then(setProspects).catch(() => {});
-    base44.entities.Plan.list().then(setPlans).catch(() => {});
-    base44.entities.Voucher.list('-created_date', 50).then(setVouchers).catch(() => {});
-    base44.entities.AuditLog.list('-created_date', 10).then(setLogs).catch(() => {});
-    base44.entities.Setting.filter({ category: 'mikrotik_device' }).then(res => {
+    spedynet.entities.Client.list('-created_date', 100).then(setClients).catch(() => {});
+    spedynet.entities.Prospect.list('-created_date', 100).then(setProspects).catch(() => {});
+    spedynet.entities.Plan.list().then(setPlans).catch(() => {});
+    spedynet.entities.Voucher.list('-created_date', 50).then(setVouchers).catch(() => {});
+    spedynet.entities.AuditLog.list('-created_date', 10).then(setLogs).catch(() => {});
+    loadRadiusData();
+    const interval = setInterval(loadRadiusData, 15000);
+    spedynet.entities.Setting.filter({ category: 'mikrotik_device' }).then(res => {
       if (res.length > 0) setPrimaryMikrotik(JSON.parse(res[0].value));
     }).catch(() => {});
-  }, []);
+    return () => clearInterval(interval);
+  }, [loadRadiusData]);
 
   const activeClients = clients.filter(c => c.status === 'active').length;
   const trialClients = clients.filter(c => c.status === 'trial').length;
@@ -50,14 +79,22 @@ export default function Dashboard() {
   })).filter(p => p.value > 0);
 
   const actionIcons = { success: CheckCircle, error: AlertCircle, warning: AlertCircle, info: Activity };
+  const onlineTotalPages = Math.max(1, Math.ceil(onlineUsers.length / onlinePageSize));
+  const visibleOnlineUsers = onlineUsers.slice((onlinePage - 1) * onlinePageSize, onlinePage * onlinePageSize);
+  const formatLogDate = (value) => {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? '--' : format(date, 'dd/MM HH:mm', { locale: ptBR });
+  };
 
   return (
     <div className="space-y-6">
       {/* Stats Row */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
         <StatCard title="Clientes Ativos" value={activeClients} subtitle={`${trialClients} em trial`} icon={Users} color="primary" trend="up" trendValue="+5%" onClick={() => navigate('/clients')} />
         <StatCard title="Prospectos" value={newProspects} subtitle="Novos este mês" icon={UserSearch} color="info" trend="up" trendValue="+12%" onClick={() => navigate('/prospects')} />
-        <StatCard title="Online Agora" value={onlineUsers.length} subtitle="2 em trial" icon={Wifi} color="success" onClick={() => navigate('/radius')} />
+        <StatCard title="Online Agora" value={onlineUsers.length} subtitle="Coleta MikroTik/Radius" icon={Wifi} color="success" onClick={() => navigate('/radius')} />
+        <StatCard title="Download" value={`${networkTotals.download.toFixed(2)}M`} subtitle="Taxa atual" icon={TrendingDown} color="primary" onClick={() => navigate('/radius')} />
+        <StatCard title="Upload" value={`${networkTotals.upload.toFixed(2)}M`} subtitle="Taxa atual" icon={TrendingUp} color="success" onClick={() => navigate('/radius')} />
         <StatCard title="Vouchers" value={availableVouchers} subtitle="Disponíveis" icon={Ticket} color="warning" onClick={() => navigate('/vouchers')} />
       </div>
 
@@ -93,7 +130,7 @@ export default function Dashboard() {
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(220 18% 18%)" />
               <XAxis dataKey="time" tick={{ fontSize: 10, fill: 'hsl(215 20% 55%)' }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fontSize: 10, fill: 'hsl(215 20% 55%)' }} axisLine={false} tickLine={false} />
-              <Tooltip contentStyle={{ background: 'hsl(220 24% 11%)', border: '1px solid hsl(220 18% 18%)', borderRadius: '8px', fontSize: '12px' }} />
+              <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '8px', fontSize: '12px', color: 'hsl(var(--foreground))' }} />
               <Area type="monotone" dataKey="download" stroke="hsl(187 100% 50%)" strokeWidth={2} fill="url(#dl)" />
               <Area type="monotone" dataKey="upload" stroke="hsl(142 71% 45%)" strokeWidth={2} fill="url(#ul)" />
             </AreaChart>
@@ -111,7 +148,7 @@ export default function Dashboard() {
                   <Pie data={planDist} cx="50%" cy="50%" innerRadius={35} outerRadius={55} dataKey="value" paddingAngle={3}>
                     {planDist.map((entry, index) => <Cell key={index} fill={entry.color} />)}
                   </Pie>
-                  <Tooltip contentStyle={{ background: 'hsl(220 24% 11%)', border: '1px solid hsl(220 18% 18%)', borderRadius: '8px', fontSize: '12px' }} />
+                  <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '8px', fontSize: '12px', color: 'hsl(var(--foreground))' }} />
                 </PieChart>
               </ResponsiveContainer>
               <div className="space-y-2 mt-3">
@@ -141,9 +178,6 @@ export default function Dashboard() {
       {/* Financial Summary Row */}
       <FinancialSummary clients={clients} plans={plans} />
 
-      {/* Heatmap full width */}
-      <HotspotHeatmap clients={clients} prospects={prospects} />
-
       {/* Online Users + Recent Logs */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Online Users */}
@@ -156,23 +190,34 @@ export default function Dashboard() {
             </div>
           </div>
           {onlineUsers.length > 0 ? (
+            <>
             <div className="space-y-2">
-              {onlineUsers.map((u, i) => (
+              {visibleOnlineUsers.map((u, i) => (
                 <div key={i} className="flex items-center justify-between p-2.5 rounded-lg bg-secondary/50 hover:bg-secondary transition-colors">
                   <div className="flex items-center gap-3 min-w-0">
                     <div className={`w-2 h-2 rounded-full flex-shrink-0 ${u.status === 'trial' ? 'bg-warning animate-pulse' : 'bg-success animate-pulse'}`} />
                     <div className="min-w-0">
                       <p className="text-xs font-medium text-foreground truncate">{u.name}</p>
-                      <p className="text-[10px] font-mono text-muted-foreground">{u.ip}</p>
+                      <p className="text-[10px] font-mono text-muted-foreground">{u.ip} · {u.plan}</p>
                     </div>
                   </div>
                   <div className="text-right flex-shrink-0">
                     <StatusBadge status={u.status} />
-                    <p className="text-[10px] text-muted-foreground mt-0.5">{u.time}</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">{u.time} · ↓{u.downloadRate} ↑{u.uploadRate}M</p>
                   </div>
                 </div>
               ))}
             </div>
+            {onlineUsers.length > onlinePageSize && (
+              <div className="flex items-center justify-between pt-3 mt-3 border-t border-border text-xs text-muted-foreground">
+                <span>Página {onlinePage} de {onlineTotalPages}</span>
+                <div className="flex gap-2">
+                  <button className="px-2 py-1 rounded border border-border disabled:opacity-40" disabled={onlinePage <= 1} onClick={() => setOnlinePage(p => Math.max(1, p - 1))}>Anterior</button>
+                  <button className="px-2 py-1 rounded border border-border disabled:opacity-40" disabled={onlinePage >= onlineTotalPages} onClick={() => setOnlinePage(p => Math.min(onlineTotalPages, p + 1))}>Próxima</button>
+                </div>
+              </div>
+            )}
+            </>
           ) : (
             <div className="flex flex-col items-center justify-center h-32 text-muted-foreground">
               <Wifi className="w-8 h-8 mb-2 opacity-30" />
@@ -194,7 +239,7 @@ export default function Dashboard() {
                     <Icon className={`w-3.5 h-3.5 mt-0.5 flex-shrink-0 ${colorMap[log.status]}`} />
                     <div className="min-w-0 flex-1">
                       <p className="text-xs text-foreground">{log.message}</p>
-                      <p className="text-[10px] text-muted-foreground">{log.entity_type} · {format(new Date(log.created_date), 'dd/MM HH:mm', { locale: ptBR })}</p>
+                      <p className="text-[10px] text-muted-foreground">{log.entity_type} · {formatLogDate(log.created_date)}</p>
                     </div>
                     <StatusBadge status={log.status} />
                   </div>

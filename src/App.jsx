@@ -1,11 +1,12 @@
 import { Toaster } from "@/components/ui/toaster"
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
-import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Route, Routes, Navigate, useLocation } from 'react-router-dom';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider } from '@/lib/AuthContext';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import AppLayout from '@/components/layout/AppLayout';
+import ErrorBoundary from '@/components/ErrorBoundary';
 
 // Pages
 import Dashboard from '@/pages/Dashboard';
@@ -60,23 +61,34 @@ const AuthenticatedApp = () => {
   );
 };
 
+const AppRoutes = () => {
+  const location = useLocation();
+
+  return (
+    <ErrorBoundary key={location.pathname}>
+      <Routes>
+        {/* Rotas públicas de autenticação */}
+        <Route path="/login" element={<Login />} />
+        {/* Captive Portal e Hotspot Login — standalone */}
+        <Route path="/hotspot-login" element={<HotspotLogin />} />
+        <Route path="/captive-portal" element={<CaptivePortal />} />
+        <Route path="/captive-plans" element={<CaptivePortal />} />
+        {/* Portal do Cliente */}
+        <Route path="/portal/login" element={<ClientPortalLogin />} />
+        <Route path="/portal" element={<ClientPortal />} />
+        {/* Rotas do admin — com autenticação */}
+        <Route path="/*" element={<AuthenticatedApp />} />
+      </Routes>
+    </ErrorBoundary>
+  );
+};
+
 function App() {
   return (
     <AuthProvider>
       <QueryClientProvider client={queryClientInstance}>
         <Router>
-          <Routes>
-            {/* Rotas públicas de autenticação */}
-            <Route path="/login" element={<Login />} />
-            {/* Captive Portal e Hotspot Login — standalone */}
-            <Route path="/hotspot-login" element={<HotspotLogin />} />
-            <Route path="/captive-portal" element={<CaptivePortal />} />
-            {/* Portal do Cliente */}
-            <Route path="/portal/login" element={<ClientPortalLogin />} />
-            <Route path="/portal" element={<ClientPortal />} />
-            {/* Rotas do admin — com autenticação */}
-            <Route path="/*" element={<AuthenticatedApp />} />
-          </Routes>
+          <AppRoutes />
         </Router>
         <Toaster />
       </QueryClientProvider>

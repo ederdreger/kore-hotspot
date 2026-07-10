@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { base44 } from '@/api/base44Client';
+import { spedynet } from '@/api/spedynetClient';
 import { useAuth } from '@/lib/AuthContext';
 import APHeatmapGrid from '@/components/ap/APHeatmapGrid';
 import APChannelAnalyzer from '@/components/ap/APChannelAnalyzer';
@@ -31,7 +31,7 @@ export default function APMonitor() {
     setLoading(true);
     setPollError(null);
     try {
-      const response = await base44.functions.invoke('mikrotikPoller', { aps, token: getToken() });
+      const response = await spedynet.functions.invoke('mikrotikPoller', { aps, token: getToken() });
       const polled = response.data?.aps;
       if (polled && polled.length > 0) {
         setAPs(polled);
@@ -76,7 +76,7 @@ export default function APMonitor() {
         status: 'ok',
       };
       setAPs(prev => [...prev, newAP]);
-      base44.entities.AuditLog.create({ action: 'ap_registered', entity_type: 'mikrotik', entity_name: formData.name, status: 'success', message: `AP cadastrado: ${formData.name} — ${formData.street}${formData.number ? ', ' + formData.number : ''}, ${formData.neighborhood}` }).catch(() => {});
+      spedynet.entities.AuditLog.create({ action: 'ap_registered', entity_type: 'mikrotik', entity_name: formData.name, status: 'success', message: `AP cadastrado: ${formData.name} — ${formData.street}${formData.number ? ', ' + formData.number : ''}, ${formData.neighborhood}` }).catch(() => {});
     }
     setShowRegister(false);
   };
@@ -84,7 +84,7 @@ export default function APMonitor() {
   const handleDelete = (ap) => {
     setAPs(prev => prev.filter(a => a.id !== ap.id));
     if (selectedAP?.id === ap.id) setSelectedAP(null);
-    base44.entities.AuditLog.create({ action: 'ap_removed', entity_type: 'mikrotik', entity_name: ap.name, status: 'info', message: `AP removido: ${ap.name}` }).catch(() => {});
+    spedynet.entities.AuditLog.create({ action: 'ap_removed', entity_type: 'mikrotik', entity_name: ap.name, status: 'info', message: `AP removido: ${ap.name}` }).catch(() => {});
   };
 
   const handleEdit = (ap) => {
@@ -100,14 +100,14 @@ export default function APMonitor() {
     }));
     const entry = { time: new Date(), action: 'balance', detail: `${suggestion.clientsToMove} clientes: ${apFrom.name} → ${apTo.name}` };
     setActionLog(prev => [entry, ...prev].slice(0, 15));
-    await base44.entities.AuditLog.create({ action: 'ap_load_balance', entity_type: 'mikrotik', entity_name: apFrom.name, status: 'success', message: `Balanceamento: ${apFrom.name} → ${apTo.name} (${suggestion.clientsToMove} clientes)` }).catch(() => {});
+    await spedynet.entities.AuditLog.create({ action: 'ap_load_balance', entity_type: 'mikrotik', entity_name: apFrom.name, status: 'success', message: `Balanceamento: ${apFrom.name} → ${apTo.name} (${suggestion.clientsToMove} clientes)` }).catch(() => {});
   };
 
   const handleChangeChannel = async (ap, newChannel) => {
     setAPs(prev => prev.map(a => a.id === ap.id ? { ...a, channel: newChannel, status: 'ok' } : a));
     const entry = { time: new Date(), action: 'channel', detail: `${ap.name}: CH${ap.channel} → CH${newChannel}` };
     setActionLog(prev => [entry, ...prev].slice(0, 15));
-    await base44.entities.AuditLog.create({ action: 'ap_channel_change', entity_type: 'mikrotik', entity_name: ap.name, status: 'success', message: `Canal alterado: ${ap.name} CH${ap.channel} → CH${newChannel}` }).catch(() => {});
+    await spedynet.entities.AuditLog.create({ action: 'ap_channel_change', entity_type: 'mikrotik', entity_name: ap.name, status: 'success', message: `Canal alterado: ${ap.name} CH${ap.channel} → CH${newChannel}` }).catch(() => {});
   };
 
   const overloaded  = aps.filter(a => a.status === 'overloaded');

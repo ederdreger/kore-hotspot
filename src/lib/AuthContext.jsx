@@ -1,5 +1,5 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
-import { base44 } from '@/api/base44Client';
+import { spedynet } from '@/api/spedynetClient';
 
 const AuthContext = createContext();
 const TOKEN_KEY = 'kore_admin_session';
@@ -29,7 +29,7 @@ export const AuthProvider = ({ children }) => {
         setUser(null);
         return;
       }
-      const res = await base44.functions.invoke('adminAuth', { action: 'validate', token });
+      const res = await spedynet.functions.invoke('adminAuth', { action: 'validate', token });
       setUser(res.data.user);
       setIsAuthenticated(true);
     } catch (error) {
@@ -44,7 +44,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   const login = async (email, password) => {
-    const res = await base44.functions.invoke('adminAuth', { action: 'login', email, password });
+    const res = await spedynet.functions.invoke('adminAuth', { action: 'login', email, password });
     localStorage.setItem(TOKEN_KEY, res.data.token);
     setUser(res.data.user);
     setIsAuthenticated(true);
@@ -63,7 +63,7 @@ export const AuthProvider = ({ children }) => {
     localStorage.removeItem(TOKEN_KEY);
     setUser(null);
     setIsAuthenticated(false);
-    if (token) await base44.functions.invoke('adminAuth', { action: 'logout', token }).catch(() => null);
+    if (token) await spedynet.functions.invoke('adminAuth', { action: 'logout', token }).catch(() => null);
     if (shouldRedirect) window.location.href = '/login';
   };
 

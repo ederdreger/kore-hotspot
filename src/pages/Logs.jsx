@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { base44 } from '@/api/base44Client';
+import { spedynet } from '@/api/spedynetClient';
 import StatusBadge from '@/components/ui/StatusBadge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -25,7 +25,7 @@ export default function Logs() {
 
   const load = async () => {
     setLoading(true);
-    const data = await base44.entities.AuditLog.list('-created_date', 500);
+    const data = await spedynet.entities.AuditLog.list('-created_date', 500);
     setLogs(data);
     setLoading(false);
   };
@@ -42,7 +42,7 @@ export default function Logs() {
 
   const handleClearAll = async () => {
     if (!confirm('Limpar todos os logs? Esta ação não pode ser desfeita.')) return;
-    await Promise.all(logs.map(l => base44.entities.AuditLog.delete(l.id)));
+    await Promise.all(logs.map(l => spedynet.entities.AuditLog.delete(l.id)));
     toast.success('Logs limpos');
     load();
   };

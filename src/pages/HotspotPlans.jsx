@@ -1,10 +1,9 @@
 import { useState, useEffect } from 'react';
-import { base44 } from '@/api/base44Client';
+import { spedynet } from '@/api/spedynetClient';
 import StatusBadge from '@/components/ui/StatusBadge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
@@ -24,17 +23,22 @@ const emptyForm = {
   quota_gb: '0',
   validity_days: '30',
   price: '0',
+  plan_type: 'paid',
   mikrotik_profile_name: '',
   radius_group: '',
   priority: '8',
   is_trial: false,
-  trial_duration_minutes: '30',
+  trial_duration_hours: '1',
   status: 'active',
   color: '#00E5FF',
 };
 
 function PlanCard({ plan, clients, onEdit, onDelete }) {
   const clientCount = clients.filter(c => c.plan_id === plan.id).length;
+  const planType = plan.plan_type || (plan.is_trial ? 'trial' : Number(plan.price || 0) > 0 ? 'paid' : 'free');
+  const isPaid = planType === 'paid';
+  const isFree = planType === 'free';
+  const isTrial = planType === 'trial';
 
   return (
     <div className="bg-card border border-border rounded-xl overflow-hidden hover:border-primary/40 transition-all group relative">
@@ -47,8 +51,14 @@ function PlanCard({ plan, clients, onEdit, onDelete }) {
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1 flex-wrap">
               <h3 className="font-semibold text-foreground">{plan.name}</h3>
-              {plan.is_trial && (
+              {isTrial && (
                 <span className="px-1.5 py-0.5 text-[9px] rounded bg-warning/10 text-warning border border-warning/20 font-bold tracking-wide">TRIAL</span>
+              )}
+              {isPaid && (
+                <span className="px-1.5 py-0.5 text-[9px] rounded bg-success/10 text-success border border-success/20 font-bold tracking-wide">PAGO</span>
+              )}
+              {isFree && (
+                <span className="px-1.5 py-0.5 text-[9px] rounded bg-info/10 text-info border border-info/20 font-bold tracking-wide">GRATUITO</span>
               )}
             </div>
             <p className="text-xs text-muted-foreground truncate">{plan.description || 'Sem descrição'}</p>
@@ -92,19 +102,17 @@ function PlanCard({ plan, clients, onEdit, onDelete }) {
             <Users className="w-3 h-3" />
             {clientCount} cliente{clientCount !== 1 ? 's' : ''}
           </span>
-          {plan.price > 0 && (
-            <span className="flex items-center gap-1 text-success font-medium">
-              <DollarSign className="w-3 h-3" />
-              R$ {Number(plan.price).toFixed(2)}
-            </span>
-          )}
+          <span className={`flex items-center gap-1 font-medium ${isPaid ? 'text-success' : 'text-info'}`}>
+            <DollarSign className="w-3 h-3" />
+            {isPaid ? `R$ ${Number(plan.price).toFixed(2)}` : 'Gratis'}
+          </span>
         </div>
 
         {/* Trial info */}
-        {plan.is_trial && (
+        {isTrial && (
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-warning/5 border border-warning/20 mb-3 text-xs text-warning">
             <Clock className="w-3 h-3 flex-shrink-0" />
-            Trial: {plan.trial_duration_minutes} minutos de acesso gratuito
+            Trial: {Number(plan.trial_duration_hours || (Number(plan.trial_duration_minutes || 60) / 60)).toFixed(1).replace('.0', '')} hora(s) de acesso gratuito
           </div>
         )}
 
@@ -147,13 +155,12 @@ export default function HotspotPlans() {
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState(null);
-  const [filter, setFilter] = useState('all'); // all | active | trial
 
   const load = async () => {
     setLoading(true);
     const [p, c] = await Promise.all([
-      base44.entities.Plan.list('-created_date'),
-      base44.entities.Client.list(),
+      spedynet.entities.Plan.list('-created_date'),
+      spedynet.entities.Client.list(),
     ]);
     setPlans(p);
     setClients(c);
@@ -168,7 +175,9 @@ export default function HotspotPlans() {
     setForm({
       ...emptyForm,
       ...Object.fromEntries(Object.keys(emptyForm).map(k => [k, p[k] !== undefined ? String(p[k]) : emptyForm[k]])),
-      is_trial: p.is_trial || false,
+      plan_type: p.plan_type || (p.is_trial ? 'trial' : Number(p.price || 0) > 0 ? 'paid' : 'free'),
+      is_trial: (p.plan_type || '') === 'trial' || p.is_trial || false,
+      trial_duration_hours: String(p.trial_duration_hours || ((Number(p.trial_duration_minutes) || 60) / 60)),
     });
     setShowDialog(true);
   };
@@ -186,14 +195,17 @@ export default function HotspotPlans() {
       quota_gb: Number(form.quota_gb) || 0,
       validity_days: Number(form.validity_days) || 30,
       price: Number(form.price) || 0,
+      plan_type: form.plan_type || 'paid',
+      is_trial: form.plan_type === 'trial',
       priority: Number(form.priority) || 8,
-      trial_duration_minutes: Number(form.trial_duration_minutes) || 30,
+      trial_duration_hours: Number(form.trial_duration_hours) || 1,
+      trial_duration_minutes: Math.max(1, Math.round((Number(form.trial_duration_hours) || 1) * 60)),
     };
 
     if (editing) {
-      await base44.entities.Plan.update(editing.id, data);
+      await spedynet.entities.Plan.update(editing.id, data);
     } else {
-      await base44.entities.Plan.create(data);
+      await spedynet.entities.Plan.create(data);
     }
 
     setSaveMsg({ type: 'success', text: editing ? 'Plano atualizado com sucesso!' : 'Plano criado com sucesso!' });
@@ -205,21 +217,15 @@ export default function HotspotPlans() {
 
   const handleDelete = async (p) => {
     if (!confirm(`Remover plano "${p.name}"? Clientes vinculados não serão afetados.`)) return;
-    await base44.entities.Plan.delete(p.id);
+    await spedynet.entities.Plan.delete(p.id);
     setSaveMsg({ type: 'success', text: 'Plano removido.' });
     setTimeout(() => setSaveMsg(null), 3000);
     load();
   };
 
-  const filtered = plans.filter(p => {
-    if (filter === 'active') return p.status === 'active' && !p.is_trial;
-    if (filter === 'trial') return p.is_trial;
-    return true;
-  });
-
   const activePlans = plans.filter(p => p.status === 'active').length;
-  const trialPlans = plans.filter(p => p.is_trial).length;
   const totalClients = clients.length;
+  const avgDownload = plans.length ? Math.round(plans.reduce((sum, p) => sum + Number(p.download_mbps || p.speed_download || 0), 0) / plans.length) : 0;
 
   return (
     <div className="space-y-5">
@@ -228,8 +234,8 @@ export default function HotspotPlans() {
         {[
           { label: 'Total de Planos', value: plans.length, icon: Zap, color: 'text-primary' },
           { label: 'Planos Ativos', value: activePlans, icon: CheckCircle, color: 'text-success' },
-          { label: 'Planos Trial', value: trialPlans, icon: Clock, color: 'text-warning' },
           { label: 'Clientes Vinculados', value: totalClients, icon: Users, color: 'text-info' },
+          { label: 'Download Medio', value: `${avgDownload}M`, icon: ArrowDown, color: 'text-warning' },
         ].map((s, i) => (
           <div key={i} className="bg-card border border-border rounded-xl p-4 flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg bg-secondary flex items-center justify-center flex-shrink-0">
@@ -245,17 +251,7 @@ export default function HotspotPlans() {
 
       {/* Toolbar */}
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex gap-1 bg-secondary p-1 rounded-lg">
-          {[['all', 'Todos'], ['active', 'Ativos'], ['trial', 'Trial']].map(([v, l]) => (
-            <button
-              key={v}
-              onClick={() => setFilter(v)}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${filter === v ? 'bg-card text-foreground shadow' : 'text-muted-foreground hover:text-foreground'}`}
-            >
-              {l}
-            </button>
-          ))}
-        </div>
+        <div className="text-sm text-muted-foreground">Cadastre o tipo dentro do proprio plano.</div>
         <div className="flex gap-2">
           <Button onClick={load} variant="outline" size="icon" className="border-border h-9 w-9">
             <RefreshCw className="w-4 h-4" />
@@ -279,22 +275,20 @@ export default function HotspotPlans() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {Array(6).fill(0).map((_, i) => <div key={i} className="h-64 bg-card border border-border rounded-xl animate-pulse" />)}
         </div>
-      ) : filtered.length === 0 ? (
+      ) : plans.length === 0 ? (
         <div className="bg-card border border-dashed border-border rounded-xl flex flex-col items-center justify-center py-20 text-muted-foreground">
           <Zap className="w-12 h-12 mb-3 opacity-20" />
           <p className="font-medium text-foreground">Nenhum plano encontrado</p>
           <p className="text-xs mt-1">
-            {filter !== 'all' ? 'Altere o filtro ou crie um novo plano' : 'Crie seu primeiro plano de velocidade'}
+            Crie seu primeiro plano de velocidade
           </p>
-          {filter === 'all' && (
-            <Button onClick={openCreate} className="mt-4 bg-primary text-primary-foreground gap-2" size="sm">
-              <Plus className="w-4 h-4" /> Criar Plano
-            </Button>
-          )}
+          <Button onClick={openCreate} className="mt-4 bg-primary text-primary-foreground gap-2" size="sm">
+            <Plus className="w-4 h-4" /> Criar Plano
+          </Button>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filtered.map(p => (
+          {plans.map(p => (
             <PlanCard key={p.id} plan={p} clients={clients} onEdit={openEdit} onDelete={handleDelete} />
           ))}
         </div>
@@ -362,6 +356,17 @@ export default function HotspotPlans() {
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">Limites & Preço</p>
               <div className="grid grid-cols-2 gap-3">
                 <div>
+                  <Label className="text-xs text-muted-foreground mb-1.5 block">Tipo do Plano</Label>
+                  <Select value={form.plan_type} onValueChange={v => setForm({ ...form, plan_type: v, is_trial: v === 'trial' })}>
+                    <SelectTrigger className="h-9 bg-input border-border text-sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="paid">Pago</SelectItem>
+                      <SelectItem value="free">Gratis</SelectItem>
+                      <SelectItem value="trial">Trial</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
                   <Label className="text-xs text-muted-foreground mb-1.5 block">Quota (GB, 0 = ilimitado)</Label>
                   <Input type="number" value={form.quota_gb} onChange={e => setForm({ ...form, quota_gb: e.target.value })} className="bg-input border-border h-9 text-sm font-mono" />
                 </div>
@@ -426,12 +431,11 @@ export default function HotspotPlans() {
                   <p className="text-sm font-medium text-foreground">Plano Trial / Gratuito</p>
                   <p className="text-xs text-muted-foreground">Liberação temporária sem cadastro de pagamento</p>
                 </div>
-                <Switch checked={form.is_trial} onCheckedChange={v => setForm({ ...form, is_trial: v })} />
               </div>
-              {form.is_trial && (
+              {form.plan_type === 'trial' && (
                 <div>
-                  <Label className="text-xs text-muted-foreground mb-1.5 block">Duração Trial (minutos)</Label>
-                  <Input type="number" min="1" value={form.trial_duration_minutes} onChange={e => setForm({ ...form, trial_duration_minutes: e.target.value })} className="bg-input border-border h-9 text-sm font-mono w-40" />
+                  <Label className="text-xs text-muted-foreground mb-1.5 block">Duracao Trial (horas)</Label>
+                  <Input type="number" min="0.25" step="0.25" value={form.trial_duration_hours} onChange={e => setForm({ ...form, trial_duration_hours: e.target.value })} className="bg-input border-border h-9 text-sm font-mono w-40" />
                 </div>
               )}
             </div>

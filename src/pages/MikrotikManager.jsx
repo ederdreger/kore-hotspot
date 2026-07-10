@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { base44 } from '@/api/base44Client';
+import { spedynet } from '@/api/spedynetClient';
 import { Shield, Server, Activity, Thermometer, Cpu, Users, Clock, AlertTriangle, RefreshCw, Zap, Wifi, CheckCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
@@ -21,7 +21,7 @@ export default function MikrotikManager() {
 
   const loadMikrotiks = async () => {
     try {
-      const mtiksRaw = await base44.entities.Setting.filter({ category: 'mikrotik_device' });
+      const mtiksRaw = await spedynet.entities.Setting.filter({ category: 'mikrotik_device' });
       const mtiks = mtiksRaw.map(s => {
         try { return { id: s.id, ...JSON.parse(s.value) }; } catch { return null; }
       }).filter(Boolean);
@@ -38,11 +38,11 @@ export default function MikrotikManager() {
   };
 
   const checkRadius = async () => {
-    const settings = await base44.entities.Setting.filter({ category: 'radius' }).catch(() => []);
-    if (settings.length > 0) {
-      setRadiusStatus('online'); // Se configurado no sistema, marcamos como online local
-    } else {
-      setRadiusStatus('offline');
+    try {
+      const response = await spedynet.functions.invoke('radiusStatus', { token: getToken() });
+      setRadiusStatus(response.data);
+    } catch {
+      setRadiusStatus({ status: 'offline', label: 'Indisponível', detail: 'Não foi possível consultar a VPS' });
     }
   };
 
@@ -59,13 +59,14 @@ export default function MikrotikManager() {
     if (!mtik) return;
 
     try {
-      const response = await base44.functions.invoke('mikrotikStatus', {
+      const response = await spedynet.functions.invoke('mikrotikStatus', {
         host: mtik.host,
         port: mtik.port,
         user: mtik.user || 'admin',
         password: mtik.password || '',
         snmp_port: mtik.snmp_port || '161',
         snmp_community: mtik.snmp_community || 'public',
+        auth_method: mtik.ssh_auth_method || 'key',
         token: getToken(),
       });
       setMetrics(response.data);
@@ -81,11 +82,15 @@ export default function MikrotikManager() {
   if (loading) return <div className="p-6">Carregando...</div>;
 
   const activeMtik = mikrotiks.find(m => m.id === selectedId);
-  const isOnline = metrics && metrics.snmp_connected === true && !metrics.error;
+  const isOnline = metrics && !metrics.error && (metrics.snmp_connected === true || metrics.connected === true || metrics.online === true);
   const cpuPercent = isOnline ? (metrics?.cpu_load ?? 0) : 0;
-  const memUsed = isOnline && metrics?.total_memory && metrics?.free_memory
-    ? Math.round(((metrics.total_memory - metrics.free_memory) / metrics.total_memory) * 100)
+  const memUsed = isOnline
+    ? Number(metrics?.memory_used_percent ?? (metrics?.total_memory && metrics?.free_memory ? Math.round(((metrics.total_memory - metrics.free_memory) / metrics.total_memory) * 100) : 0))
     : 0;
+  const memFreeMb = isOnline && metrics?.free_memory ? (Number(metrics.free_memory) / 1024 / 1024).toFixed(1) : null;
+  const radiusOnline = radiusStatus?.status === 'online';
+  const radiusLabel = radiusStatus?.label || (radiusOnline ? 'Operante' : 'Não Configurado');
+  const radiusDetail = radiusStatus?.detail || 'Serviço de autenticação local';
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-6">
@@ -161,8 +166,8 @@ export default function MikrotikManager() {
                         <Server className="w-4 h-4" /> <span className="text-sm font-medium">Memória RAM</span>
                       </div>
                       <div className="flex items-end gap-2">
-                        <span className={`text-3xl font-bold ${memUsed > 85 ? 'text-destructive' : 'text-foreground'}`}>{memUsed}%</span>
-                        <span className="text-xs text-muted-foreground mb-1 block">uso</span>
+                        <span className={`text-3xl font-bold ${memUsed > 85 ? 'text-destructive' : 'text-foreground'}`}>{memFreeMb || memUsed}</span>
+                        <span className="text-xs text-muted-foreground mb-1 block">{memFreeMb ? 'MB livre' : '% uso'}</span>
                       </div>
                       <div className="w-full bg-secondary h-2 rounded-full mt-3 overflow-hidden">
                         <div className={`h-full ${memUsed > 85 ? 'bg-destructive' : 'bg-primary'}`} style={{ width: `${memUsed}%` }} />
@@ -202,12 +207,12 @@ export default function MikrotikManager() {
                 <Shield className="w-4 h-4 text-info" /> Status FreeRADIUS
               </h3>
               <div className="flex items-center gap-4">
-                <div className={`w-12 h-12 rounded-full flex items-center justify-center ${radiusStatus === 'online' ? 'bg-success/20 text-success' : 'bg-destructive/20 text-destructive'}`}>
-                  {radiusStatus === 'online' ? <CheckCircle className="w-6 h-6" /> : <AlertTriangle className="w-6 h-6" />}
+                <div className={`w-12 h-12 rounded-full flex items-center justify-center ${radiusOnline ? 'bg-success/20 text-success' : 'bg-destructive/20 text-destructive'}`}>
+                  {radiusOnline ? <CheckCircle className="w-6 h-6" /> : <AlertTriangle className="w-6 h-6" />}
                 </div>
                 <div>
-                  <p className="font-bold text-lg">{radiusStatus === 'online' ? 'Operante' : 'Não Configurado'}</p>
-                  <p className="text-xs text-muted-foreground">Serviço de autenticação local</p>
+                  <p className="font-bold text-lg">{radiusLabel}</p>
+                  <p className="text-xs text-muted-foreground">{radiusDetail}</p>
                 </div>
               </div>
             </div>

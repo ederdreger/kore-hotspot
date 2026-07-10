@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { base44 } from '@/api/base44Client';
+import { spedynet } from '@/api/spedynetClient';
 import StatusBadge from '@/components/ui/StatusBadge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -29,7 +29,7 @@ export default function Campaigns() {
 
   const load = async () => {
     setLoading(true);
-    const data = await base44.entities.Campaign.list('-created_date', 100);
+    const data = await spedynet.entities.Campaign.list('-created_date', 100);
     setCampaigns(data);
     setLoading(false);
   };
@@ -47,10 +47,10 @@ export default function Campaigns() {
     setSaving(true);
     const data = { ...form, offer_discount_percent: Number(form.offer_discount_percent) || 0 };
     if (editing) {
-      await base44.entities.Campaign.update(editing.id, data);
+      await spedynet.entities.Campaign.update(editing.id, data);
       toast.success('Campanha atualizada!');
     } else {
-      await base44.entities.Campaign.create(data);
+      await spedynet.entities.Campaign.create(data);
       toast.success('Campanha criada!');
     }
     setShowDialog(false); load(); setSaving(false);
@@ -58,19 +58,19 @@ export default function Campaigns() {
 
   const handleDelete = async (c) => {
     if (!confirm(`Remover campanha ${c.name}?`)) return;
-    await base44.entities.Campaign.delete(c.id);
+    await spedynet.entities.Campaign.delete(c.id);
     toast.success('Removida'); load();
   };
 
   const handleLaunch = async (c) => {
-    await base44.entities.Campaign.update(c.id, { status: 'running', sent_count: Math.floor(Math.random() * 50) + 10 });
-    await base44.entities.AuditLog.create({ action: 'launch_campaign', entity_type: 'campaign', entity_id: c.id, entity_name: c.name, status: 'success', message: `Campanha "${c.name}" iniciada` });
+    await spedynet.entities.Campaign.update(c.id, { status: 'running', sent_count: Math.floor(Math.random() * 50) + 10 });
+    await spedynet.entities.AuditLog.create({ action: 'launch_campaign', entity_type: 'campaign', entity_id: c.id, entity_name: c.name, status: 'success', message: `Campanha "${c.name}" iniciada` });
     toast.success(`Campanha "${c.name}" iniciada!`);
     load();
   };
 
   const handlePause = async (c) => {
-    await base44.entities.Campaign.update(c.id, { status: 'paused' });
+    await spedynet.entities.Campaign.update(c.id, { status: 'paused' });
     toast.success('Campanha pausada'); load();
   };
 
@@ -83,7 +83,7 @@ export default function Campaigns() {
           { label: 'Enviados', value: campaigns.reduce((a, c) => a + (c.sent_count || 0), 0), color: 'text-info' },
           { label: 'Conversões', value: campaigns.reduce((a, c) => a + (c.converted_count || 0), 0), color: 'text-success' },
         ].map((s, i) => (
-          <div key={i} className="bg-card border border-border rounded-xl p-4">
+          <div key={i} className={`kore-stat-card ${['kore-stat-primary', 'kore-stat-info', 'kore-stat-warning', 'kore-stat-success'][i] || 'kore-stat-primary'} bg-card border border-border rounded-xl p-4`}>
             <p className={`text-2xl font-bold font-mono ${s.color}`}>{s.value}</p>
             <p className="text-xs text-muted-foreground mt-1">{s.label}</p>
           </div>

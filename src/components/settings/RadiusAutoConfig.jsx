@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { base44 } from '@/api/base44Client';
+import { spedynet } from '@/api/spedynetClient';
 import { Button } from '@/components/ui/button';
 import { Shield, FileCode2, CheckCircle, RefreshCw, Server } from 'lucide-react';
 import { toast } from 'sonner';
@@ -17,7 +17,7 @@ export default function RadiusAutoConfig() {
 
   const loadConfig = async () => {
     setLoading(true);
-    const settings = await base44.entities.Setting.filter({ category: 'radius' }).catch(() => []);
+    const settings = await spedynet.entities.Setting.filter({ category: 'radius' }).catch(() => []);
     const map = {};
     settings.forEach(s => { map[s.key] = s.value; });
     
@@ -28,7 +28,7 @@ export default function RadiusAutoConfig() {
     }
 
     // Load MikroTiks
-    const mtiks = await base44.entities.Setting.filter({ category: 'mikrotik_device' }).catch(() => []);
+    const mtiks = await spedynet.entities.Setting.filter({ category: 'mikrotik_device' }).catch(() => []);
     const parsedMtiks = mtiks.map(s => {
       try { return { id: s.id, ...JSON.parse(s.value) }; } catch { return null; }
     }).filter(Boolean);
@@ -57,13 +57,13 @@ export default function RadiusAutoConfig() {
     };
 
     // Apaga configurações antigas de radius primeiro
-    const oldSettings = await base44.entities.Setting.filter({ category: 'radius' }).catch(() => []);
+    const oldSettings = await spedynet.entities.Setting.filter({ category: 'radius' }).catch(() => []);
     for (const s of oldSettings) {
-      await base44.entities.Setting.delete(s.id).catch(() => {});
+      await spedynet.entities.Setting.delete(s.id).catch(() => {});
     }
 
     const promises = Object.entries(newConfig).map(([key, value]) => {
-      return base44.entities.Setting.create({ 
+      return spedynet.entities.Setting.create({
         key, 
         value, 
         category: 'radius', 

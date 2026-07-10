@@ -17,7 +17,8 @@ export default function StatCard({ title, value, subtitle, icon: Icon, color = '
     <div 
       onClick={onClick}
       className={cn(
-        "bg-card border border-border rounded-xl p-5 transition-all duration-200",
+        "kore-stat-card bg-card border border-border rounded-xl p-5 transition-all duration-200",
+        `kore-stat-${color}`,
         onClick ? "cursor-pointer hover:border-primary/50 hover:shadow-md active:scale-[0.98]" : "hover:border-primary/30"
       )}
     >

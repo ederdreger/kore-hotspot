@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { base44 } from '@/api/base44Client';
+import { spedynet } from '@/api/spedynetClient';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -23,12 +23,17 @@ const defaultSettings = {
   ixc_sync_interval_minutes: '15',
   // Mercado Pago
   mp_access_token: '',
+  public_base_url: 'http://190.8.174.155:8081',
   // Hotspot / Trial
   trial_default_duration_minutes: '30',
   trial_max_duration_minutes: '120',
   captive_portal_title: 'Kore-HotSpot',
   captive_portal_subtitle: 'Conecte-se à internet',
   captive_portal_logo_url: '',
+  sidebar_logo_url: '',
+  captive_prospect_plan_id: '',
+  captive_vip_plan_id: '',
+  captive_redirect_url: 'http://neverssl.com',
   // SMTP
   smtp_host: '',
   smtp_port: '587',
@@ -65,7 +70,8 @@ const sections = [
   {
     id: 'mercadopago', label: 'Mercado Pago', icon: CreditCard, color: 'text-info',
     fields: [
-      { key: 'mp_access_token', label: 'Access Token (Produção ou Teste)', secret: true },
+      { key: 'mp_access_token', label: 'Access Token Mercado Pago', secret: true },
+      { key: 'public_base_url', label: 'URL Publica da API / Webhook' },
     ]
   },
   {
@@ -75,7 +81,11 @@ const sections = [
       { key: 'trial_max_duration_minutes', label: 'Duração Máxima Trial (min)' },
       { key: 'captive_portal_title', label: 'Título do Portal' },
       { key: 'captive_portal_subtitle', label: 'Subtítulo do Portal' },
-      { key: 'captive_portal_logo_url', label: 'URL do Logo' },
+      { key: 'captive_portal_logo_url', label: 'Logo do Captive', type: 'image' },
+      { key: 'sidebar_logo_url', label: 'Logo da Barra Lateral', type: 'image' },
+      { key: 'captive_prospect_plan_id', label: 'Plano para Clientes Prospeccao', type: 'plan' },
+      { key: 'captive_vip_plan_id', label: 'Plano para Clientes VIP', type: 'plan' },
+      { key: 'captive_redirect_url', label: 'Site para Redirecionar apos Login' },
     ]
   },
   {
@@ -99,6 +109,7 @@ export default function Settings() {
   const [saveMsg, setSaveMsg] = useState(null); // { type: 'success'|'error', text }
   const [showSecrets, setShowSecrets] = useState({});
   const [activeSection, setActiveSection] = useState('mikrotik');
+  const [plans, setPlans] = useState([]);
 
   const [ixcTestCpf, setIxcTestCpf] = useState('');
   const [ixcTestResult, setIxcTestResult] = useState(null);
@@ -157,8 +168,8 @@ conn %default
     rekeymargin=3m
     keyingtries=1
     authby=secret
-    ike=aes128-sha1-modp1024,aes256-sha1-modp1024,3des-sha1-modp1024!
-    esp=aes128-sha1,aes256-sha1,3des-sha1,aes128-sha1-modp1024,aes256-sha1-modp1024!
+    ike=aes256-sha256-modp2048,aes256-sha1-modp2048,aes128-sha1-modp2048,aes256-sha256-modp1024,aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024,3des-md5-modp1024!
+    esp=aes256-sha1-modp1024,aes192-sha1-modp1024,aes128-sha1-modp1024,aes256-sha1,aes192-sha1,aes128-sha1,3des-sha1-modp1024,3des-sha1!
     forceencaps=yes
 
 conn L2TP-PSK-NAT
@@ -234,12 +245,13 @@ echo "=== SERVIDOR L2TP/IPSEC CONFIGURADO COM SUCESSO ==="`;
   };
 
   useEffect(() => {
-    base44.entities.Setting.list().then(saved => {
+    spedynet.entities.Setting.list().then(saved => {
       const map = {};
       saved.forEach(s => { map[s.key] = s.value; });
       setSettings(prev => ({ ...prev, ...map }));
       setLoading(false);
     }).catch(() => setLoading(false));
+    spedynet.entities.Plan.filter({ status: 'active' }).then(setPlans).catch(() => setPlans([]));
   }, []);
 
   // Clear save message when switching section
@@ -253,7 +265,7 @@ echo "=== SERVIDOR L2TP/IPSEC CONFIGURADO COM SUCESSO ==="`;
   const handleSave = async () => {
     setSaving(true);
     setSaveMsg(null);
-    const existing = await base44.entities.Setting.list();
+    const existing = await spedynet.entities.Setting.list();
     const existingMap = {};
     existing.forEach(s => { existingMap[s.key] = s.id; });
 
@@ -263,14 +275,14 @@ echo "=== SERVIDOR L2TP/IPSEC CONFIGURADO COM SUCESSO ==="`;
     const promises = section.fields.map(field => {
       const value = settings[field.key] || '';
       if (existingMap[field.key]) {
-        return base44.entities.Setting.update(existingMap[field.key], { key: field.key, value, category: activeSection, label: field.label, is_secret: field.secret || false });
+        return spedynet.entities.Setting.update(existingMap[field.key], { key: field.key, value, category: activeSection, label: field.label, is_secret: field.secret || false });
       } else {
-        return base44.entities.Setting.create({ key: field.key, value, category: activeSection, label: field.label, is_secret: field.secret || false });
+        return spedynet.entities.Setting.create({ key: field.key, value, category: activeSection, label: field.label, is_secret: field.secret || false });
       }
     });
 
     await Promise.all(promises);
-    await base44.entities.AuditLog.create({ action: 'update_settings', entity_type: 'system', entity_name: activeSection, status: 'success', message: `Configurações de ${section.label} salvas` });
+    await spedynet.entities.AuditLog.create({ action: 'update_settings', entity_type: 'system', entity_name: activeSection, status: 'success', message: `Configurações de ${section.label} salvas` });
     showFeedback('success', `Configurações de ${section.label} salvas com sucesso!`);
     setSaving(false);
   };
@@ -278,7 +290,7 @@ echo "=== SERVIDOR L2TP/IPSEC CONFIGURADO COM SUCESSO ==="`;
   const handleTest = async () => {
     setTesting(true);
     setSaveMsg(null);
-    await base44.entities.AuditLog.create({ action: `test_${activeSection}`, entity_type: activeSection, entity_name: 'test', status: 'info', message: `Teste de conexão ${activeSection.toUpperCase()} iniciado` });
+    await spedynet.entities.AuditLog.create({ action: `test_${activeSection}`, entity_type: activeSection, entity_name: 'test', status: 'info', message: `Teste de conexão ${activeSection.toUpperCase()} iniciado` });
     setTimeout(() => {
       showFeedback('success', `Conexão ${activeSection.toUpperCase()} testada com sucesso!`);
       setTesting(false);
@@ -289,12 +301,66 @@ echo "=== SERVIDOR L2TP/IPSEC CONFIGURADO COM SUCESSO ==="`;
     setIxcTesting(true);
     setIxcTestResult(null);
     try {
-      const res = await base44.functions.invoke('ixcConsultaCliente', { cpf: ixcTestCpf });
-      setIxcTestResult(res.data);
+      const res = await spedynet.functions.invoke('ixcConsultaCliente', { cpf: ixcTestCpf });
+      const client = res.data?.client || {};
+      setIxcTestResult({
+        found: !!res.data?.found,
+        name: res.data?.summary?.name || res.data?.name || client.razao || client.nome || client.fantasia || '',
+        cpf: res.data?.summary?.cpf || client.cnpj_cpf || client.cpf_cnpj || res.data?.cpf || ixcTestCpf,
+        phone: res.data?.summary?.phone || client.telefone_celular || client.whatsapp || client.fone || client.telefone_comercial || '',
+      });
     } catch (e) {
       setIxcTestResult({ error: e.message || 'Falha na requisição' });
     }
     setIxcTesting(false);
+  };
+
+  const resizeLogoImage = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Nao foi possivel ler a imagem.'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('Arquivo de imagem invalido.'));
+      img.onload = () => {
+        const maxSide = 1200;
+        const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+        const width = Math.max(1, Math.round(img.width * scale));
+        const height = Math.max(1, Math.round(img.height * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        const mime = file.type === 'image/png' || file.type === 'image/webp' ? file.type : 'image/jpeg';
+        const quality = mime === 'image/png' ? undefined : 0.82;
+        resolve(canvas.toDataURL(mime, quality));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+
+  const handleImageUpload = async (key, file) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      showFeedback('error', 'Selecione um arquivo de imagem.');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      showFeedback('error', 'Use uma imagem de ate 5 MB.');
+      return;
+    }
+    try {
+      const dataUrl = await resizeLogoImage(file);
+      if (dataUrl.length > 1024 * 1024) {
+        showFeedback('error', 'A imagem ainda ficou muito grande. Tente uma logo menor.');
+        return;
+      }
+      setSettings(prev => ({ ...prev, [key]: dataUrl }));
+      showFeedback('success', 'Logo carregada. Clique em Salvar para aplicar.');
+    } catch (error) {
+      showFeedback('error', error.message || 'Falha ao processar imagem.');
+    }
   };
 
   const activeS = sections.find(s => s.id === activeSection);
@@ -439,12 +505,44 @@ echo "=== SERVIDOR L2TP/IPSEC CONFIGURADO COM SUCESSO ==="`;
                 <div key={field.key}>
                   <Label className="text-xs text-muted-foreground mb-1.5 block">{field.label}</Label>
                   <div className="relative">
-                    <Input
-                      type={field.secret && !showSecrets[field.key] ? 'password' : 'text'}
-                      value={settings[field.key] || ''}
-                      onChange={e => setSettings({ ...settings, [field.key]: e.target.value })}
-                      className="bg-input border-border h-9 text-sm pr-9 font-mono"
-                    />
+                    {field.type === 'plan' ? (
+                      <select
+                        value={settings[field.key] || ''}
+                        onChange={e => setSettings({ ...settings, [field.key]: e.target.value })}
+                        className="w-full h-9 rounded-md border border-border bg-input px-3 text-sm text-foreground"
+                      >
+                        <option value="">Selecionar plano</option>
+                        {plans.map(plan => (
+                          <option key={plan.id || plan._id} value={plan.id || plan._id}>
+                            {plan.name} - {plan.download_mbps || plan.speed_download || 0}/{plan.upload_mbps || plan.speed_upload || 0} Mbps
+                          </option>
+                        ))}
+                      </select>
+                    ) : field.type === 'image' ? (
+                      <div className="space-y-2">
+                        <Input
+                          type="file"
+                          accept="image/*"
+                          onChange={e => handleImageUpload(field.key, e.target.files?.[0])}
+                          className="bg-input border-border h-9 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-primary file:px-3 file:py-1 file:text-xs file:font-semibold file:text-primary-foreground"
+                        />
+                        {settings[field.key] && (
+                          <div className="flex items-center gap-3 rounded-lg border border-border bg-background p-2">
+                            <img src={settings[field.key]} alt={field.label} className="h-10 max-w-40 object-contain" />
+                            <Button type="button" variant="outline" size="sm" className="h-8 text-xs" onClick={() => setSettings({ ...settings, [field.key]: '' })}>
+                              Remover
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <Input
+                        type={field.secret && !showSecrets[field.key] ? 'password' : 'text'}
+                        value={settings[field.key] || ''}
+                        onChange={e => setSettings({ ...settings, [field.key]: e.target.value })}
+                        className="bg-input border-border h-9 text-sm pr-9 font-mono"
+                      />
+                    )}
                     {field.secret && (
                       <button
                         type="button"
@@ -509,9 +607,26 @@ echo "=== SERVIDOR L2TP/IPSEC CONFIGURADO COM SUCESSO ==="`;
                     {ixcTestResult && (
                       <div className="mt-3 p-4 rounded-xl bg-secondary/30 border border-border">
                         <p className="text-xs font-semibold text-muted-foreground mb-2">Resultado da API:</p>
-                        <pre className="text-xs font-mono text-foreground whitespace-pre-wrap break-all">
-                          {JSON.stringify(ixcTestResult, null, 2)}
-                        </pre>
+                        {ixcTestResult.error ? (
+                          <p className="text-sm text-destructive font-mono break-words">{ixcTestResult.error}</p>
+                        ) : ixcTestResult.found ? (
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                            <div className="rounded-lg border border-border bg-background p-3">
+                              <p className="text-xs text-muted-foreground mb-1">Nome</p>
+                              <p className="text-sm font-semibold text-foreground break-words">{ixcTestResult.name || '-'}</p>
+                            </div>
+                            <div className="rounded-lg border border-border bg-background p-3">
+                              <p className="text-xs text-muted-foreground mb-1">CPF</p>
+                              <p className="text-sm font-mono font-semibold text-foreground">{ixcTestResult.cpf || '-'}</p>
+                            </div>
+                            <div className="rounded-lg border border-border bg-background p-3">
+                              <p className="text-xs text-muted-foreground mb-1">Telefone</p>
+                              <p className="text-sm font-mono font-semibold text-foreground">{ixcTestResult.phone || '-'}</p>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-sm text-warning">Cliente nao encontrado no IXC para este CPF.</p>
+                        )}
                       </div>
                     )}
                   </div>

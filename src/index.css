@@ -37,6 +37,36 @@
     --font-inter: 'Inter', sans-serif;
     --font-mono: 'JetBrains Mono', monospace;
   }
+
+  .light {
+    --background: 210 40% 98%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 189 94% 43%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 40% 94%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 210 40% 94%;
+    --muted-foreground: 215 16% 42%;
+    --accent: 189 80% 40%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 214 32% 88%;
+    --input: 210 40% 96%;
+    --ring: 189 94% 43%;
+    --success: 142 71% 36%;
+    --warning: 38 92% 43%;
+    --info: 217 91% 50%;
+    --chart-1: 189 94% 43%;
+    --chart-2: 142 71% 36%;
+    --chart-3: 38 92% 43%;
+    --chart-4: 271 81% 56%;
+    --chart-5: 0 72% 51%;
+  }
 }
 
 @layer base {
@@ -81,4 +111,39 @@
   .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
   .scrollbar-thin::-webkit-scrollbar-thumb { @apply bg-border rounded-full; }
   .scrollbar-thin::-webkit-scrollbar-thumb:hover { @apply bg-muted-foreground; }
+
+  .light .kore-sidebar {
+    background:
+      linear-gradient(180deg, hsl(var(--primary) / 0.10), transparent 34%),
+      linear-gradient(180deg, hsl(214 70% 98%), hsl(0 0% 100%));
+  }
+
+  .light .kore-stat-card {
+    box-shadow: 0 10px 28px hsl(214 45% 38% / 0.07);
+  }
+
+  .light .kore-stat-primary {
+    background: linear-gradient(135deg, hsl(var(--primary) / 0.13), hsl(var(--card)) 62%);
+    border-color: hsl(var(--primary) / 0.25);
+  }
+
+  .light .kore-stat-success {
+    background: linear-gradient(135deg, hsl(var(--success) / 0.13), hsl(var(--card)) 62%);
+    border-color: hsl(var(--success) / 0.25);
+  }
+
+  .light .kore-stat-warning {
+    background: linear-gradient(135deg, hsl(var(--warning) / 0.16), hsl(var(--card)) 62%);
+    border-color: hsl(var(--warning) / 0.25);
+  }
+
+  .light .kore-stat-destructive {
+    background: linear-gradient(135deg, hsl(var(--destructive) / 0.12), hsl(var(--card)) 62%);
+    border-color: hsl(var(--destructive) / 0.25);
+  }
+
+  .light .kore-stat-info {
+    background: linear-gradient(135deg, hsl(var(--info) / 0.13), hsl(var(--card)) 62%);
+    border-color: hsl(var(--info) / 0.25);
+  }
 }

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { base44 } from '@/api/base44Client';
+import { spedynet } from '@/api/spedynetClient';
 import { useAuth } from '@/lib/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -18,6 +18,7 @@ export default function VpnManager() {
   const [showScript, setShowScript] = useState(null); // account id
   const [copied, setCopied] = useState(false);
   const [ipsecSecret, setIpsecSecret] = useState('');
+  const [activeVpnIps, setActiveVpnIps] = useState([]);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -27,22 +28,51 @@ export default function VpnManager() {
     remote_ip: '10.255.255.2'
   });
 
+  const nextVpnIp = (extraAccounts = accounts, extraMikrotiks = mikrotiks, extraActiveIps = activeVpnIps) => {
+    const used = new Set([
+      '10.255.255.1',
+      ...extraAccounts.map((account) => account.remote_ip),
+      ...extraMikrotiks.map((mt) => mt.vpn_remote_ip || mt.remote_ip || mt.host),
+      ...extraActiveIps
+    ].filter((ip) => /^10\.255\.255\.\d+$/.test(String(ip || ''))));
+
+    for (let last = 2; last <= 254; last += 1) {
+      const ip = `10.255.255.${last}`;
+      if (!used.has(ip)) return ip;
+    }
+    return '';
+  };
+
+  const openNewConnection = () => {
+    const ip = nextVpnIp();
+    setFormData((current) => ({
+      ...current,
+      name: '',
+      username: '',
+      password: '',
+      remote_ip: ip || current.remote_ip
+    }));
+    setShowModal(true);
+  };
+
   useEffect(() => {
     loadData();
   }, []);
 
   const loadData = async () => {
     try {
-      const accs = await base44.entities.VpnAccount.list('-created_date', 100);
+      const accs = await spedynet.entities.VpnAccount.list('-created_date', 100);
       setAccounts(accs);
+      const vpnStatus = await spedynet.functions.invoke('vpnStatus').catch(() => null);
+      setActiveVpnIps((vpnStatus?.data?.vpn_connections || []).map((conn) => conn.address));
       
-      const mtiksRaw = await base44.entities.Setting.filter({ category: 'mikrotik_device' });
+      const mtiksRaw = await spedynet.entities.Setting.filter({ category: 'mikrotik_device' });
       const mtiks = mtiksRaw.map(s => {
         try { return { id: s.id, ...JSON.parse(s.value) }; } catch { return null; }
       }).filter(Boolean);
       setMikrotiks(mtiks);
 
-      const secretRaw = await base44.entities.Setting.filter({ key: 'vpn_ipsec_secret' });
+      const secretRaw = await spedynet.entities.Setting.filter({ key: 'vpn_ipsec_secret' });
       if (secretRaw.length > 0) setIpsecSecret(secretRaw[0].value);
       else setIpsecSecret('korevpn123'); // Default
 
@@ -56,11 +86,11 @@ export default function VpnManager() {
 
   const handleSaveSecret = async () => {
     try {
-      const existing = await base44.entities.Setting.filter({ key: 'vpn_ipsec_secret' });
+      const existing = await spedynet.entities.Setting.filter({ key: 'vpn_ipsec_secret' });
       if (existing.length > 0) {
-        await base44.entities.Setting.update(existing[0].id, { value: ipsecSecret });
+        await spedynet.entities.Setting.update(existing[0].id, { value: ipsecSecret });
       } else {
-        await base44.entities.Setting.create({
+        await spedynet.entities.Setting.create({
           key: 'vpn_ipsec_secret',
           value: ipsecSecret,
           category: 'system',
@@ -76,7 +106,7 @@ export default function VpnManager() {
   const handleProvisionServer = async (serverMtik) => {
     toast.loading('Configurando Servidor L2TP...');
     try {
-      const res = await base44.functions.invoke('mikrotikVpnManager', {
+      const res = await spedynet.functions.invoke('mikrotikVpnManager', {
         action: 'enable_server',
         server_host: serverMtik.host,
         server_port: serverMtik.port,
@@ -105,20 +135,21 @@ export default function VpnManager() {
     // Removido disparo pro MikroTik Matriz, pois agora o servidor é a própria VPS via RADIUS
 
     try {
-      // Create in DB
-      await base44.entities.VpnAccount.create(formData);
-      
-      // O FreeRADIUS agora irá cuidar da autenticação (neste ponto poderiamos inserir a conta numa tabela radius `radcheck` caso a integração seja via BD Radius, 
-      // ou se o L2TP do linux apontar pro freeradius e o freeradius consultar a mesma tabela de clientes, ok)
-      
-      toast.success('Conta VPN criada! (Autenticação via FreeRADIUS)');
+      await spedynet.entities.VpnAccount.create(formData);
+      await spedynet.functions.invoke('vpnCreateUser', {
+        username: formData.username,
+        password: formData.password,
+        remote_ip: formData.remote_ip
+      });
+
+      toast.success('Conta VPN criada e cadastrada automaticamente na VPS');
       setShowModal(false);
       setFormData({
         ...formData,
         name: '',
         username: '',
         password: '',
-        remote_ip: '10.255.255.3'
+        remote_ip: nextVpnIp([...accounts, formData])
       });
       loadData();
     } catch (e) {
@@ -132,7 +163,7 @@ export default function VpnManager() {
     if (!confirm('Deseja realmente excluir esta conta VPN?')) return;
     
     try {
-      await base44.entities.VpnAccount.delete(account.id);
+      await spedynet.entities.VpnAccount.delete(account.id);
       toast.success('Conta excluída do sistema');
       loadData();
     } catch (e) {
@@ -143,13 +174,13 @@ export default function VpnManager() {
   const [globalVpnIp, setGlobalVpnIp] = useState('');
 
   useEffect(() => {
-    base44.entities.Setting.filter({ key: 'vpn_server_host' }).then(res => {
+    spedynet.entities.Setting.filter({ key: 'vpn_server_host' }).then(res => {
       if (res.length > 0) setGlobalVpnIp(res[0].value);
     });
   }, []);
 
   const getClientScript = (account) => {
-    const serverIp = globalVpnIp || 'COLOQUE_O_IP_DA_SUA_VPS_AQUI';
+    const serverIp = globalVpnIp || '190.8.174.155';
     return `# Limpeza de configs antigas
 :do { /interface l2tp-client remove [find name="l2tp-matriz"] } on-error={}
 :do { /ppp profile remove [find name="kore-vpn-profile"] } on-error={}
@@ -161,7 +192,12 @@ export default function VpnManager() {
 # Tunel cliente com protocolos estritos
 /interface l2tp-client add connect-to="${serverIp}" name="l2tp-matriz" user="${account.username}" password="${account.password}" profile="kore-vpn-profile" use-ipsec=yes ipsec-secret="${ipsecSecret}" allow=mschap2 disabled=no
 
-/ip route add dst-address=10.255.255.1/32 gateway="l2tp-matriz" comment="Rota para a Matriz"
+:delay 3s
+:if ([:len [/interface l2tp-client find name="l2tp-matriz"]] > 0) do={
+  /ip route add dst-address=10.255.255.1/32 gateway="l2tp-matriz" comment="Rota para a Matriz"
+} else={
+  :error "Interface l2tp-matriz nao foi criada. Verifique IP da VPS, usuario, senha e IPsec Secret."
+}
 # Tunnel criado! Use o IP ${account.remote_ip} no sistema para gerenciar.`;
   };
 
@@ -181,7 +217,7 @@ export default function VpnManager() {
           <h1 className="text-2xl font-bold text-foreground">VPN L2TP/IPsec</h1>
           <p className="text-muted-foreground mt-1">Integre filiais sem IP público através de tuneis seguros.</p>
         </div>
-        <Button onClick={() => setShowModal(true)} className="gap-2">
+        <Button onClick={openNewConnection} className="gap-2">
           <Plus className="w-4 h-4" /> Nova Conexão
         </Button>
       </div>
@@ -259,8 +295,8 @@ export default function VpnManager() {
                       <div>
                         <div className="flex items-center gap-2">
                           <h4 className="font-semibold text-foreground">{acc.name}</h4>
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${acc.status === 'active' ? 'bg-success/20 text-success' : 'bg-muted text-muted-foreground'}`}>
-                            {acc.status === 'active' ? 'Ativo' : 'Inativo'}
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${activeVpnIps.includes(acc.remote_ip) ? 'bg-success/20 text-success' : 'bg-muted text-muted-foreground'}`}>
+                            {activeVpnIps.includes(acc.remote_ip) ? 'Ativo' : 'Inativo'}
                           </span>
                         </div>
                         <div className="flex gap-4 mt-1.5 text-xs text-muted-foreground">
@@ -294,21 +330,21 @@ export default function VpnManager() {
                             </div>
                             <div className="p-4 overflow-y-auto space-y-6">
                               
-                              {/* Comando VPS (Servidor) */}
+                              {/* Provisionamento VPS (Servidor) */}
                               <div>
-                                <h4 className="font-semibold text-sm text-primary mb-2">1. Comando para o Servidor VPS (Linux)</h4>
+                                <h4 className="font-semibold text-sm text-primary mb-2">1. Servidor VPS (Linux)</h4>
                                 <p className="text-xs text-muted-foreground mb-3">
-                                  Acesse o SSH da sua VPS como <code className="bg-secondary px-1 rounded">root</code> e rode este comando para adicionar o usuário no arquivo de senhas do L2TP. Como o banco de dados do FreeRADIUS fica restrito, gerenciar as contas L2TP pelo arquivo local <code>chap-secrets</code> é mais seguro e direto:
+                                  O usuário L2TP é cadastrado automaticamente na VPS quando a conexão é criada. Use este comando somente para conferência manual:
                                 </p>
                                 <div className="relative group">
                                   <pre className="bg-secondary/50 p-4 rounded-lg text-xs font-mono text-foreground whitespace-pre-wrap border border-border">
-                                    {`echo '"${acc.username}" * "${acc.password}" ${acc.remote_ip}' >> /etc/ppp/chap-secrets
-systemctl restart xl2tpd`}
+                                    {`grep '^${acc.username} ' /etc/ppp/chap-secrets
+systemctl status xl2tpd --no-pager`}
                                   </pre>
                                   <Button 
                                     size="sm" 
                                     className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity"
-                                    onClick={() => copyToClipboard(`echo '"${acc.username}" * "${acc.password}" ${acc.remote_ip}' >> /etc/ppp/chap-secrets\nsystemctl restart xl2tpd`)}
+                                    onClick={() => copyToClipboard(`grep '^${acc.username} ' /etc/ppp/chap-secrets\nsystemctl status xl2tpd --no-pager`)}
                                   >
                                     {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
                                   </Button>

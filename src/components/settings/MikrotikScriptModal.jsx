@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { base44 } from '@/api/base44Client';
+import { useEffect, useMemo, useState } from 'react';
+import { spedynet } from '@/api/spedynetClient';
 import { Button } from '@/components/ui/button';
 import { Copy, FileCode2, X, CheckCircle } from 'lucide-react';
 import { toast } from 'sonner';
@@ -14,14 +14,46 @@ function generateRadiusSecret(mikrotik) {
   return `Kore-${Math.abs(hash).toString(36).toUpperCase()}-HotSpot`;
 }
 
+function getHotspotNetworkConfig(network = '192.168.1.0/24') {
+  const fallback = {
+    network: '192.168.1.0/24',
+    address: '192.168.1.1/24',
+    gateway: '192.168.1.1',
+    poolRange: '192.168.1.10-192.168.1.254'
+  };
+  const match = String(network || '').trim().match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.0\/(24)$/);
+  if (!match) return fallback;
+
+  const [, a, b, c, prefix] = match;
+  return {
+    network: `${a}.${b}.${c}.0/${prefix}`,
+    address: `${a}.${b}.${c}.1/${prefix}`,
+    gateway: `${a}.${b}.${c}.1`,
+    poolRange: `${a}.${b}.${c}.10-${a}.${b}.${c}.254`
+  };
+}
+
+function getRemoteVpnIp(mikrotik) {
+  const remoteIp = mikrotik?.vpn_remote_ip || mikrotik?.remote_ip || mikrotik?.host;
+  return /^10\.255\.255\.\d+$/.test(String(remoteIp || '')) ? remoteIp : '';
+}
+
 export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
+  const [vpnSyncStatus, setVpnSyncStatus] = useState('idle');
+  const [vpnSyncMessage, setVpnSyncMessage] = useState('');
+  const [plans, setPlans] = useState([]);
+
+  useEffect(() => {
+    spedynet.entities.Plan.filter({ status: 'active' }).then(setPlans).catch(() => setPlans([]));
+  }, []);
+
   const script = useMemo(() => {
     // Sanitiza URLs do sandbox para evitar que caiam no script
     let cleanRadiusHost = radius?.radius_host || '';
-    if (cleanRadiusHost.includes('.base44.app')) cleanRadiusHost = '';
+    if (cleanRadiusHost.includes('.spedynet.app')) cleanRadiusHost = '';
     
     let cleanVpnServer = radius?.vpn_server_host || mikrotik?.vpn_server || '';
-    if (cleanVpnServer.includes('.base44.app')) cleanVpnServer = '';
+    if (cleanVpnServer.includes('.spedynet.app')) cleanVpnServer = '';
 
     // IMPORTANTE: radius é um flat map { key: value } vindo do banco (Settings).
     // NÃO usar mikrotik.host como fallback para radiusHost — ele é o IP local do próprio roteador!
@@ -36,11 +68,32 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
     const vlanInterface = mikrotik.vlan_interface || 'vlan-hotspot';
     const snmpCommunity = mikrotik.snmp_community || 'public';
     const sshPort = mikrotik.port || '22';
+    const sshUser = mikrotik.user || 'kore-api';
+    const sshFallbackPassword = mikrotik.password || 'KoreKeyFallback@123';
+    const sshPublicKeyUrl = 'http://190.8.174.155:8081/public/kore-api.pub';
+    const hotspotLoginUrl = 'http://190.8.174.155:8081/public/hotspot-login.html';
+    const captivePortalHost = '190.8.174.155';
+    const captivePortalUrl = `http://${captivePortalHost}:8080/captive-portal`;
     const radiusName = 'Kore-HotSpot';
     const profileName = 'kore-hotspot-profile';
     const hotspotName = 'kore-hotspot';
+    const poolName = 'kore-hotspot-pool';
+    const dhcpName = 'kore-hotspot-dhcp';
+    const hotspotNet = getHotspotNetworkConfig(mikrotik.hotspot_network);
+    const profileScript = plans.map((plan) => {
+      const name = plan.mikrotik_profile_name || `kore-${String(plan.name || 'plano').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`;
+      const download = Number(plan.download_mbps || plan.speed_download || 0);
+      const upload = Number(plan.upload_mbps || plan.speed_upload || 0);
+      const rate = download || upload ? `${Math.max(upload, 1)}M/${Math.max(download, 1)}M` : '';
+      if (!rate) return '';
+      return `:do { /ip hotspot user profile remove [find where name="${name}"] } on-error={}\n/ip hotspot user profile add name="${name}" rate-limit="${rate}" shared-users=1 comment="Kore-HotSpot plano ${plan.name}"`;
+    }).filter(Boolean).join('\n');
 
     const finalHotspotInterface = vlanId ? vlanInterface : (bridgeName || physicalInterface);
+    const directInterfaceSection = !vlanId && !bridgeName ? `
+# Garante que ${physicalInterface} esteja livre para entregar DHCP diretamente
+:do { /interface bridge port remove [find where interface="${physicalInterface}"] } on-error={}
+:do { /interface enable [find where name="${physicalInterface}"] } on-error={}` : '';
     const vlanSection = vlanId ? `
 # Cria/atualiza VLAN ${vlanId} sobre ${bridgeName || physicalInterface}
 :do { /interface vlan remove [find where name="${vlanInterface}"] } on-error={}
@@ -72,7 +125,6 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 
 # Cria perfil PPP especifico forçando MSCHAPv2 que é o padrão do Linux (xl2tpd)
 /ppp profile add name="kore-vpn-profile" use-encryption=yes use-mpls=default only-one=default
-:do { /ppp profile set [find name="kore-vpn-profile"] local-address=10.255.255.1 } on-error={}
 
 # Cria interface de tunel VPN apontando para a VPS (Matriz) com os protocolos corretos
 /interface l2tp-client add connect-to="${vpnServerIp}" name="l2tp-vpn" user="${vpnUser}" password="${vpnPass}" profile="kore-vpn-profile" use-ipsec=yes ipsec-secret="${ipsecSec}" allow=mschap2 disabled=no
@@ -91,6 +143,12 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 :do { /radius remove [find where comment="${radiusName}"] } on-error={}
 :do { /ip hotspot remove [find where name="${hotspotName}"] } on-error={}
 :do { /ip hotspot profile remove [find where name="${profileName}"] } on-error={}
+:do { /ip hotspot walled-garden remove [find where comment~"Kore-HotSpot"] } on-error={}
+:do { /ip hotspot walled-garden ip remove [find where comment~"Kore-HotSpot"] } on-error={}
+:do { /ip dhcp-server remove [find where name="${dhcpName}"] } on-error={}
+:do { /ip dhcp-server network remove [find where comment="Kore-HotSpot DHCP network"] } on-error={}
+:do { /ip pool remove [find where name="${poolName}"] } on-error={}
+:do { /ip address remove [find where comment="Kore-HotSpot gateway"] } on-error={}
 :do { /interface l2tp-client remove [find where name="l2tp-vpn"] } on-error={}
 :do { /ppp profile remove [find where name="kore-vpn-profile"] } on-error={}
 
@@ -99,41 +157,141 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 
 # SSH e SNMP para coleta de Performance (Dashboard)
 # Habilita SNMP para monitoramento em tempo real (CPU, Memoria e Uso de Interface)
-/ip service set ssh disabled=no port=${sshPort}
+/ip service set ssh disabled=no port=${sshPort} address=10.255.255.1/32
+:if ([:len [/user find where name="${sshUser}"]] = 0) do={
+  /user add name="${sshUser}" group=full password="${sshFallbackPassword}"
+} else={
+  /user set [find where name="${sshUser}"] group=full password="${sshFallbackPassword}" disabled=no
+}
+:do { /file remove [find where name="kore-api.pub"] } on-error={}
+/tool fetch url="${sshPublicKeyUrl}" mode=http dst-path="kore-api.pub" keep-result=yes
+:delay 2s
+:if ([:len [/file find where name="kore-api.pub"]] = 0) do={ :error "ERRO: chave publica kore-api.pub nao foi baixada da VPS" }
+:do { /user ssh-keys remove [find where user="${sshUser}"] } on-error={}
+:do { /user ssh-keys import public-key-file="kore-api.pub" user="${sshUser}" } on-error={ :error "ERRO: falha ao importar chave publica SSH. Verifique RouterOS 6 RSA e URL da VPS." }
+:if ([:len [/user ssh-keys find where user="${sshUser}"]] = 0) do={ :error "ERRO: chave SSH nao ficou vinculada ao usuario ${sshUser}" }
 /snmp set enabled=yes contact="Kore-HotSpot" location="Hotspot" trap-version=2
 /snmp community remove [find where name="${snmpCommunity}"]
 /snmp community add name="${snmpCommunity}" addresses=0.0.0.0/0 read-access=yes write-access=no disabled=no
+/ip dns set allow-remote-requests=yes
 
 # Firewall INPUT para SSH/SNMP
 /ip firewall filter add chain=input connection-state=established,related action=accept comment="Kore-HotSpot allow established" disabled=no
 /ip firewall filter add chain=input protocol=udp dst-port=161 action=accept comment="Kore-HotSpot allow SNMP UDP 161" disabled=no
-/ip firewall filter add chain=input protocol=tcp dst-port=${sshPort} action=accept comment="Kore-HotSpot allow SSH" disabled=no
+/ip firewall filter add chain=input src-address=10.255.255.1 protocol=tcp dst-port=${sshPort} action=accept comment="Kore-HotSpot allow SSH" disabled=no
+/ip firewall filter add chain=input in-interface="${finalHotspotInterface}" protocol=udp dst-port=67,68 action=accept comment="Kore-HotSpot allow DHCP" disabled=no
+/ip firewall filter add chain=input in-interface="${finalHotspotInterface}" protocol=udp dst-port=53 action=accept comment="Kore-HotSpot allow DNS UDP" disabled=no
+/ip firewall filter add chain=input in-interface="${finalHotspotInterface}" protocol=tcp dst-port=53 action=accept comment="Kore-HotSpot allow DNS TCP" disabled=no
 /ip firewall filter move [find where comment="Kore-HotSpot allow SSH"] destination=0
 /ip firewall filter move [find where comment="Kore-HotSpot allow SNMP UDP 161"] destination=0
+/ip firewall filter move [find where comment="Kore-HotSpot allow DHCP"] destination=0
+/ip firewall filter move [find where comment="Kore-HotSpot allow DNS UDP"] destination=0
+/ip firewall filter move [find where comment="Kore-HotSpot allow DNS TCP"] destination=0
 /ip firewall filter move [find where comment="Kore-HotSpot allow established"] destination=0
-${bridgeSection}${vlanSection}
+${directInterfaceSection}${bridgeSection}${vlanSection}
 ${vpnSection}
 # RADIUS Hotspot
 /radius add service=hotspot address=${radiusHost} secret="${radiusSecret}" authentication-port=1812 accounting-port=1813 timeout=3s disabled=no comment="${radiusName}"
 
+# Pool, gateway e DHCP do Hotspot
+/ip pool add name="${poolName}" ranges=${hotspotNet.poolRange} comment="Kore-HotSpot address pool"
+/ip address add address=${hotspotNet.address} interface="${finalHotspotInterface}" comment="Kore-HotSpot gateway" disabled=no
+/ip dhcp-server network add address=${hotspotNet.network} gateway=${hotspotNet.gateway} dns-server=${hotspotNet.gateway} comment="Kore-HotSpot DHCP network"
+/ip dhcp-server add name="${dhcpName}" interface="${finalHotspotInterface}" address-pool="${poolName}" lease-time=1h authoritative=yes disabled=no
+
 # Perfil e servidor Hotspot na interface final ${finalHotspotInterface}
-/ip hotspot profile add name="${profileName}" use-radius=yes radius-accounting=yes login-by=http-chap,http-pap,cookie html-directory=hotspot
-/ip hotspot add name="${hotspotName}" interface="${finalHotspotInterface}" profile="${profileName}" disabled=no
+/ip hotspot profile add name="${profileName}" hotspot-address=${hotspotNet.gateway} use-radius=yes radius-accounting=yes login-by=http-chap,http-pap,cookie html-directory=hotspot
+/ip hotspot add name="${hotspotName}" interface="${finalHotspotInterface}" address-pool="${poolName}" profile="${profileName}" disabled=no
+
+# Perfis de velocidade gerados a partir dos planos cadastrados no sistema
+${profileScript || ':put "Nenhum perfil de velocidade cadastrado no sistema"'}
+
+# Captive Portal Kore-HotSpot
+# Libera o painel/portal antes da autenticacao e substitui a tela padrao do MikroTik
+/ip hotspot walled-garden ip add dst-address=${captivePortalHost} protocol=tcp dst-port=8080 action=accept comment="Kore-HotSpot captive portal 8080"
+/ip hotspot walled-garden ip add dst-address=${captivePortalHost} protocol=tcp dst-port=8081 action=accept comment="Kore-HotSpot captive portal api"
+:if ([:len [/file find where name="flash/hotspot"]] > 0) do={
+  :foreach f in={"login.html";"rlogin.html";"redirect.html";"alogin.html"} do={
+    :do { /file remove [find where name=("flash/hotspot/" . $f)] } on-error={}
+    /tool fetch url="${hotspotLoginUrl}" mode=http dst-path=("flash/hotspot/" . $f) keep-result=yes
+    :delay 1s
+  }
+  :if ([:len [/file find where name="flash/hotspot/login.html"]] = 0) do={ :error "ERRO: flash/hotspot/login.html nao foi baixado da VPS" }
+  /ip hotspot profile set [find where name="${profileName}"] html-directory=flash/hotspot
+  :put "Diretorio Hotspot: flash/hotspot"
+} else={
+  :foreach f in={"login.html";"rlogin.html";"redirect.html";"alogin.html"} do={
+    :do { /file remove [find where name=("hotspot/" . $f)] } on-error={}
+    /tool fetch url="${hotspotLoginUrl}" mode=http dst-path=("hotspot/" . $f) keep-result=yes
+    :delay 1s
+  }
+  :if ([:len [/file find where name="hotspot/login.html"]] = 0) do={ :error "ERRO: hotspot/login.html nao foi baixado da VPS" }
+  /ip hotspot profile set [find where name="${profileName}"] html-directory=hotspot
+  :put "Diretorio Hotspot: hotspot"
+}
+:put "Portal externo: ${captivePortalUrl}"
+:do { /ip hotspot host remove [find where server="${hotspotName}"] } on-error={}
+:do { /ip hotspot active remove [find where server="${hotspotName}"] } on-error={}
 
 # Diagnostico final
 :put "=== KORE-HOTSPOT FINALIZADO ==="
 :put "Interface final do hotspot: ${finalHotspotInterface}"
+:put "Rede Hotspot: ${hotspotNet.network}"
+:put "Gateway Hotspot: ${hotspotNet.gateway}"
+:put "Pool Hotspot: ${hotspotNet.poolRange}"
 /interface bridge print detail where name="${bridgeName}"
 /interface bridge port print detail where interface="${physicalInterface}"
 /interface vlan print detail where name="${vlanInterface}"
+/ip pool print detail where name="${poolName}"
+/ip address print detail where comment="Kore-HotSpot gateway"
+/ip dhcp-server print detail where name="${dhcpName}"
+/ip dhcp-server network print detail where comment="Kore-HotSpot DHCP network"
 /ip firewall filter print detail where comment~"Kore-HotSpot allow"
 /snmp print
 /snmp community print detail where name="${snmpCommunity}"
 /radius print detail where comment="${radiusName}"
-/ip hotspot print detail where name="${hotspotName}"`;
-  }, [mikrotik, radius]);
+/ip hotspot print detail where name="${hotspotName}"
+/ip hotspot user profile print detail where comment~"Kore-HotSpot plano"`;
+  }, [mikrotik, radius, plans]);
 
   const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!mikrotik?.vpn_enabled) return;
+    if (!mikrotik?.vpn_user || !mikrotik?.vpn_password) {
+      setVpnSyncStatus('error');
+      setVpnSyncMessage('Usuário ou senha VPN não preenchidos no cadastro do equipamento.');
+      return;
+    }
+
+    const remoteIp = getRemoteVpnIp(mikrotik);
+    if (!/^10\.255\.255\.\d+$/.test(String(remoteIp || ''))) {
+      setVpnSyncStatus('error');
+      setVpnSyncMessage('IP VPN remoto inválido. Use o IP 10.255.255.x no campo host do equipamento.');
+      return;
+    }
+
+    let active = true;
+    setVpnSyncStatus('loading');
+    setVpnSyncMessage('Cadastrando usuário VPN na VPS...');
+
+    spedynet.functions.invoke('vpnCreateUser', {
+      username: mikrotik.vpn_user,
+      password: mikrotik.vpn_password,
+      remote_ip: remoteIp
+    }).then(() => {
+      if (!active) return;
+      setVpnSyncStatus('success');
+      setVpnSyncMessage(`Conta ${mikrotik.vpn_user} autorizada automaticamente na VPS para o IP ${remoteIp}.`);
+    }).catch((error) => {
+      if (!active) return;
+      setVpnSyncStatus('error');
+      setVpnSyncMessage(error.message || 'Não foi possível cadastrar a conta VPN na VPS automaticamente.');
+    });
+
+    return () => { active = false; };
+  }, [mikrotik?.vpn_enabled, mikrotik?.vpn_user, mikrotik?.vpn_password, mikrotik?.vpn_remote_ip, mikrotik?.remote_ip, mikrotik?.host]);
+
   const copyScript = async () => {
     await navigator.clipboard.writeText(script);
     toast.success('Script copiado para a área de transferência');
@@ -142,11 +300,12 @@ ${vpnSection}
   };
 
   const autoProvision = async () => {
-    const promise = base44.functions.invoke('mikrotikProvision', {
+    const promise = spedynet.functions.invoke('mikrotikSyncPlans', {
       host: mikrotik.host,
       port: mikrotik.port,
       user: mikrotik.user,
       password: mikrotik.password, // from local state if available, or saved
+      auth_method: mikrotik.ssh_auth_method || 'key',
       physical_interface: mikrotik.physical_interface,
       bridge_name: mikrotik.bridge_name,
       vlan_id: mikrotik.vlan_id,
@@ -197,31 +356,23 @@ Você pode aplicar toda a configuração automaticamente (o sistema gerou as sen
           </div>
 
           {mikrotik.vpn_enabled && (
-            <div>
-              <h4 className="font-semibold text-sm text-primary mb-2">1. Comando para o Servidor VPS (Linux)</h4>
-              <p className="text-xs text-muted-foreground mb-3">
-                Acesse o SSH da sua VPS como <code className="bg-secondary px-1 rounded">root</code> e rode este comando para autorizar o túnel VPN desta filial:
-              </p>
-              <div className="relative group">
-                <pre className="bg-secondary/50 p-4 rounded-lg text-xs font-mono text-foreground whitespace-pre-wrap border border-border">
-                  {`echo '"${mikrotik.vpn_user}" * "${mikrotik.vpn_password}" *' >> /etc/ppp/chap-secrets\nsystemctl restart xl2tpd`}
-                </pre>
-                <Button 
-                  size="sm" 
-                  className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity"
-                  onClick={() => {
-                    navigator.clipboard.writeText(`echo '"${mikrotik.vpn_user}" * "${mikrotik.vpn_password}" *' >> /etc/ppp/chap-secrets\nsystemctl restart xl2tpd`);
-                    toast.success('Comando da VPS copiado!');
-                  }}
-                >
-                  <Copy className="w-4 h-4" />
-                </Button>
+            <div className={`rounded-xl border px-4 py-3 text-xs ${
+              vpnSyncStatus === 'success'
+                ? 'border-success/30 bg-success/10 text-success'
+                : vpnSyncStatus === 'error'
+                  ? 'border-destructive/30 bg-destructive/10 text-destructive'
+                  : 'border-info/30 bg-info/10 text-info'
+            }`}>
+              <div className="flex items-center gap-2 font-semibold mb-1">
+                {vpnSyncStatus === 'success' && <CheckCircle className="w-4 h-4" />}
+                <span>Conta VPN na VPS</span>
               </div>
+              <p>{vpnSyncMessage || 'A conta VPN será criada automaticamente na VPS ao abrir este script.'}</p>
             </div>
           )}
 
           <div className={mikrotik.vpn_enabled ? "pt-4 border-t border-border" : ""}>
-            {mikrotik.vpn_enabled && <h4 className="font-semibold text-sm text-info mb-2">2. Script para a Filial (MikroTik Cliente)</h4>}
+            {mikrotik.vpn_enabled && <h4 className="font-semibold text-sm text-info mb-2">Script para a Filial (MikroTik Cliente)</h4>}
             <pre className="bg-background border border-border rounded-xl p-4 text-xs font-mono text-foreground overflow-x-auto whitespace-pre-wrap leading-relaxed">
               {script}
             </pre>

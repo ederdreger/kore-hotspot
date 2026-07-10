@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { base44 } from '@/api/base44Client';
+import { spedynet } from '@/api/spedynetClient';
 import StatusBadge from '@/components/ui/StatusBadge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -22,7 +22,7 @@ export default function Plans() {
 
   const load = async () => {
     setLoading(true);
-    const data = await base44.entities.Plan.list('-created_date');
+    const data = await spedynet.entities.Plan.list('-created_date');
     setPlans(data);
     setLoading(false);
   };
@@ -48,10 +48,10 @@ export default function Plans() {
       trial_duration_minutes: Number(form.trial_duration_minutes) || 30,
     };
     if (editing) {
-      await base44.entities.Plan.update(editing.id, data);
+      await spedynet.entities.Plan.update(editing.id, data);
       toast.success('Plano atualizado!');
     } else {
-      await base44.entities.Plan.create(data);
+      await spedynet.entities.Plan.create(data);
       toast.success('Plano criado!');
     }
     setShowDialog(false);
@@ -61,7 +61,7 @@ export default function Plans() {
 
   const handleDelete = async (p) => {
     if (!confirm(`Remover plano ${p.name}?`)) return;
-    await base44.entities.Plan.delete(p.id);
+    await spedynet.entities.Plan.delete(p.id);
     toast.success('Plano removido');
     load();
   };

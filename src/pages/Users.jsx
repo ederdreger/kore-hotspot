@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { base44 } from '@/api/base44Client';
+import { spedynet } from '@/api/spedynetClient';
 import { useAuth } from '@/lib/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -26,7 +26,7 @@ export default function UsersPage() {
   const [saving, setSaving] = useState(false);
 
   const callAdmin = async (payload) => {
-    const res = await base44.functions.invoke('adminAuth', { ...payload, token: getToken() });
+    const res = await spedynet.functions.invoke('adminAuth', { ...payload, token: getToken() });
     return res.data;
   };
 
@@ -102,7 +102,7 @@ export default function UsersPage() {
   };
 
   const handleResetDefault = async () => {
-    const res = await base44.functions.invoke('adminAuth', { action: 'resetDefaults' });
+    const res = await spedynet.functions.invoke('adminAuth', { action: 'resetDefaults' });
     toast.success(`Logins padrão prontos. Senha: ${res.data.password}`);
     load();
   };

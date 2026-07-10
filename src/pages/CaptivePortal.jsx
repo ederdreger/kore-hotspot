@@ -1,230 +1,548 @@
-import { useState } from 'react';
-import { base44 } from '@/api/base44Client';
+import { useEffect, useMemo, useState } from 'react';
+import { spedynet } from '@/api/spedynetClient';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Wifi, User, Mail, Phone, CreditCard, CheckCircle, Clock, ArrowRight, Loader2, Shield } from 'lucide-react';
+import { ArrowRight, Check, CheckCircle2, Copy, Loader2, Phone, QrCode, User, Users, Wifi } from 'lucide-react';
 import { toast } from 'sonner';
-import AnimatedBackground from '@/components/captive/AnimatedBackground';
 
-const TRIAL_MINUTES = 30;
+function getPortalParams() {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    mac: params.get('mac') || '',
+    ip: params.get('ip') || '',
+    linkLogin: params.get('link-login') || params.get('link_login') || '',
+    linkOrig: params.get('link-orig') || params.get('link_orig') || ''
+  };
+}
+
+function digits(value) {
+  return String(value || '').replace(/\D/g, '');
+}
+
+function normalizeMac(value) {
+  const clean = String(value || '').replace(/[^a-fA-F0-9]/g, '').toUpperCase();
+  return clean.length === 12 ? clean.match(/.{1,2}/g).join(':') : String(value || '').toUpperCase();
+}
+
+function money(value) {
+  return Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
+function planType(plan) {
+  return plan?.plan_type || (plan?.is_trial ? 'trial' : Number(plan?.price || 0) > 0 ? 'paid' : 'free');
+}
+
+function planHours(plan) {
+  if (Number(plan?.validity_hours || 0) > 0) return Number(plan.validity_hours);
+  if (Number(plan?.trial_duration_hours || 0) > 0) return Number(plan.trial_duration_hours);
+  if (Number(plan?.trial_duration_minutes || 0) > 0) return Number(plan.trial_duration_minutes) / 60;
+  return Math.max(1, Number(plan?.validity_days || 1) * 24);
+}
+
+function redirectToInternet(linkOrig) {
+  window.location.href = linkOrig?.startsWith('http') ? linkOrig : 'http://neverssl.com';
+}
+
+function loginToMikrotik(login, fallbackUrl) {
+  const params = getPortalParams();
+  if (!params.linkLogin || !login?.username || !login?.password) {
+    redirectToInternet(fallbackUrl || params.linkOrig);
+    return;
+  }
+  const form = document.createElement('form');
+  form.method = 'POST';
+  form.action = params.linkLogin;
+  [
+    ['username', login.username],
+    ['password', login.password],
+    ['dst', fallbackUrl || params.linkOrig || 'http://neverssl.com'],
+    ['popup', 'false']
+  ].forEach(([name, value]) => {
+    const input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = name;
+    input.value = value || '';
+    form.appendChild(input);
+  });
+  document.body.appendChild(form);
+  form.submit();
+}
+
+function Brand({ logoUrl, title = 'Kore-HotSpot' }) {
+  return (
+    <div className="h-12 bg-white flex items-center px-5">
+      {logoUrl ? (
+        <img src={logoUrl} alt={title} className="max-h-8 max-w-[180px] object-contain" />
+      ) : (
+        <div className="text-2xl font-black tracking-tight text-[#c72eb5]">
+          Kore<span className="text-[#0ea5e9]">HotSpot</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Shell({ children, settings }) {
+  return (
+    <div className="min-h-screen bg-[#060b16] text-slate-950 flex items-center justify-center p-0 sm:p-6">
+      <div className="w-full min-h-screen sm:min-h-0 sm:w-[282px] sm:h-[520px] sm:rounded-[38px] sm:border-[6px] sm:border-zinc-600 sm:bg-zinc-900 sm:p-1.5 sm:shadow-2xl">
+        <div className="hidden sm:block absolute" />
+        <div className="relative w-full min-h-screen sm:min-h-0 sm:h-full overflow-hidden bg-[#dff3ff] sm:rounded-[30px]">
+          <div className="hidden sm:flex h-10 bg-zinc-900 text-white text-[11px] items-end justify-between px-7 pb-1">
+            <span>18:08</span>
+            <span>Wi-Fi 100%</span>
+          </div>
+          <Brand logoUrl={settings?.captive_portal_logo_url} title={settings?.captive_portal_title} />
+          <div className="p-4">{children}</div>
+          <div className="hidden sm:block absolute bottom-3 left-1/2 -translate-x-1/2 h-1 w-20 rounded-full bg-zinc-500" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PlanCard({ plan, selected, onSelect }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(plan)}
+      className={`w-full text-left rounded-lg border-2 bg-white p-3 transition ${selected ? 'border-[#7c3aed]' : 'border-white hover:border-[#b58cff]'}`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <p className="font-bold text-sm">{plan.name}</p>
+          <p className="mt-2 text-xl font-black">{money(plan.price)}</p>
+        </div>
+        {selected && <span className="text-[10px] text-[#7c3aed]">selecionado</span>}
+      </div>
+      <div className="mt-2 space-y-1 text-[11px] text-slate-600">
+        <p className="flex gap-1"><Check className="w-3 h-3 text-emerald-500" /> Velocidade: {plan.download_mbps || plan.speed_download || 0} Mbps</p>
+        <p className="flex gap-1"><Check className="w-3 h-3 text-emerald-500" /> Tempo de conexao: {planHours(plan).toFixed(1).replace('.0', '')} hora(s)</p>
+        {planType(plan) === 'paid' && <p className="flex gap-1"><Check className="w-3 h-3 text-emerald-500" /> Pagamento via Pix</p>}
+      </div>
+    </button>
+  );
+}
 
 export default function CaptivePortal() {
-  const [step, setStep] = useState('form'); // form | checking | result
-  const [form, setForm] = useState({ name: '', cpf: '', email: '', phone: '' });
-  const [result, setResult] = useState(null);
+  const [stage, setStage] = useState(() => window.location.pathname.includes('captive-plans') ? 'plans' : 'choice');
+  const [plans, setPlans] = useState([]);
+  const [clients, setClients] = useState([]);
+  const [prospects, setProspects] = useState([]);
+  const [settings, setSettings] = useState({});
+  const [phone, setPhone] = useState('');
+  const [clientIdentifier, setClientIdentifier] = useState('');
+  const [form, setForm] = useState({ name: '', phone: '', cpf: '', cep: '' });
+  const [selectedPlanId, setSelectedPlanId] = useState('');
+  const [activeClient, setActiveClient] = useState(null);
+  const [activeProspect, setActiveProspect] = useState(null);
+  const [notice, setNotice] = useState('');
+  const [pixPayment, setPixPayment] = useState(null);
+  const [hotspotLogin, setHotspotLogin] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!form.name || !form.email || !form.cpf) return;
-    setLoading(true);
-    setStep('checking');
+  const visiblePlans = useMemo(
+    () => plans.filter((plan) => plan.status === 'active' && planType(plan) !== 'trial'),
+    [plans]
+  );
+  const freeAccessPlan = useMemo(
+    () => plans.find((plan) => (plan.id || plan._id) === settings.captive_prospect_plan_id) ||
+      plans.find((plan) => plan.status === 'active' && planType(plan) === 'trial'),
+    [plans, settings.captive_prospect_plan_id]
+  );
+  const selectedPlan = useMemo(
+    () => visiblePlans.find((plan) => (plan.id || plan._id) === selectedPlanId) || visiblePlans[0],
+    [visiblePlans, selectedPlanId]
+  );
 
-    let existingClient = null;
-    const cleanCpf = form.cpf.replace(/[^\d]/g, '');
+  useEffect(() => {
+    async function load() {
+      const [planData, clientData, prospectData, settingsData] = await Promise.all([
+        spedynet.functions.invoke('captivePlans', {}).then((res) => res.data || []).catch(() => []),
+        spedynet.entities.Client.list('-created_date', 500).catch(() => []),
+        spedynet.functions.invoke('captiveProspects', {}).then((res) => res.data || []).catch(() => []),
+        spedynet.entities.Setting.list().catch(() => [])
+      ]);
+      setPlans(planData);
+      setClients(clientData);
+      setProspects(prospectData);
+      setSettings(Object.fromEntries(settingsData.map((item) => [item.key, item.value])));
 
-    if (cleanCpf) {
-      // 1. Consulta no sistema local
-      const localClients = await base44.entities.Client.filter({ cpf: form.cpf }).catch(() => []);
-      existingClient = localClients.find(c => c.status === 'active');
-
-      // 2. Se não encontrou no sistema, consulta no IXC
-      if (!existingClient) {
-        try {
-          const ixcRes = await base44.functions.invoke('ixcConsultaCliente', { cpf: cleanCpf });
-          if (ixcRes.data && ixcRes.data.found && ixcRes.data.client?.status === 'active') {
-             const ixcData = ixcRes.data.client;
-             const radiusUser = `ixc-${ixcData.id}`;
-             
-             // Cadastra o cliente localmente como ativo (VIP)
-             existingClient = await base44.entities.Client.create({
-                name: ixcData.name || form.name,
-                cpf: form.cpf,
-                email: ixcData.email || form.email,
-                phone: ixcData.phone || form.phone,
-                status: 'active',
-                source: 'ixc',
-                ixc_id: String(ixcData.id),
-                radius_username: radiusUser,
-                radius_password: cleanCpf,
-             });
-             
-             await base44.entities.AuditLog.create({
-                action: 'ixc_client_sync', entity_type: 'client', entity_id: existingClient.id,
-                entity_name: existingClient.name, status: 'success',
-                message: `Cliente sincronizado do IXC via Captive Portal`
-             });
-          }
-        } catch (e) {
-          console.error("IXC Check error", e);
-        }
+      const params = getPortalParams();
+      const mac = normalizeMac(params.mac);
+      const known = prospectData.find((item) => mac && normalizeMac(item.mac_address) === mac);
+      if (known?.trial_expires_at && new Date(known.trial_expires_at) <= new Date()) {
+        setActiveProspect(known);
+        setNotice('Seu periodo gratis terminou. Escolha um plano para continuar navegando.');
+        setStage('plans');
       }
     }
+    load();
+  }, []);
 
-    if (existingClient) {
-      // IXC client found — provision RADIUS
-      await base44.entities.AuditLog.create({
-        action: 'captive_login_client', entity_type: 'client', entity_id: existingClient.id,
-        entity_name: existingClient.name, status: 'success',
-        message: `Cliente ${existingClient.name} autenticado via Captive Portal`
-      });
-      setResult({ type: 'client', client: existingClient });
-    } else {
-      // Not found in IXC — create prospect + trial
-      const trialExpires = new Date(Date.now() + TRIAL_MINUTES * 60 * 1000).toISOString();
-      const radiusUser = `trial-${Date.now()}`;
-
-      const prospect = await base44.entities.Prospect.create({
-        name: form.name, cpf: form.cpf, email: form.email, phone: form.phone,
-        status: 'new', trial_access: true, trial_expires_at: trialExpires,
-        trial_duration_minutes: TRIAL_MINUTES, radius_username: radiusUser,
-      });
-
-      await base44.entities.AuditLog.create({
-        action: 'captive_trial_grant', entity_type: 'prospect', entity_id: prospect.id,
-        entity_name: form.name, status: 'success',
-        message: `Trial de ${TRIAL_MINUTES}min criado para ${form.name} — RADIUS: ${radiusUser} — MikroTik provisioned`
-      });
-
-      setResult({ type: 'trial', prospect, trialExpires, radiusUser, minutes: TRIAL_MINUTES });
-    }
-
-    setLoading(false);
-    setStep('result');
+  const findClient = (value) => {
+    const d = digits(value);
+    const q = String(value || '').toLowerCase().trim();
+    return clients.find((client) =>
+      digits(client.phone) === d ||
+      digits(client.cpf) === d ||
+      String(client.email || '').toLowerCase() === q ||
+      String(client.radius_username || '').toLowerCase() === q
+    );
   };
 
-  const handleReset = () => {
-    setStep('form');
-    setForm({ name: '', cpf: '', email: '', phone: '' });
-    setResult(null);
+  const findProspect = (value) => {
+    const d = digits(value);
+    const params = getPortalParams();
+    const mac = normalizeMac(params.mac);
+    return prospects.find((item) =>
+      (d && digits(item.phone) === d) ||
+      (mac && normalizeMac(item.mac_address) === mac)
+    );
+  };
+
+  const startByPhone = async (event) => {
+    event.preventDefault();
+    if (!digits(phone)) return;
+    setLoading(true);
+    try {
+      const client = findClient(phone);
+      if (client) {
+        setActiveClient(client);
+        const params = getPortalParams();
+        const res = await spedynet.functions.invoke('captiveClientLogin', {
+          identifier: phone,
+          plan_id: settings.captive_vip_plan_id || '',
+          mac: params.mac,
+          ip: params.ip,
+          link_orig: settings.captive_redirect_url || params.linkOrig
+        });
+        setHotspotLogin(res.data?.login || res.data?.authorization);
+        setStage('welcome');
+        return;
+      }
+
+      const prospect = findProspect(phone);
+      if (prospect?.trial_expires_at && new Date(prospect.trial_expires_at) <= new Date()) {
+        setActiveProspect(prospect);
+        setNotice('Seu periodo gratis terminou. Escolha um plano para continuar navegando.');
+        setStage('plans');
+        return;
+      }
+
+      setForm((current) => ({ ...current, phone }));
+      setStage('register');
+    } catch (error) {
+      toast.error(error.message || 'Nao foi possivel liberar este acesso.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const startAsClient = async (event) => {
+    event.preventDefault();
+    if (!String(clientIdentifier || '').trim()) return;
+    setLoading(true);
+    try {
+      const client = findClient(clientIdentifier);
+      const params = getPortalParams();
+      if (client) {
+        setActiveClient(client);
+        const res = await spedynet.functions.invoke('captiveClientLogin', {
+          identifier: clientIdentifier,
+          mac: params.mac,
+          ip: params.ip,
+          link_orig: settings.captive_redirect_url || params.linkOrig
+        });
+        setHotspotLogin(res.data?.login || res.data?.authorization);
+        setStage('welcome');
+        return;
+      }
+
+      if (digits(clientIdentifier).length >= 11) {
+        const ixc = await spedynet.functions.invoke('ixcConsultaCliente', { cpf: clientIdentifier }).catch(() => ({ data: { found: false } }));
+        if (ixc.data?.found) {
+          const res = await spedynet.functions.invoke('captiveClientLogin', {
+            identifier: clientIdentifier,
+            plan_id: settings.captive_vip_plan_id || '',
+            mac: params.mac,
+            ip: params.ip,
+            link_orig: settings.captive_redirect_url || params.linkOrig
+          });
+          setHotspotLogin(res.data?.login || res.data?.authorization);
+          setActiveClient(res.data?.client || { name: ixc.data?.summary?.name || ixc.data?.name || 'Cliente' });
+          setStage('welcome');
+          return;
+        }
+      }
+
+      toast.error('Cliente nao encontrado. Continue em Nao sou cliente para fazer o primeiro acesso.');
+      setStage('phone');
+    } catch (error) {
+      toast.error(error.message || 'Nao foi possivel liberar cliente.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const registerFreeAccess = async (event) => {
+    event.preventDefault();
+    if (!form.name || !digits(form.phone) || !digits(form.cpf)) return;
+    setLoading(true);
+    try {
+      if (!freeAccessPlan) {
+        toast.error('Nenhum plano de primeiro acesso configurado.');
+        setStage('plans');
+        return;
+      }
+      const params = getPortalParams();
+      const res = await spedynet.functions.invoke('captiveRegister', {
+        ...form,
+        plan_id: freeAccessPlan?.id || freeAccessPlan?._id || '',
+        plan_name: freeAccessPlan?.name || '',
+        plan_price: freeAccessPlan?.price || 0,
+        mac: params.mac,
+        ip: params.ip,
+        link_orig: settings.captive_redirect_url || params.linkOrig,
+        minutes: freeAccessPlan.trial_duration_minutes
+      });
+      setActiveProspect(res.data?.prospect || null);
+      setHotspotLogin(res.data?.login || res.data?.authorization);
+      setStage('welcome');
+    } catch (error) {
+      toast.error(error.message || 'Erro ao cadastrar.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const ensureClientForPlan = async () => {
+    if (activeClient) return activeClient;
+    const existing = findClient(form.phone || phone);
+    if (existing) return existing;
+    const created = await spedynet.entities.Client.create({
+      name: form.name || activeProspect?.name || 'Cliente Hotspot',
+      phone: form.phone || activeProspect?.phone || phone,
+      cpf: form.cpf || activeProspect?.cpf || '',
+      cep: form.cep || activeProspect?.cep || '',
+      status: 'pending_payment',
+      source: 'captive_portal'
+    });
+    setActiveClient(created);
+    return created;
+  };
+
+  const continuePlan = async () => {
+    if (!selectedPlan) return;
+    setLoading(true);
+    try {
+      const params = getPortalParams();
+      const client = await ensureClientForPlan();
+      if (planType(selectedPlan) === 'paid') {
+        const res = await spedynet.functions.invoke('createPixPayment', {
+          clientId: client.id || client._id,
+          planId: selectedPlan.id || selectedPlan._id,
+          mac: params.mac,
+          ip: params.ip
+        });
+        setPixPayment(res.data.payment);
+        setStage('pix');
+      } else {
+        const res = await spedynet.functions.invoke('activateFreePlan', {
+          clientId: client.id || client._id,
+          planId: selectedPlan.id || selectedPlan._id,
+          mac: params.mac,
+          ip: params.ip
+        });
+        setHotspotLogin(res.data?.login || res.data?.authorization);
+        setStage('welcome');
+      }
+    } catch (error) {
+      toast.error(error.message || 'Nao foi possivel continuar.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const checkPix = async () => {
+    if (!pixPayment) return;
+    setLoading(true);
+    try {
+      const res = await spedynet.functions.invoke('checkPixPayment', {
+        id: pixPayment.id,
+        provider_payment_id: pixPayment.provider_payment_id
+      });
+      setPixPayment(res.data.payment);
+      if (res.data.payment?.status === 'approved') {
+        setHotspotLogin(res.data.payment?.authorization || null);
+        setStage('welcome');
+      }
+      else toast.info('Pagamento ainda pendente.');
+    } catch (error) {
+      toast.error(error.message || 'Erro ao verificar pagamento.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4 relative overflow-hidden">
-      {/* Animated particle network background */}
-      <AnimatedBackground />
-      {/* Subtle gradient overlays on top of canvas */}
-      <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 1 }}>
-        <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent" />
-        <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-primary/20 to-transparent" />
-      </div>
-
-      <div className="w-full max-w-md relative" style={{ zIndex: 2 }}>
-        {/* Logo */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary/10 border border-primary/30 mb-4 glow-cyan">
-            <Wifi className="w-8 h-8 text-primary" />
+    <Shell settings={settings}>
+      {stage === 'choice' && (
+        <div className="space-y-5">
+          <div className="text-center">
+            <h1 className="font-black text-base">Ola, seja bem-vindo(a)</h1>
+            <p className="mt-4 text-sm leading-6 text-slate-600 text-left">Escolha como deseja acessar nossa rede wi-fi.</p>
           </div>
-          <h1 className="text-2xl font-bold text-foreground">Kore-HotSpot</h1>
-          <p className="text-muted-foreground text-sm mt-1">Conecte-se à internet gratuitamente</p>
+          <div className="space-y-3">
+            <button
+              type="button"
+              onClick={() => setStage('client')}
+              className="w-full rounded-lg bg-white p-4 text-left shadow-sm border-2 border-white hover:border-[#7c3aed]"
+            >
+              <div className="flex items-center gap-3">
+                <Users className="w-5 h-5 text-[#7c3aed]" />
+                <div>
+                  <p className="font-black">Sou cliente</p>
+                  <p className="text-xs text-slate-600">Liberar direto pelo CPF, telefone ou login</p>
+                </div>
+              </div>
+            </button>
+            <button
+              type="button"
+              onClick={() => setStage('phone')}
+              className="w-full rounded-lg bg-white p-4 text-left shadow-sm border-2 border-white hover:border-[#7c3aed]"
+            >
+              <div className="flex items-center gap-3">
+                <User className="w-5 h-5 text-[#7c3aed]" />
+                <div>
+                  <p className="font-black">Nao sou cliente</p>
+                  <p className="text-xs text-slate-600">Primeiro acesso gratis e cadastro rapido</p>
+                </div>
+              </div>
+            </button>
+          </div>
         </div>
+      )}
 
-        {/* Step: Form */}
-        {step === 'form' && (
-          <div className="bg-card border border-border rounded-2xl p-6 shadow-2xl">
-            <h2 className="text-lg font-semibold text-foreground mb-1">Cadastro de Acesso</h2>
-            <p className="text-sm text-muted-foreground mb-5">Preencha seus dados para se conectar</p>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <Label className="text-xs text-muted-foreground mb-1.5 block">Nome Completo *</Label>
-                <div className="relative">
-                  <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Seu nome" className="pl-9 bg-input border-border h-10" required />
-                </div>
-              </div>
-              <div>
-                <Label className="text-xs text-muted-foreground mb-1.5 block">CPF *</Label>
-                <div className="relative">
-                  <CreditCard className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input value={form.cpf} onChange={e => setForm({ ...form, cpf: e.target.value })} placeholder="000.000.000-00" className="pl-9 bg-input border-border h-10 font-mono" required />
-                </div>
-              </div>
-              <div>
-                <Label className="text-xs text-muted-foreground mb-1.5 block">E-mail *</Label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="seu@email.com" className="pl-9 bg-input border-border h-10" required />
-                </div>
-              </div>
-              <div>
-                <Label className="text-xs text-muted-foreground mb-1.5 block">Telefone</Label>
-                <div className="relative">
-                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} placeholder="(00) 00000-0000" className="pl-9 bg-input border-border h-10" />
-                </div>
-              </div>
-              <Button type="submit" className="w-full h-11 bg-primary text-primary-foreground hover:bg-primary/90 font-semibold gap-2 mt-2">
-                Conectar <ArrowRight className="w-4 h-4" />
-              </Button>
-            </form>
-            <p className="text-[10px] text-muted-foreground text-center mt-4 flex items-center justify-center gap-1">
-              <Shield className="w-3 h-3" />Seus dados são protegidos e não serão compartilhados
-            </p>
+      {stage === 'client' && (
+        <form onSubmit={startAsClient} className="space-y-5">
+          <div className="text-center">
+            <h1 className="font-black text-base">Ja sou cliente</h1>
+            <p className="mt-4 text-sm leading-6 text-slate-600 text-left">Digite seu CPF, telefone ou usuario para liberar o acesso.</p>
           </div>
-        )}
+          <div className="rounded-lg bg-white p-4 shadow-sm">
+            <Label className="text-sm font-semibold">Identificacao</Label>
+            <Input value={clientIdentifier} onChange={(e) => setClientIdentifier(e.target.value)} className="mt-2 h-10 border-slate-900 bg-white" placeholder="CPF, telefone ou usuario" />
+            <Button disabled={loading} className="mt-4 h-10 w-full bg-[#7c3aed] text-white hover:bg-[#6d28d9]">
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Liberar acesso'}
+            </Button>
+            <button type="button" onClick={() => setStage('choice')} className="mt-3 w-full text-xs text-slate-500">Voltar</button>
+          </div>
+        </form>
+      )}
 
-        {/* Step: Checking */}
-        {step === 'checking' && (
-          <div className="bg-card border border-border rounded-2xl p-8 text-center shadow-2xl">
-            <div className="w-16 h-16 rounded-full bg-primary/10 border border-primary/30 flex items-center justify-center mx-auto mb-4">
-              <Loader2 className="w-8 h-8 text-primary animate-spin" />
-            </div>
-            <h2 className="text-lg font-semibold text-foreground mb-2">Verificando dados...</h2>
-            <p className="text-sm text-muted-foreground">Consultando cadastro no sistema</p>
-            <div className="mt-6 space-y-2">
-              {['Verificando CPF no IXC...', 'Consultando status da conta...', 'Configurando acesso...'].map((msg, i) => (
-                <div key={i} className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <div className="w-1.5 h-1.5 rounded-full bg-primary/50 animate-pulse" style={{ animationDelay: `${i * 0.3}s` }} />
-                  {msg}
-                </div>
-              ))}
-            </div>
+      {stage === 'phone' && (
+        <form onSubmit={startByPhone} className="space-y-5">
+          <div className="text-center">
+            <h1 className="font-black text-base">Ola, seja bem-vindo(a)</h1>
+            <p className="mt-4 text-sm leading-6 text-slate-600 text-left">Notamos que este dispositivo esta acessando nossa rede wi-fi.</p>
           </div>
-        )}
+          <div className="rounded-lg bg-white p-4 shadow-sm">
+            <Label className="text-sm font-semibold">Digite seu Telefone</Label>
+            <Input value={phone} onChange={(e) => setPhone(e.target.value)} className="mt-2 h-10 border-slate-900 bg-white" placeholder="(99) 9 9999-9999" />
+            <Button disabled={loading} className="mt-4 h-10 w-full bg-[#7c3aed] text-white hover:bg-[#6d28d9]">
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Vamos iniciar!'}
+            </Button>
+            <button type="button" onClick={() => setStage('choice')} className="mt-3 w-full text-xs text-slate-500">Voltar</button>
+          </div>
+        </form>
+      )}
 
-        {/* Step: Result — Client */}
-        {step === 'result' && result?.type === 'client' && (
-          <div className="bg-card border border-success/30 rounded-2xl p-8 text-center shadow-2xl glow-cyan">
-            <div className="w-16 h-16 rounded-full bg-success/10 border border-success/30 flex items-center justify-center mx-auto mb-4">
-              <CheckCircle className="w-8 h-8 text-success" />
-            </div>
-            <h2 className="text-lg font-semibold text-foreground mb-2">Acesso Liberado!</h2>
-            <p className="text-sm text-muted-foreground mb-4">Bem-vindo de volta, <span className="text-foreground font-medium">{result.client.name}</span></p>
-            <div className="bg-success/5 border border-success/20 rounded-xl p-4 text-left mb-6">
-              <div className="flex items-center gap-2 text-sm font-medium text-success mb-2"><Wifi className="w-4 h-4" />Conectado com sucesso</div>
-              <p className="text-xs text-muted-foreground">Plano: <span className="text-foreground">{result.client.plan_name || 'Padrão'}</span></p>
-              <p className="text-xs text-muted-foreground mt-1">RADIUS: <span className="font-mono text-foreground">{result.client.radius_username}</span></p>
-            </div>
-            <Button onClick={handleReset} variant="outline" size="sm" className="border-border">Novo acesso</Button>
+      {stage === 'register' && (
+        <form onSubmit={registerFreeAccess} className="rounded-md bg-white p-4 shadow-sm space-y-3">
+          <div className="text-center">
+            <h1 className="font-black text-base">Crie sua conta</h1>
+            <p className="text-xs text-slate-500">Campos marcados com * sao obrigatorios</p>
           </div>
-        )}
+          <div>
+            <Label>Nome*</Label>
+            <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="mt-1 border-slate-900 bg-white" placeholder="Digite seu nome completo" />
+          </div>
+          <div>
+            <Label>Telefone*</Label>
+            <Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="mt-1 border-slate-900 bg-white" placeholder="(99) 9 9999-9999" />
+          </div>
+          <div>
+            <Label>CPF*</Label>
+            <Input value={form.cpf} onChange={(e) => setForm({ ...form, cpf: e.target.value })} className="mt-1 border-slate-900 bg-white" placeholder="Digite seu CPF" />
+          </div>
+          <div>
+            <Label>CEP</Label>
+            <Input value={form.cep} onChange={(e) => setForm({ ...form, cep: e.target.value })} className="mt-1 border-slate-900 bg-white" placeholder="Digite seu CEP" />
+          </div>
+          <Button disabled={loading} className="mt-8 h-10 w-full bg-[#7c3aed] text-white hover:bg-[#6d28d9]">
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Cadastrar'}
+          </Button>
+        </form>
+      )}
 
-        {/* Step: Result — Trial */}
-        {step === 'result' && result?.type === 'trial' && (
-          <div className="bg-card border border-warning/30 rounded-2xl p-8 text-center shadow-2xl">
-            <div className="w-16 h-16 rounded-full bg-warning/10 border border-warning/30 flex items-center justify-center mx-auto mb-4">
-              <Clock className="w-8 h-8 text-warning" />
-            </div>
-            <h2 className="text-lg font-semibold text-foreground mb-2">Acesso Trial Liberado!</h2>
-            <p className="text-sm text-muted-foreground mb-4">Você tem <span className="text-warning font-bold">{result.minutes} minutos</span> de acesso gratuito</p>
-            <div className="bg-warning/5 border border-warning/20 rounded-xl p-4 text-left mb-4">
-              <div className="flex items-center gap-2 text-sm font-medium text-warning mb-2"><Clock className="w-4 h-4" />Trial ativo por {result.minutes} minutos</div>
-              <p className="text-xs text-muted-foreground">Usuário RADIUS: <span className="font-mono text-foreground">{result.radiusUser}</span></p>
-              <p className="text-xs text-muted-foreground mt-1">Expira em: <span className="font-mono text-foreground">{new Date(result.trialExpires).toLocaleTimeString('pt-BR')}</span></p>
-            </div>
-            <div className="bg-primary/5 border border-primary/20 rounded-xl p-4 text-left mb-6">
-              <p className="text-xs font-medium text-primary mb-1">🎁 Assine um plano e ganhe:</p>
-              <ul className="text-xs text-muted-foreground space-y-0.5">
-                <li>• Acesso ilimitado sem restrições</li>
-                <li>• Velocidade dedicada</li>
-                <li>• Suporte 24h</li>
-              </ul>
-            </div>
-            <Button onClick={handleReset} variant="outline" size="sm" className="border-border">Voltar</Button>
+      {stage === 'welcome' && (
+        <div className="min-h-[370px] flex flex-col">
+          <div className="text-center">
+            <h1 className="font-black text-base">Ola {activeClient?.name || activeProspect?.name || form.name || 'cliente'}!</h1>
+            <p className="mt-5 text-sm leading-5 text-slate-600 text-left">Seja muito bem-vindo(a) a nossa rede wi-fi. Aproveite a conexao com internet e volte sempre!</p>
           </div>
-        )}
-      </div>
-    </div>
+          <Button onClick={() => loginToMikrotik(hotspotLogin, settings.captive_redirect_url || getPortalParams().linkOrig)} className="mt-auto mx-auto h-10 bg-[#7c3aed] px-6 text-white hover:bg-[#6d28d9]">
+            Conectar-se
+          </Button>
+        </div>
+      )}
+
+      {stage === 'plans' && (
+        <div className="min-h-[390px] flex flex-col">
+          <div className="text-center">
+            <h1 className="font-black text-base">Selecione um plano</h1>
+            <p className="mt-3 text-sm leading-5 text-slate-600 text-left">{notice || 'Clique em uma das opcoes abaixo para selecionar um plano de internet.'}</p>
+          </div>
+          <div className="mt-4 space-y-3">
+            {visiblePlans.map((plan) => (
+              <PlanCard
+                key={plan.id || plan._id}
+                plan={plan}
+                selected={(selectedPlan?.id || selectedPlan?._id) === (plan.id || plan._id)}
+                onSelect={(item) => setSelectedPlanId(item.id || item._id)}
+              />
+            ))}
+            {!visiblePlans.length && <p className="text-center text-sm text-slate-600">Nenhum plano disponivel.</p>}
+          </div>
+          <Button disabled={loading || !selectedPlan} onClick={continuePlan} className="mt-auto h-10 w-full bg-[#7c3aed] text-white hover:bg-[#6d28d9]">
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <>{selectedPlan && planType(selectedPlan) === 'paid' ? 'Continuar para pagamento' : 'Liberar acesso'} <ArrowRight className="w-4 h-4 ml-1" /></>}
+          </Button>
+        </div>
+      )}
+
+      {stage === 'pix' && pixPayment && (
+        <div className="min-h-[390px] flex flex-col">
+          <div className="text-center">
+            <QrCode className="w-7 h-7 mx-auto text-[#7c3aed]" />
+            <h1 className="mt-2 font-black text-base">Pagamento Pix</h1>
+            <p className="mt-2 text-sm text-slate-600">{pixPayment.plan_name} - {money(pixPayment.amount)}</p>
+          </div>
+          {pixPayment.qr_code_base64 && (
+            <img src={`data:image/png;base64,${pixPayment.qr_code_base64}`} alt="QR Code Pix" className="mx-auto mt-4 w-44 rounded-lg bg-white p-2" />
+          )}
+          <div className="mt-3 max-h-24 overflow-auto rounded bg-white p-2 text-[10px] break-all text-slate-600">{pixPayment.qr_code}</div>
+          <div className="mt-auto grid grid-cols-2 gap-2">
+            <Button type="button" variant="outline" onClick={() => navigator.clipboard.writeText(pixPayment.qr_code || '').then(() => toast.success('Pix copiado'))}>
+              <Copy className="w-4 h-4 mr-1" /> Copiar
+            </Button>
+            <Button disabled={loading} onClick={checkPix} className="bg-[#7c3aed] text-white hover:bg-[#6d28d9]">
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4 mr-1" />} Verificar
+            </Button>
+          </div>
+        </div>
+      )}
+    </Shell>
   );
 }

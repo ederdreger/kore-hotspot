@@ -1,4 +1,5 @@
-import { Menu, Bell, Wifi, Activity, LogOut } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Menu, Bell, Activity, LogOut, Sun, Moon } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '@/lib/AuthContext';
@@ -20,6 +21,12 @@ export default function TopBar({ onMenuClick }) {
   const location = useLocation();
   const { logout, user } = useAuth();
   const label = routeLabels[location.pathname] || 'Kore-HotSpot';
+  const [theme, setTheme] = useState(() => localStorage.getItem('kore_theme') || 'dark');
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('light', theme === 'light');
+    localStorage.setItem('kore_theme', theme);
+  }, [theme]);
 
   return (
     <header className="h-14 border-b border-border bg-card/80 backdrop-blur-sm flex items-center justify-between px-4 lg:px-6 sticky top-0 z-30">
@@ -43,6 +50,14 @@ export default function TopBar({ onMenuClick }) {
         <button className="relative p-2 text-muted-foreground hover:text-foreground transition-colors">
           <Bell className="w-4 h-4" />
           <span className="absolute top-1 right-1 w-1.5 h-1.5 bg-primary rounded-full" />
+        </button>
+
+        <button
+          onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
+          className="p-2 text-muted-foreground hover:text-foreground transition-colors"
+          title={theme === 'light' ? 'Usar modo escuro' : 'Usar modo claro'}
+        >
+          {theme === 'light' ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
         </button>
 
         <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-secondary border border-border">

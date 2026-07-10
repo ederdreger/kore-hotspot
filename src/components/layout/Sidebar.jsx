@@ -1,5 +1,7 @@
 import { Link, useLocation } from 'react-router-dom';
+import { useEffect, useState } from 'react';
 import { cn } from '@/lib/utils';
+import { spedynet } from '@/api/spedynetClient';
 import {
   LayoutDashboard, Users, UserSearch, Zap, Ticket, Megaphone,
   Settings, ScrollText, Wifi, ChevronRight, X, Radio, Signal, UserCog, Network
@@ -10,6 +12,7 @@ import { Server } from 'lucide-react';
 const navItems = [
   { label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard' },
   { label: 'Clientes', icon: Users, path: '/clients' },
+  { label: 'Prospectos', icon: UserSearch, path: '/prospects' },
   { label: 'Equipamentos', icon: Server, path: '/mikrotiks' },
   { label: 'VPN L2TP', icon: Network, path: '/vpn' },
   { label: 'Planos', icon: Zap, path: '/plans' },
@@ -24,6 +27,13 @@ const navItems = [
 
 export default function Sidebar({ open, onClose }) {
   const location = useLocation();
+  const [sidebarLogoUrl, setSidebarLogoUrl] = useState('');
+
+  useEffect(() => {
+    spedynet.entities.Setting.filter({ key: 'sidebar_logo_url' })
+      .then((res) => setSidebarLogoUrl(res?.[0]?.value || ''))
+      .catch(() => {});
+  }, []);
 
   return (
     <>
@@ -34,7 +44,7 @@ export default function Sidebar({ open, onClose }) {
         />
       )}
       <aside className={cn(
-        "fixed top-0 left-0 h-full w-64 z-50 flex flex-col",
+        "kore-sidebar fixed top-0 left-0 h-full w-64 z-50 flex flex-col",
         "bg-card border-r border-border transition-transform duration-300",
         "lg:translate-x-0 lg:static lg:z-auto",
         open ? "translate-x-0" : "-translate-x-full"
@@ -45,10 +55,14 @@ export default function Sidebar({ open, onClose }) {
             <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center glow-cyan">
               <Wifi className="w-4 h-4 text-primary-foreground" />
             </div>
-            <div>
-              <p className="font-bold text-sm text-foreground">Kore</p>
-              <p className="text-xs text-primary font-mono tracking-widest">HOTSPOT</p>
-            </div>
+            {sidebarLogoUrl ? (
+              <img src={sidebarLogoUrl} alt="Kore-HotSpot" className="max-h-9 max-w-[150px] object-contain" />
+            ) : (
+              <div>
+                <p className="font-bold text-sm text-foreground">Kore</p>
+                <p className="text-xs text-primary font-mono tracking-widest">HOTSPOT</p>
+              </div>
+            )}
           </div>
           <button onClick={onClose} className="lg:hidden text-muted-foreground hover:text-foreground">
             <X className="w-4 h-4" />

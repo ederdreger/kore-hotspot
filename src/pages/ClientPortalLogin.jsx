@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { base44 } from '@/api/base44Client';
+import { spedynet } from '@/api/spedynetClient';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -21,7 +21,7 @@ export default function ClientPortalLogin() {
     }
     setLoading(true);
     try {
-      const res = await base44.functions.invoke('clientAuth', { username, password });
+      const res = await spedynet.functions.invoke('clientAuth', { username, password });
       if (res.data.success) {
         localStorage.setItem('portal_client_id', res.data.client.id);
         toast.success('Login realizado com sucesso!');

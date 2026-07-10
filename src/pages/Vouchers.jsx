@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { base44 } from '@/api/base44Client';
+import { spedynet } from '@/api/spedynetClient';
 import StatusBadge from '@/components/ui/StatusBadge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -27,7 +27,7 @@ export default function Vouchers() {
 
   const load = async () => {
     setLoading(true);
-    const [vs, ps] = await Promise.all([base44.entities.Voucher.list('-created_date', 200), base44.entities.Plan.filter({ status: 'active' })]);
+    const [vs, ps] = await Promise.all([spedynet.entities.Voucher.list('-created_date', 200), spedynet.entities.Plan.filter({ status: 'active' })]);
     setVouchers(vs); setPlans(ps); setLoading(false);
   };
 
@@ -49,13 +49,19 @@ export default function Vouchers() {
       code: generateCode(8),
       plan_id: form.plan_id || '',
       plan_name: plan?.name || 'Sem plano',
+      plan_type: plan?.plan_type || (plan?.is_trial ? 'trial' : Number(plan?.price || 0) > 0 ? 'paid' : 'free'),
+      download_mbps: Number(plan?.download_mbps || plan?.speed_download || 0),
+      upload_mbps: Number(plan?.upload_mbps || plan?.speed_upload || 0),
+      speed_download: Number(plan?.download_mbps || plan?.speed_download || 0),
+      speed_upload: Number(plan?.upload_mbps || plan?.speed_upload || 0),
+      quota_gb: Number(plan?.quota_gb || 0),
       duration_minutes: Number(form.duration_minutes) || 30,
       status: 'available',
       batch_id: batch,
       notes: form.notes
     }));
-    await Promise.all(vouchersToCreate.map(v => base44.entities.Voucher.create(v)));
-    await base44.entities.AuditLog.create({ action: 'create_vouchers', entity_type: 'voucher', entity_name: `Lote ${batch}`, status: 'success', message: `${qty} voucher(s) criado(s)` });
+    await Promise.all(vouchersToCreate.map(v => spedynet.entities.Voucher.create(v)));
+    await spedynet.entities.AuditLog.create({ action: 'create_vouchers', entity_type: 'voucher', entity_name: `Lote ${batch}`, status: 'success', message: `${qty} voucher(s) criado(s)` });
     toast.success(`${qty} voucher(s) criado(s)!`);
     setShowDialog(false);
     load();
@@ -64,7 +70,7 @@ export default function Vouchers() {
 
   const handleDelete = async (v) => {
     if (!confirm(`Remover voucher ${v.code}?`)) return;
-    await base44.entities.Voucher.delete(v.id);
+    await spedynet.entities.Voucher.delete(v.id);
     toast.success('Voucher removido');
     load();
   };
@@ -148,6 +154,7 @@ export default function Vouchers() {
                   <td className="px-4 py-3 hidden md:table-cell">
                     <p className="text-xs text-foreground">{v.plan_name || '—'}</p>
                     <div className="flex items-center gap-1 mt-0.5"><Clock className="w-3 h-3 text-muted-foreground" /><span className="text-xs text-muted-foreground font-mono">{v.duration_minutes}min</span></div>
+                    {(v.download_mbps || v.upload_mbps) && <p className="text-[10px] text-muted-foreground font-mono">{v.download_mbps || 0}/{v.upload_mbps || 0} Mbps</p>}
                   </td>
                   <td className="px-4 py-3"><StatusBadge status={v.status} /></td>
                   <td className="px-4 py-3 hidden lg:table-cell">

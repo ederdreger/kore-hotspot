@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { base44 } from '@/api/base44Client';
+import { spedynet } from '@/api/spedynetClient';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Server, Activity, ArrowDown, ArrowUp, Cpu, MemoryStick } from 'lucide-react';
 import { format } from 'date-fns';
@@ -8,6 +8,24 @@ export default function SnmpPerformanceDashboard({ mikrotik, token }) {
   const [data, setData] = useState([]);
   const [current, setCurrent] = useState({ cpu: 0, memTotal: 0, memUsed: 0, rxMbps: 0, txMbps: 0, protocol: '' });
   const [error, setError] = useState('');
+
+  const normalizeMetrics = (payload = {}) => {
+    const raw = payload.data || payload.metrics || payload;
+    const total = Number(raw.memTotal ?? raw.total_memory ?? raw.totalMemory ?? 0);
+    const free = Number(raw.free_memory ?? raw.freeMemory ?? 0);
+    const usedPercent = Number(raw.memory_used_percent ?? raw.memPercent ?? NaN);
+    const used = Number(raw.memUsed ?? raw.used_memory ?? (Number.isFinite(usedPercent) && total ? (usedPercent / 100) * total : (total && free ? total - free : 0)));
+
+    return {
+      cpu: Number(raw.cpu ?? raw.cpu_load ?? 0),
+      memTotal: total,
+      memUsed: used,
+      memPercent: Number.isFinite(usedPercent) ? usedPercent : (total ? Math.round((used / total) * 100) : 0),
+      rxMbps: Number(raw.rxMbps ?? raw.rx_mbps ?? raw.download_mbps ?? 0),
+      txMbps: Number(raw.txMbps ?? raw.tx_mbps ?? raw.upload_mbps ?? 0),
+      protocol: raw.protocol || raw.collection_protocol || (raw.connected || raw.online ? 'SSH' : 'Offline')
+    };
+  };
 
   useEffect(() => {
     if (!mikrotik || !token) return;
@@ -20,18 +38,19 @@ export default function SnmpPerformanceDashboard({ mikrotik, token }) {
       if (isFetching) return;
       isFetching = true;
       try {
-        const res = await base44.functions.invoke('mikrotikPerformance', {
+        const res = await spedynet.functions.invoke('mikrotikPerformance', {
           host: mikrotik.host,
           port: mikrotik.port,
           user: mikrotik.user,
           password: mikrotik.password,
+          auth_method: mikrotik.ssh_auth_method || 'key',
           community: mikrotik.snmp_community || 'public',
           interface_name: mikrotik.physical_interface || 'ether1',
           token: token
         });
         
-        if (res.data?.success && isSubscribed) {
-          const metrics = res.data.data;
+        if ((res.data?.success || res.data?.connected || res.data?.online) && isSubscribed) {
+          const metrics = normalizeMetrics(res.data);
           setCurrent(metrics);
           setError('');
           
@@ -74,7 +93,7 @@ export default function SnmpPerformanceDashboard({ mikrotik, token }) {
 
   if (!mikrotik) return null;
 
-  const memPercent = current.memTotal ? Math.round((current.memUsed / current.memTotal) * 100) : 0;
+  const memPercent = Number(current.memPercent ?? (current.memTotal ? Math.round((current.memUsed / current.memTotal) * 100) : 0));
 
   return (
     <div className="bg-card border border-border rounded-xl p-5 mb-6">

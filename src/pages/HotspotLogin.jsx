@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { base44 } from '@/api/base44Client';
+import { spedynet } from '@/api/spedynetClient';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -80,9 +80,9 @@ export default function HotspotLogin() {
 
     // Valida contra clientes cadastrados pelo admin
     // username = radius_username ou email, password = radius_password
-    const byRadius = await base44.entities.Client.filter({ radius_username: form.username }).catch(() => []);
+    const byRadius = await spedynet.entities.Client.filter({ radius_username: form.username }).catch(() => []);
     const byEmail = byRadius.length === 0
-      ? await base44.entities.Client.filter({ email: form.username }).catch(() => [])
+      ? await spedynet.entities.Client.filter({ email: form.username }).catch(() => [])
       : [];
 
     const candidates = [...byRadius, ...byEmail];
@@ -93,7 +93,7 @@ export default function HotspotLogin() {
 
     if (client) {
       // Log successful access
-      await base44.entities.AuditLog.create({
+      await spedynet.entities.AuditLog.create({
         action: 'hotspot_login', entity_type: 'client', entity_id: client.id,
         entity_name: client.name, status: 'success',
         message: `Login no hotspot: ${client.name} (${form.username})`
@@ -107,7 +107,7 @@ export default function HotspotLogin() {
       } else {
         setErrorMsg('Usuário não encontrado. Apenas usuários cadastrados pelo administrador podem acessar.');
       }
-      await base44.entities.AuditLog.create({
+      await spedynet.entities.AuditLog.create({
         action: 'hotspot_login_failed', entity_type: 'client', entity_id: '',
         entity_name: form.username, status: 'error',
         message: `Tentativa de login falhou: ${form.username}`
@@ -264,7 +264,7 @@ export default function HotspotLogin() {
 
       {/* Footer */}
       <p className="absolute bottom-4 text-[10px] text-muted-foreground/50 font-mono" style={{ zIndex: 2 }}>
-        Kore-HotSpot v1.0 · Powered by Base44
+        Kore-HotSpot v1.0 - Spedynet Telecom
       </p>
     </div>
   );

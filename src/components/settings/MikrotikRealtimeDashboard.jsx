@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
-import { base44 } from '@/api/base44Client';
+import { spedynet } from '@/api/spedynetClient';
 import { Button } from '@/components/ui/button';
 import { Activity, AlertTriangle, Cpu, HardDrive, RefreshCw, Router, Users, Wifi } from 'lucide-react';
 
 function MonitorCard({ device, status }) {
   const online = status?.online === true || status?.connected === true;
   const snmpOk = status?.snmp_connected === true && !status?.snmp_error;
-  const memoryUsed = online && status?.total_memory && status?.free_memory
-    ? Math.round(((status.total_memory - status.free_memory) / status.total_memory) * 100)
+  const memoryUsed = online
+    ? Number(status?.memory_used_percent ?? (status?.total_memory && status?.free_memory ? Math.round(((status.total_memory - status.free_memory) / status.total_memory) * 100) : NaN))
     : null;
+  const memoryFreeMb = online && status?.free_memory ? (Number(status.free_memory) / 1024 / 1024).toFixed(1) : null;
 
   return (
     <div className="bg-card border border-border rounded-xl p-4 space-y-3">
@@ -36,7 +37,7 @@ function MonitorCard({ device, status }) {
           </div>
           <div className="bg-secondary/50 rounded-lg p-2">
             <div className="flex items-center gap-1 text-muted-foreground"><HardDrive className="w-3 h-3" /> Memória</div>
-            <p className="font-mono font-semibold text-foreground">{memoryUsed ?? '—'}%</p>
+            <p className="font-mono font-semibold text-foreground">{memoryFreeMb || (Number.isFinite(memoryUsed) ? memoryUsed : '—')}{memoryFreeMb ? ' MB' : '%'}</p>
           </div>
           <div className="bg-secondary/50 rounded-lg p-2">
             <div className="flex items-center gap-1 text-muted-foreground"><Users className="w-3 h-3" /> Usuários</div>
@@ -73,16 +74,32 @@ export default function MikrotikRealtimeDashboard({ devices, token }) {
 
     const results = await Promise.all(devices.map(async (device) => {
       try {
-        const response = await base44.functions.invoke('mikrotikStatus', {
+        const vpnAccounts = await spedynet.entities.VpnAccount.list('-created_date', 100).catch(() => []);
+        const vpnStatus = await spedynet.functions.invoke('vpnStatus').catch(() => null);
+        const activeVpnConnections = vpnStatus?.data?.vpn_connections || [];
+        const vpnAccount = vpnAccounts.find((account) => (
+          account.name === device.name ||
+          account.username === device.vpn_user ||
+          account.remote_ip === device.host
+        ));
+        const fallbackVpnIp = activeVpnConnections.length === 1 ? activeVpnConnections[0].address : null;
+        const response = await spedynet.functions.invoke('mikrotikStatus', {
           host: device.host,
+          remote_ip: vpnAccount?.remote_ip || fallbackVpnIp,
           port: device.port || '22',
           user: device.user || 'admin',
           password: device.password || '',
+          auth_method: device.ssh_auth_method || 'key',
           token,
         });
         return [device._id, response.data];
       } catch (error) {
-        return [device._id, { online: false, error: error?.response?.status === 504 ? 'Consulta excedeu o tempo limite' : (error?.response?.data?.error || 'Falha ao consultar MikroTik via SSH') }];
+        return [device._id, {
+          online: false,
+          error: error?.response?.status === 504
+            ? 'Consulta excedeu o tempo limite'
+            : (error?.response?.data?.error || error?.message || 'Falha ao consultar MikroTik via SSH')
+        }];
       }
     }));
 
