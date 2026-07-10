@@ -112,9 +112,8 @@ function readDb() {
     if (!exists) seeded.Setting.push(setting);
   }
 
-  for (const admin of DEFAULT_ADMINS) {
-    const exists = seeded.AdminUser.find((user) => normalize(user.email) === admin.email);
-    if (!exists) {
+  if (!seeded.AdminUser.length) {
+    for (const admin of DEFAULT_ADMINS) {
       const id = newId('AdminUser');
       seeded.AdminUser.push({
         id,
@@ -126,11 +125,6 @@ function readDb() {
         created_date: now(),
         updated_date: now()
       });
-    } else {
-      exists.role = 'admin';
-      exists.status = 'active';
-      exists.permissions = ['*'];
-      exists.password = DEFAULT_PASSWORD;
     }
   }
 
@@ -342,8 +336,24 @@ async function adminAuth(payload = {}) {
   const { action, email, password, token, userId, role, full_name, newPassword } = payload;
 
   if (action === 'resetDefaults') {
-    localStorage.removeItem(STORAGE_KEY);
-    readDb();
+    const existing = db.AdminUser.filter((user) => !DEFAULT_ADMINS.some((admin) => normalize(admin.email) === normalize(user.email)));
+    const defaults = DEFAULT_ADMINS.map((admin) => {
+      const id = newId('AdminUser');
+      return {
+        id,
+        _id: id,
+        ...admin,
+        status: 'active',
+        role: 'admin',
+        permissions: ['*'],
+        password: DEFAULT_PASSWORD,
+        created_date: now(),
+        updated_date: now()
+      };
+    });
+    db.AdminUser = [...defaults, ...existing];
+    db.AdminSession = [];
+    writeDb(db);
     return { success: true, email: DEFAULT_ADMINS.map((user) => user.email).join(' / '), password: DEFAULT_PASSWORD };
   }
 

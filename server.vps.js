@@ -567,8 +567,24 @@ function publicAdmin(user) {
   return safeUser;
 }
 
-function ensureDefaultAdmins({ resetPassword = false } = {}) {
+function ensureDefaultAdmins({ resetPassword = false, force = false } = {}) {
   const users = readJson(ENTITY_FILES.admins, []);
+  if (!force && users.length > 0) {
+    let changedExisting = false;
+    for (const user of users) {
+      if (!user.password_hash && user.password) {
+        user.password_hash = passwordHash(user.password);
+        delete user.password;
+        changedExisting = true;
+      }
+      if (user.role === 'admin' && !Array.isArray(user.permissions)) {
+        user.permissions = ['*'];
+        changedExisting = true;
+      }
+    }
+    if (changedExisting) writeJson(ENTITY_FILES.admins, users);
+    return users;
+  }
   let changed = false;
   for (const admin of DEFAULT_ADMINS) {
     const email = normalizeEmail(admin.email);
@@ -630,7 +646,7 @@ function getAdminSession(token) {
 async function adminAuth(payload = {}) {
   const action = payload.action || 'login';
   if (action === 'resetDefaults') {
-    const users = ensureDefaultAdmins({ resetPassword: true });
+    const users = ensureDefaultAdmins({ resetPassword: true, force: true });
     writeJson(ENTITY_FILES.admin_sessions, []);
     return { success: true, email: DEFAULT_ADMINS.map(user => user.email).join(' / '), password: DEFAULT_ADMIN_PASSWORD, users: users.map(publicAdmin) };
   }
