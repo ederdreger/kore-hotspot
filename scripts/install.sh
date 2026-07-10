@@ -10,9 +10,14 @@ WEB_DIR="${WEB_DIR:-/opt/kore-hotspot}"
 API_DIR="${API_DIR:-/opt/kore-hotspot-vpn-api}"
 CONFIG_DIR="${CONFIG_DIR:-/etc/kore-hotspot}"
 PUBLIC_HOST="${PUBLIC_HOST:-}"
+DOMAIN="${DOMAIN:-}"
+CERTBOT_EMAIL="${CERTBOT_EMAIL:-admin@spedynet.com.br}"
+ENABLE_SSL="${ENABLE_SSL:-auto}"
 API_TOKEN="${API_TOKEN:-}"
 NODE_MAJOR="${NODE_MAJOR:-20}"
 AUTO_UPDATE="${AUTO_UPDATE:-true}"
+PUBLIC_URL=""
+API_URL=""
 
 log() { printf '\033[1;36m[%s]\033[0m %s\n' "$APP_NAME" "$*"; }
 fail() { printf '\033[1;31m[ERRO]\033[0m %s\n' "$*" >&2; exit 1; }
@@ -33,6 +38,13 @@ detect_public_host() {
     PUBLIC_HOST="$(curl -fsS --max-time 6 https://api.ipify.org || hostname -I | awk '{print $1}')"
   fi
   [ -n "$PUBLIC_HOST" ] || fail "Nao foi possivel detectar o IP publico. Defina PUBLIC_HOST=seu_ip."
+  if [ -n "$DOMAIN" ]; then
+    PUBLIC_URL="https://${DOMAIN}"
+    API_URL="https://${DOMAIN}"
+  else
+    PUBLIC_URL="http://${PUBLIC_HOST}:8080"
+    API_URL="http://${PUBLIC_HOST}:8081"
+  fi
 }
 
 install_node() {
@@ -54,6 +66,7 @@ install_packages() {
   apt-get update
   apt-get install -y \
     ca-certificates curl gnupg git nginx openssh-client openssl unzip tar jq \
+    certbot python3-certbot-nginx \
     mysql-client freeradius freeradius-mysql \
     strongswan xl2tpd ppp iptables iptables-persistent net-tools \
     unattended-upgrades
@@ -76,7 +89,7 @@ build_frontend() {
   log "Compilando painel web"
   cd "$INSTALL_DIR"
   cat > .env.production <<EOF
-VITE_KORE_API_URL=http://${PUBLIC_HOST}:8081
+VITE_KORE_API_URL=${API_URL}
 VITE_KORE_API_TOKEN=${API_TOKEN}
 EOF
   npm ci
@@ -105,7 +118,7 @@ Type=simple
 WorkingDirectory=${API_DIR}
 Environment=PORT=8081
 Environment=KORE_VPN_API_TOKEN=${API_TOKEN}
-Environment=KORE_PUBLIC_URL=http://${PUBLIC_HOST}:8080
+Environment=KORE_PUBLIC_URL=${PUBLIC_URL}
 ExecStart=/usr/bin/node ${API_DIR}/server.js
 Restart=always
 RestartSec=3
@@ -117,11 +130,13 @@ EOF
 }
 
 configure_nginx() {
-  log "Configurando Nginx na porta 8080"
+  log "Configurando Nginx"
+  server_name="_"
+  [ -n "$DOMAIN" ] && server_name="$DOMAIN"
   cat > /etc/nginx/sites-available/kore-hotspot <<EOF
 server {
     listen 8080;
-    server_name _;
+    server_name ${server_name};
     root ${WEB_DIR};
     index index.html;
 
@@ -139,8 +154,57 @@ server {
     }
 }
 EOF
+  if [ -n "$DOMAIN" ]; then
+    cat >> /etc/nginx/sites-available/kore-hotspot <<EOF
+
+server {
+    listen 80;
+    server_name ${DOMAIN};
+    root ${WEB_DIR};
+    index index.html;
+
+    location / {
+        try_files \$uri \$uri/ /index.html;
+    }
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:8081;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOF
+  fi
   ln -sf /etc/nginx/sites-available/kore-hotspot /etc/nginx/sites-enabled/kore-hotspot
   nginx -t
+}
+
+configure_ssl() {
+  [ -n "$DOMAIN" ] || return 0
+  if [ "$ENABLE_SSL" = "false" ]; then
+    log "SSL desativado por ENABLE_SSL=false"
+    return 0
+  fi
+  log "Solicitando certificado gratis Let's Encrypt para ${DOMAIN}"
+  systemctl reload nginx || systemctl restart nginx
+  if certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "$CERTBOT_EMAIL" --redirect; then
+    systemctl enable --now certbot.timer >/dev/null
+    mkdir -p /etc/letsencrypt/renewal-hooks/deploy
+    cat > /etc/letsencrypt/renewal-hooks/deploy/kore-hotspot-reload-nginx.sh <<'EOF'
+#!/usr/bin/env bash
+systemctl reload nginx || true
+EOF
+    chmod +x /etc/letsencrypt/renewal-hooks/deploy/kore-hotspot-reload-nginx.sh
+    log "Certificado instalado. Renovacao automatica ativa pelo certbot.timer."
+  else
+    if [ "$ENABLE_SSL" = "true" ]; then
+      fail "Falha ao emitir certificado. Verifique DNS do dominio e porta 80 liberada."
+    fi
+    log "Nao foi possivel emitir o certificado agora. O painel continuara em HTTP."
+  fi
 }
 
 configure_l2tp_base() {
@@ -168,6 +232,11 @@ INSTALL_DIR=${INSTALL_DIR}
 WEB_DIR=${WEB_DIR}
 API_DIR=${API_DIR}
 PUBLIC_HOST=${PUBLIC_HOST}
+DOMAIN=${DOMAIN}
+CERTBOT_EMAIL=${CERTBOT_EMAIL}
+ENABLE_SSL=${ENABLE_SSL}
+PUBLIC_URL=${PUBLIC_URL}
+API_URL=${API_URL}
 API_TOKEN=${API_TOKEN}
 RELEASE_CHANNEL=latest
 EOF
@@ -215,10 +284,13 @@ print_summary() {
 ============================================================
 Kore-HotSpot instalado com sucesso.
 
-Painel:       http://${PUBLIC_HOST}:8080
-API:          http://${PUBLIC_HOST}:8081
+Painel:       ${PUBLIC_URL}
+Painel IP:    http://${PUBLIC_HOST}:8080
+API:          ${API_URL}
+API direta:   http://${PUBLIC_HOST}:8081
 Token API:    ${API_TOKEN}
 Atualizador:  /usr/local/bin/kore-hotspot-update
+SSL:          $([ -n "$DOMAIN" ] && echo "Let's Encrypt para ${DOMAIN}" || echo "nao configurado, informe DOMAIN=seu.dominio")
 
 Usuario inicial do painel:
   E-mail: demo@spedynet.com.br
@@ -241,6 +313,8 @@ main() {
   build_frontend
   install_backend
   configure_nginx
+  start_services
+  configure_ssl
   configure_l2tp_base
   install_updater
   start_services

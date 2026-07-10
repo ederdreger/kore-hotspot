@@ -10,6 +10,9 @@ INSTALL_DIR="${INSTALL_DIR:-/opt/kore-hotspot-src}"
 WEB_DIR="${WEB_DIR:-/opt/kore-hotspot}"
 API_DIR="${API_DIR:-/opt/kore-hotspot-vpn-api}"
 PUBLIC_HOST="${PUBLIC_HOST:-$(hostname -I | awk '{print $1}')}"
+DOMAIN="${DOMAIN:-}"
+PUBLIC_URL="${PUBLIC_URL:-}"
+API_URL="${API_URL:-}"
 API_TOKEN="${API_TOKEN:-kore-vpn-api-2026}"
 BACKUP_DIR="${BACKUP_DIR:-/opt/kore-hotspot-backups}"
 
@@ -60,8 +63,14 @@ prepare_source() {
 
 build_and_install() {
   cd "$INSTALL_DIR"
+  if [ -z "$PUBLIC_URL" ]; then
+    if [ -n "$DOMAIN" ]; then PUBLIC_URL="https://${DOMAIN}"; else PUBLIC_URL="http://${PUBLIC_HOST}:8080"; fi
+  fi
+  if [ -z "$API_URL" ]; then
+    if [ -n "$DOMAIN" ]; then API_URL="https://${DOMAIN}"; else API_URL="http://${PUBLIC_HOST}:8081"; fi
+  fi
   cat > .env.production <<EOF
-VITE_KORE_API_URL=http://${PUBLIC_HOST}:8081
+VITE_KORE_API_URL=${API_URL}
 VITE_KORE_API_TOKEN=${API_TOKEN}
 EOF
   npm ci

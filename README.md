@@ -24,6 +24,8 @@ Criador e mantenedor: **Spedynet Telecom**.
 - Acesso root ou sudo.
 - IP público na VPS.
 - Portas recomendadas liberadas no firewall:
+  - `80/tcp` emissão e renovação do certificado grátis
+  - `443/tcp` painel web com HTTPS
   - `8080/tcp` painel web
   - `8081/tcp` API local
   - `500/udp`, `4500/udp`, `1701/udp` VPN L2TP/IPsec
@@ -50,11 +52,39 @@ curl -fsSL https://raw.githubusercontent.com/ederdreger/kore-hotspot/main/script
 Variáveis úteis:
 
 - `PUBLIC_HOST`: IP ou domínio público da VPS.
+- `DOMAIN`: domínio apontado para a VPS, usado para HTTPS grátis.
+- `CERTBOT_EMAIL`: e-mail usado no Let's Encrypt.
+- `ENABLE_SSL`: `auto`, `true` ou `false`. Em `auto`, tenta emitir certificado quando `DOMAIN` estiver definido.
 - `API_TOKEN`: token usado pelo painel para falar com a API.
 - `REPO_URL`: repositório Git usado pelo instalador.
 - `REPO_SLUG`: identificador GitHub, exemplo `ederdreger/kore-hotspot`.
 - `BRANCH`: branch para instalação quando não houver release.
 - `AUTO_UPDATE`: `true` ou `false` para habilitar o timer diário.
+
+## Instalação com certificado grátis
+
+Antes de instalar, aponte um registro DNS `A` para o IP público da VPS.
+
+Exemplo:
+
+```bash
+hotspot.seudominio.com.br -> 190.8.174.155
+```
+
+Depois execute:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ederdreger/kore-hotspot/main/scripts/install.sh | sudo env DOMAIN=hotspot.seudominio.com.br CERTBOT_EMAIL=admin@seudominio.com.br bash
+```
+
+O instalador usa Let's Encrypt via Certbot, configura HTTPS no Nginx e ativa renovação automática pelo `certbot.timer`.
+
+Para testar a renovação:
+
+```bash
+sudo certbot renew --dry-run
+sudo systemctl status certbot.timer
+```
 
 ## Acesso inicial
 
@@ -62,6 +92,11 @@ Após instalar:
 
 - Painel: `http://IP_DA_VPS:8080`
 - API: `http://IP_DA_VPS:8081`
+
+Se instalado com `DOMAIN`, use:
+
+- Painel: `https://SEU_DOMINIO`
+- API via proxy: `https://SEU_DOMINIO/api`
 
 Usuário inicial:
 
@@ -74,6 +109,7 @@ Altere a senha após o primeiro acesso.
 
 - `kore-vpn-api.service`: API local, automação MikroTik, VPN e integrações.
 - `nginx.service`: painel web na porta `8080`.
+- `certbot.timer`: renovação automática do certificado Let's Encrypt.
 - `kore-hotspot-update.timer`: verificação diária de atualização.
 - `kore-hotspot-update.service`: execução de atualização.
 
