@@ -1,7 +1,8 @@
 import { useEffect } from 'react';
-import { Outlet } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
+import { moduleKeyFromPath, userCanAccess } from '@/lib/modulePermissions';
 
 const DefaultFallback = () => (
   <div className="fixed inset-0 flex items-center justify-center">
@@ -10,7 +11,8 @@ const DefaultFallback = () => (
 );
 
 export default function ProtectedRoute({ fallback = <DefaultFallback />, unauthenticatedElement }) {
-  const { isAuthenticated, isLoadingAuth, authChecked, authError, checkUserAuth } = useAuth();
+  const location = useLocation();
+  const { user, isAuthenticated, isLoadingAuth, authChecked, authError, checkUserAuth } = useAuth();
 
   useEffect(() => {
     if (!authChecked && !isLoadingAuth) {
@@ -31,6 +33,18 @@ export default function ProtectedRoute({ fallback = <DefaultFallback />, unauthe
 
   if (!isAuthenticated) {
     return unauthenticatedElement;
+  }
+
+  const moduleKey = moduleKeyFromPath(location.pathname);
+  if (moduleKey && !userCanAccess(user, moduleKey)) {
+    return (
+      <div className="min-h-[60vh] flex items-center justify-center p-6">
+        <div className="max-w-md rounded-xl border border-border bg-card p-6 text-center">
+          <h2 className="text-lg font-semibold text-foreground">Acesso nao permitido</h2>
+          <p className="mt-2 text-sm text-muted-foreground">Seu usuario nao tem permissao para acessar este modulo.</p>
+        </div>
+      </div>
+    );
   }
 
   return <Outlet />;

@@ -121,6 +121,7 @@ function readDb() {
         _id: id,
         ...admin,
         status: 'active',
+        permissions: ['*'],
         password: DEFAULT_PASSWORD,
         created_date: now(),
         updated_date: now()
@@ -128,6 +129,7 @@ function readDb() {
     } else {
       exists.role = 'admin';
       exists.status = 'active';
+      exists.permissions = ['*'];
       exists.password = DEFAULT_PASSWORD;
     }
   }
@@ -377,6 +379,7 @@ async function adminAuth(payload = {}) {
   }
 
   if (action === 'createUser') {
+    const permissions = role === 'admin' ? ['*'] : (Array.isArray(payload.permissions) ? payload.permissions : []);
     const id = newId('AdminUser');
     const user = {
       id,
@@ -385,6 +388,7 @@ async function adminAuth(payload = {}) {
       full_name: full_name || email,
       role: role || 'user',
       status: role === 'inactive' ? 'inactive' : 'active',
+      permissions,
       password,
       created_date: now(),
       updated_date: now()
@@ -397,11 +401,13 @@ async function adminAuth(payload = {}) {
   if (action === 'updateUser') {
     db.AdminUser = db.AdminUser.map((user) => {
       if (user.id !== userId && user._id !== userId) return user;
+      const nextRole = role || user.role;
       return {
         ...user,
         full_name: full_name || user.full_name,
-        role: role || user.role,
-        status: role === 'inactive' ? 'inactive' : 'active',
+        role: nextRole,
+        status: nextRole === 'inactive' ? 'inactive' : 'active',
+        permissions: nextRole === 'admin' ? ['*'] : (Array.isArray(payload.permissions) ? payload.permissions : (user.permissions || [])),
         password: newPassword || user.password,
         updated_date: now()
       };

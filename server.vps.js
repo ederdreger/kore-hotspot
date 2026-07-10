@@ -581,6 +581,7 @@ function ensureDefaultAdmins({ resetPassword = false } = {}) {
         ...admin,
         email,
         status: 'active',
+        permissions: ['*'],
         password_hash: passwordHash(DEFAULT_ADMIN_PASSWORD),
         created_date: new Date().toISOString(),
         updated_date: new Date().toISOString()
@@ -589,6 +590,7 @@ function ensureDefaultAdmins({ resetPassword = false } = {}) {
     } else {
       existing.role = 'admin';
       existing.status = 'active';
+      existing.permissions = ['*'];
       existing.updated_date = new Date().toISOString();
       if (resetPassword || (!existing.password_hash && !existing.password)) {
         existing.password_hash = passwordHash(DEFAULT_ADMIN_PASSWORD);
@@ -665,15 +667,23 @@ async function adminAuth(payload = {}) {
   if (action === 'listUsers') return { users: users.map(publicAdmin) };
 
   if (action === 'createUser') {
+    const email = normalizeEmail(payload.email);
+    if (!email) throw Object.assign(new Error('E-mail obrigatorio'), { status: 400 });
+    if (users.some(user => normalizeEmail(user.email) === email)) {
+      throw Object.assign(new Error('Ja existe usuario com este e-mail'), { status: 409 });
+    }
+    if (!payload.password) throw Object.assign(new Error('Senha obrigatoria'), { status: 400 });
+    const permissions = payload.role === 'admin' ? ['*'] : (Array.isArray(payload.permissions) ? payload.permissions : []);
     const id = `admin_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const user = {
       id,
       _id: id,
-      email: normalizeEmail(payload.email),
+      email,
       full_name: payload.full_name || payload.email,
       role: payload.role || 'user',
       status: payload.role === 'inactive' ? 'inactive' : 'active',
-      password_hash: passwordHash(payload.password || DEFAULT_ADMIN_PASSWORD),
+      permissions,
+      password_hash: passwordHash(payload.password),
       created_date: new Date().toISOString(),
       updated_date: new Date().toISOString()
     };
@@ -682,13 +692,18 @@ async function adminAuth(payload = {}) {
   }
 
   if (action === 'updateUser') {
+    const target = users.find(user => user.id === payload.userId || user._id === payload.userId);
+    if (!target) throw Object.assign(new Error('Usuario nao encontrado'), { status: 404 });
+    const nextRole = payload.role || target.role;
+    const nextPermissions = nextRole === 'admin' ? ['*'] : (Array.isArray(payload.permissions) ? payload.permissions : (target.permissions || []));
     const updated = users.map(user => {
       if (user.id !== payload.userId && user._id !== payload.userId) return user;
       return {
         ...user,
         full_name: payload.full_name || user.full_name,
-        role: payload.role || user.role,
-        status: payload.role === 'inactive' ? 'inactive' : 'active',
+        role: nextRole,
+        status: nextRole === 'inactive' ? 'inactive' : 'active',
+        permissions: nextPermissions,
         password_hash: payload.newPassword ? passwordHash(payload.newPassword) : (user.password_hash || passwordHash(user.password || DEFAULT_ADMIN_PASSWORD)),
         password: undefined,
         updated_date: new Date().toISOString()
@@ -699,7 +714,19 @@ async function adminAuth(payload = {}) {
   }
 
   if (action === 'deleteUser') {
-    writeJson(ENTITY_FILES.admins, users.filter(user => user.id !== payload.userId && user._id !== payload.userId));
+    const target = users.find(user => user.id === payload.userId || user._id === payload.userId);
+    if (!target) throw Object.assign(new Error('Usuario nao encontrado'), { status: 404 });
+    if (target.id === session.admin_user_id || target._id === session.admin_user_id) {
+      throw Object.assign(new Error('Nao e permitido excluir o usuario logado'), { status: 400 });
+    }
+    const activeAdmins = users.filter(user => user.role === 'admin' && user.status !== 'inactive');
+    if (target.role === 'admin' && activeAdmins.length <= 1) {
+      throw Object.assign(new Error('Nao e permitido excluir o ultimo administrador ativo'), { status: 400 });
+    }
+    const nextUsers = users.filter(user => user.id !== payload.userId && user._id !== payload.userId);
+    const sessions = readJson(ENTITY_FILES.admin_sessions, []);
+    writeJson(ENTITY_FILES.admins, nextUsers);
+    writeJson(ENTITY_FILES.admin_sessions, sessions.filter(item => item.admin_user_id !== target.id && item.admin_user_id !== target._id));
     return { success: true };
   }
 
