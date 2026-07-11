@@ -910,24 +910,42 @@ function licenseState(tenantId = currentTenant().id) {
   const warnings = [];
   const maxClients = Number(provider.max_clients || 0);
   const maxMikrotiks = Number(provider.max_mikrotiks || 0);
+  const graceDays = Number(provider.grace_days || 0);
+  const dueDate = provider.contract_due_date ? new Date(`${provider.contract_due_date}T23:59:59`) : null;
+  const graceLimit = dueDate ? new Date(dueDate.getTime() + graceDays * 24 * 60 * 60 * 1000) : null;
+  const now = new Date();
+  const overdue = !!(dueDate && now > dueDate);
+  const graceExpired = !!(graceLimit && now > graceLimit);
   if (maxClients > 0 && stats.clients >= maxClients) warnings.push('Limite de clientes atingido');
   if (maxMikrotiks > 0 && stats.mikrotiks >= maxMikrotiks) warnings.push('Limite de MikroTiks atingido');
+  if (overdue && !graceExpired) warnings.push('Mensalidade vencida em periodo de tolerancia');
+  if (graceExpired) warnings.push('Mensalidade vencida');
   const blocked = ['suspended', 'canceled'].includes(String(provider.status || '').toLowerCase());
+  const financialBlocked = graceExpired && provider.block_on_overdue !== false;
   return {
-    ok: !blocked,
+    ok: !blocked && !financialBlocked,
     tenant_id: provider.tenant_id || provider.id,
     status: provider.status || 'active',
-    label: blocked ? 'Licenca bloqueada' : 'Licenca ativa',
+    label: blocked ? 'Licenca bloqueada' : financialBlocked ? 'Bloqueado por inadimplencia' : 'Licenca ativa',
     provider: publicProvider(provider),
     stats,
-    warnings
+    warnings,
+    billing: {
+      monthly_price: Number(provider.monthly_price || 0),
+      due_date: provider.contract_due_date || '',
+      grace_days: graceDays,
+      last_payment_date: provider.last_payment_date || '',
+      overdue,
+      grace_expired: graceExpired,
+      block_on_overdue: provider.block_on_overdue !== false
+    }
   };
 }
 
 function assertTenantLicense({ action = 'write', resource = '' } = {}) {
   const state = licenseState();
   if (!state.ok) {
-    throw Object.assign(new Error('Licenca do provedor suspensa ou cancelada'), { status: 402, license: state });
+    throw Object.assign(new Error(state.label || 'Licenca do provedor bloqueada'), { status: 402, license: state });
   }
   const provider = state.provider;
   if (!provider) return state;
@@ -970,6 +988,11 @@ async function providersCrud(req) {
       contact_phone: String(body.contact_phone || '').trim(),
       commercial_plan: String(body.commercial_plan || 'starter'),
       status: String(body.status || 'active'),
+      monthly_price: Number(body.monthly_price || 0),
+      contract_due_date: String(body.contract_due_date || '').slice(0, 10),
+      grace_days: Number(body.grace_days ?? 5),
+      last_payment_date: String(body.last_payment_date || '').slice(0, 10),
+      block_on_overdue: body.block_on_overdue !== false,
       max_clients: Number(body.max_clients || 0),
       max_mikrotiks: Number(body.max_mikrotiks || 0),
       notes: String(body.notes || ''),
@@ -983,6 +1006,24 @@ async function providersCrud(req) {
 
   if (req.method === 'PUT' && id) {
     const body = await readBody(req);
+    if (body.action === 'markPaid') {
+      const paidAt = String(body.last_payment_date || new Date().toISOString().slice(0, 10)).slice(0, 10);
+      const baseDate = body.next_due_date ? new Date(`${body.next_due_date}T00:00:00`) : new Date(`${paidAt}T00:00:00`);
+      const nextDue = new Date(baseDate);
+      nextDue.setMonth(nextDue.getMonth() + Number(body.months || 1));
+      const updatedPaid = providers.map(item => {
+        if (item.id !== id && item._id !== id && item.tenant_id !== id) return item;
+        return {
+          ...item,
+          status: item.status === 'suspended' ? 'active' : item.status,
+          last_payment_date: paidAt,
+          contract_due_date: nextDue.toISOString().slice(0, 10),
+          updated_date: new Date().toISOString()
+        };
+      });
+      writeGlobalJson(PROVIDERS_FILE, updatedPaid);
+      return { provider: publicProvider(updatedPaid.find(item => item.id === id || item._id === id || item.tenant_id === id)) };
+    }
     const updated = providers.map(item => {
       if (item.id !== id && item._id !== id && item.tenant_id !== id) return item;
       return {
@@ -996,6 +1037,11 @@ async function providersCrud(req) {
         contact_phone: body.contact_phone ?? item.contact_phone,
         commercial_plan: body.commercial_plan ?? item.commercial_plan,
         status: body.status ?? item.status,
+        monthly_price: body.monthly_price !== undefined ? Number(body.monthly_price || 0) : item.monthly_price,
+        contract_due_date: body.contract_due_date !== undefined ? String(body.contract_due_date || '').slice(0, 10) : item.contract_due_date,
+        grace_days: body.grace_days !== undefined ? Number(body.grace_days || 0) : item.grace_days,
+        last_payment_date: body.last_payment_date !== undefined ? String(body.last_payment_date || '').slice(0, 10) : item.last_payment_date,
+        block_on_overdue: body.block_on_overdue !== undefined ? body.block_on_overdue !== false : item.block_on_overdue,
         max_clients: body.max_clients !== undefined ? Number(body.max_clients || 0) : item.max_clients,
         max_mikrotiks: body.max_mikrotiks !== undefined ? Number(body.max_mikrotiks || 0) : item.max_mikrotiks,
         notes: body.notes ?? item.notes,

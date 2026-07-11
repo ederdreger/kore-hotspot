@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Building2, Plus, RefreshCw, Edit2, Trash2, X, CheckCircle, Globe2, Users, Server } from 'lucide-react';
+import { Building2, Plus, RefreshCw, Edit2, Trash2, X, CheckCircle, Globe2, Users, Server, CreditCard } from 'lucide-react';
 import { toast } from 'sonner';
 import { spedynet } from '@/api/spedynetClient';
 import { Button } from '@/components/ui/button';
@@ -17,6 +17,11 @@ const emptyForm = {
   contact_phone: '',
   commercial_plan: 'starter',
   status: 'active',
+  monthly_price: '',
+  contract_due_date: '',
+  grace_days: '5',
+  last_payment_date: '',
+  block_on_overdue: true,
   max_clients: '',
   max_mikrotiks: '',
   notes: ''
@@ -76,7 +81,12 @@ export default function Providers() {
       ...emptyForm,
       ...provider,
       max_clients: provider.max_clients || '',
-      max_mikrotiks: provider.max_mikrotiks || ''
+      max_mikrotiks: provider.max_mikrotiks || '',
+      monthly_price: provider.monthly_price || '',
+      contract_due_date: provider.contract_due_date || '',
+      grace_days: provider.grace_days ?? '5',
+      last_payment_date: provider.last_payment_date || '',
+      block_on_overdue: provider.block_on_overdue !== false
     });
     setShowForm(true);
   };
@@ -109,6 +119,30 @@ export default function Providers() {
     } catch (error) {
       toast.error(error.message || 'Erro ao excluir provedor');
     }
+  };
+
+  const markPaid = async (provider) => {
+    if (!window.confirm(`Registrar pagamento mensal de ${provider.name}?`)) return;
+    try {
+      await spedynet.functions.invoke('providersManager', {
+        id: provider.id || provider.tenant_id,
+        action: 'markPaid',
+        last_payment_date: new Date().toISOString().slice(0, 10),
+        months: 1
+      });
+      toast.success('Pagamento registrado e vencimento renovado');
+      load();
+    } catch (error) {
+      toast.error(error.message || 'Erro ao registrar pagamento');
+    }
+  };
+
+  const isOverdue = (provider) => {
+    if (!provider.contract_due_date) return false;
+    const grace = Number(provider.grace_days || 0);
+    const due = new Date(`${provider.contract_due_date}T23:59:59`);
+    const limit = new Date(due.getTime() + grace * 24 * 60 * 60 * 1000);
+    return new Date() > limit && provider.block_on_overdue !== false;
   };
 
   const renderForm = () => (
@@ -156,6 +190,22 @@ export default function Providers() {
           </select>
         </div>
         <div>
+          <Label className="text-xs text-muted-foreground mb-1.5 block">Mensalidade (R$)</Label>
+          <Input type="number" step="0.01" value={form.monthly_price} onChange={e => setForm({ ...form, monthly_price: e.target.value })} className="bg-input border-border h-9" />
+        </div>
+        <div>
+          <Label className="text-xs text-muted-foreground mb-1.5 block">Vencimento do contrato</Label>
+          <Input type="date" value={form.contract_due_date} onChange={e => setForm({ ...form, contract_due_date: e.target.value })} className="bg-input border-border h-9" />
+        </div>
+        <div>
+          <Label className="text-xs text-muted-foreground mb-1.5 block">Dias de tolerancia</Label>
+          <Input type="number" value={form.grace_days} onChange={e => setForm({ ...form, grace_days: e.target.value })} className="bg-input border-border h-9" />
+        </div>
+        <div>
+          <Label className="text-xs text-muted-foreground mb-1.5 block">Ultimo pagamento</Label>
+          <Input type="date" value={form.last_payment_date} onChange={e => setForm({ ...form, last_payment_date: e.target.value })} className="bg-input border-border h-9" />
+        </div>
+        <div>
           <Label className="text-xs text-muted-foreground mb-1.5 block">Limite de clientes</Label>
           <Input type="number" value={form.max_clients} onChange={e => setForm({ ...form, max_clients: e.target.value })} placeholder="0 = ilimitado" className="bg-input border-border h-9" />
         </div>
@@ -164,6 +214,10 @@ export default function Providers() {
           <Input type="number" value={form.max_mikrotiks} onChange={e => setForm({ ...form, max_mikrotiks: e.target.value })} placeholder="0 = ilimitado" className="bg-input border-border h-9" />
         </div>
       </div>
+      <label className="flex items-center gap-2 text-xs text-muted-foreground">
+        <input type="checkbox" checked={form.block_on_overdue !== false} onChange={e => setForm({ ...form, block_on_overdue: e.target.checked })} className="accent-primary" />
+        Bloquear automaticamente apos vencer o periodo de tolerancia
+      </label>
       <div>
         <Label className="text-xs text-muted-foreground mb-1.5 block">Observacoes</Label>
         <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} className="w-full min-h-20 rounded-md border border-border bg-input px-3 py-2 text-sm text-foreground" />
@@ -192,6 +246,7 @@ export default function Providers() {
         <div className="rounded-xl border border-border bg-card p-4"><p className="text-xs text-muted-foreground">Provedores ativos</p><p className="text-2xl font-bold text-foreground">{providers.filter(p => p.status === 'active').length}</p></div>
         <div className="rounded-xl border border-border bg-card p-4"><p className="text-xs text-muted-foreground">Em teste</p><p className="text-2xl font-bold text-foreground">{providers.filter(p => p.status === 'trial').length}</p></div>
         <div className="rounded-xl border border-border bg-card p-4"><p className="text-xs text-muted-foreground">Clientes totais</p><p className="text-2xl font-bold text-foreground">{providers.reduce((sum, p) => sum + Number(p.stats?.clients || 0), 0)}</p></div>
+        <div className="rounded-xl border border-border bg-card p-4 md:col-span-3"><p className="text-xs text-muted-foreground">Receita mensal prevista</p><p className="text-2xl font-bold text-foreground">R$ {providers.reduce((sum, p) => sum + Number(p.monthly_price || 0), 0).toFixed(2)}</p></div>
       </div>
 
       <div className="rounded-xl border border-border bg-card overflow-hidden">
@@ -203,7 +258,7 @@ export default function Providers() {
         ) : providers.length === 0 ? (
           <div className="p-12 text-center text-muted-foreground">Nenhum provedor cadastrado</div>
         ) : providers.map((provider) => (
-          <div key={provider.id || provider.tenant_id} className={`grid grid-cols-12 gap-3 items-center px-4 py-4 border-b border-border last:border-0 ${['suspended', 'canceled'].includes(provider.status) ? 'bg-destructive/5' : ''}`}>
+          <div key={provider.id || provider.tenant_id} className={`grid grid-cols-12 gap-3 items-center px-4 py-4 border-b border-border last:border-0 ${['suspended', 'canceled'].includes(provider.status) || isOverdue(provider) ? 'bg-destructive/5' : ''}`}>
             <div className="col-span-12 md:col-span-4 min-w-0">
               <p className="text-sm font-semibold text-foreground truncate">{provider.name}</p>
               <p className="text-xs text-muted-foreground font-mono truncate">{provider.tenant_id}</p>
@@ -211,6 +266,7 @@ export default function Providers() {
             <div className="col-span-12 md:col-span-3 text-xs text-muted-foreground min-w-0">
               <p className="flex items-center gap-1 truncate"><Globe2 className="w-3 h-3" /> {provider.domain || '-'}</p>
               <p className="truncate">{provider.contact_email || provider.contact_phone || '-'}</p>
+              <p className={isOverdue(provider) ? 'text-destructive font-medium' : ''}>Vence: {provider.contract_due_date || '-'}</p>
             </div>
             <div className="col-span-6 md:col-span-2 flex gap-3 text-xs text-muted-foreground">
               <span className={`flex items-center gap-1 ${provider.max_clients && provider.stats?.clients >= provider.max_clients ? 'text-warning' : ''}`}><Users className="w-3 h-3" /> {provider.stats?.clients || 0}/{provider.max_clients || '∞'}</span>
@@ -220,6 +276,7 @@ export default function Providers() {
               <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${statusClass[provider.status] || statusClass.active}`}>{statusLabel[provider.status] || provider.status}</span>
             </div>
             <div className="col-span-2 md:col-span-1 flex justify-end gap-1">
+              <button onClick={() => markPaid(provider)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-success" title="Registrar pagamento"><CreditCard className="w-3.5 h-3.5" /></button>
               <button onClick={() => openEdit(provider)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-primary" title="Editar"><Edit2 className="w-3.5 h-3.5" /></button>
               <button onClick={() => remove(provider)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-destructive" title="Excluir"><Trash2 className="w-3.5 h-3.5" /></button>
             </div>
