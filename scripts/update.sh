@@ -16,6 +16,7 @@ API_URL="${API_URL:-}"
 API_TOKEN="${API_TOKEN:-kore-vpn-api-2026}"
 TENANT_ID="${TENANT_ID:-default}"
 MULTI_TENANT="${MULTI_TENANT:-true}"
+KORE_SAAS_MP_ACCESS_TOKEN="${KORE_SAAS_MP_ACCESS_TOKEN:-}"
 BACKUP_DIR="${BACKUP_DIR:-/opt/kore-hotspot-backups}"
 
 log() { printf '\033[1;36m[%s]\033[0m %s\n' "$APP_NAME" "$*"; }

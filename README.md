@@ -125,7 +125,7 @@ Quando o pagamento é aprovado pelo webhook ou pela consulta manual no painel, o
 Configure o token da conta central de cobrança:
 
 ```bash
-sudo systemctl edit kore-hotspot-vpn-api
+sudo systemctl edit kore-vpn-api
 ```
 
 Adicione:
@@ -139,7 +139,7 @@ Depois aplique:
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl restart kore-hotspot-vpn-api
+sudo systemctl restart kore-vpn-api
 ```
 
 ## Acesso inicial
