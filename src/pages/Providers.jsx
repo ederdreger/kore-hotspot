@@ -375,7 +375,10 @@ export default function Providers() {
               <p className="flex items-center gap-1 truncate"><Globe2 className="w-3 h-3" /> {provider.domain || '-'}</p>
               <p className="truncate">{provider.contact_email || provider.contact_phone || '-'}</p>
               <p className={isOverdue(provider) ? 'text-destructive font-medium' : ''}>Vence: {provider.contract_due_date || '-'}</p>
-              <p className={provider.ssl_status === 'active' ? 'text-success' : 'text-warning'}>SSL: {provider.ssl_status === 'active' ? 'ativo' : 'pendente'}</p>
+              <p className={provider.ssl_status === 'active' ? 'text-success' : provider.ssl_status === 'error' ? 'text-destructive' : 'text-warning'}>
+                SSL: {provider.ssl_status === 'active' ? 'ativo' : provider.ssl_status === 'error' ? 'erro' : 'pendente'}
+              </p>
+              {provider.ssl_error && <p className="text-[11px] text-destructive truncate" title={provider.ssl_error}>{provider.ssl_error}</p>}
             </div>
             <div className="col-span-6 md:col-span-2 flex gap-3 text-xs text-muted-foreground">
               <span className={`flex items-center gap-1 ${provider.max_clients && provider.stats?.clients >= provider.max_clients ? 'text-warning' : ''}`}><Users className="w-3 h-3" /> {provider.stats?.clients || 0}/{provider.max_clients || '∞'}</span>

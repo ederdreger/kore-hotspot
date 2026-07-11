@@ -66,8 +66,16 @@ function tenantFromRequest(req) {
   if (!MULTI_TENANT) return { id: DEFAULT_TENANT_ID, source: 'single' };
   const explicit = req.headers['x-kore-tenant'];
   if (explicit) return { id: safeTenantId(explicit), source: 'header' };
-  const host = req.headers['x-forwarded-host'] || req.headers.host || '';
-  return { id: safeTenantId(host), source: 'host' };
+  const rawHost = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+  const host = rawHost.toLowerCase().split(':')[0];
+  if (host) {
+    try {
+      const providers = readGlobalJson(PROVIDERS_FILE, []);
+      const provider = providers.find(item => providerDomain(item) === host || safeTenantId(item.tenant_id || item.id) === safeTenantId(host));
+      if (provider) return { id: safeTenantId(provider.tenant_id || provider.id), source: 'provider-domain', host };
+    } catch {}
+  }
+  return { id: safeTenantId(host), source: 'host', host };
 }
 
 function currentTenant() {
@@ -641,6 +649,10 @@ function publicAdmin(user) {
 }
 
 function ensureDefaultAdmins({ resetPassword = false, force = false } = {}) {
+  const scopedProvider = currentTenant().id !== DEFAULT_TENANT_ID ? providerForTenantRaw(currentTenant().id) : null;
+  if (!force && scopedProvider?.contact_email) {
+    ensureProviderAdmin(scopedProvider);
+  }
   const users = readJson(ENTITY_FILES.admins, []);
   if (!force && users.length > 0) {
     let changedExisting = false;
@@ -918,9 +930,16 @@ function publicProvider(provider) {
   };
 }
 
-function providerForTenant(tenantId = currentTenant().id) {
+function providerForTenantRaw(tenantId = currentTenant().id) {
   const providers = readGlobalJson(PROVIDERS_FILE, []);
-  return providers.find(item => item.tenant_id === tenantId || item.id === tenantId || safeTenantId(item.domain) === tenantId) || null;
+  return providers.find(item => (
+    safeTenantId(item.tenant_id || item.id) === safeTenantId(tenantId) ||
+    providerDomain(item) === String(tenantId || '').trim().toLowerCase()
+  )) || null;
+}
+
+function providerForTenant(tenantId = currentTenant().id) {
+  return providerForTenantRaw(tenantId);
 }
 
 function licenseState(tenantId = currentTenant().id) {
@@ -1099,20 +1118,21 @@ async function issueProviderCertificate(providerId) {
   const tenantId = provider.tenant_id || provider.id;
   const email = provider.contact_email || CERTBOT_EMAIL;
 
-  fs.mkdirSync(path.join(WEB_DIR, '.well-known', 'acme-challenge'), { recursive: true });
-  await run('certbot', [
-    'certonly',
-    '--webroot',
-    '-w', WEB_DIR,
-    '-d', domain,
-    '--non-interactive',
-    '--agree-tos',
-    '-m', email,
-    '--keep-until-expiring'
-  ], 120000);
+  try {
+    fs.mkdirSync(path.join(WEB_DIR, '.well-known', 'acme-challenge'), { recursive: true });
+    await run('certbot', [
+      'certonly',
+      '--webroot',
+      '-w', WEB_DIR,
+      '-d', domain,
+      '--non-interactive',
+      '--agree-tos',
+      '-m', email,
+      '--keep-until-expiring'
+    ], 120000);
 
-  const nginxFile = `/etc/nginx/conf.d/kore-hotspot-provider-${safeTenantId(tenantId)}.conf`;
-  fs.writeFileSync(nginxFile, `# Gerenciado pelo Kore-HotSpot - HTTPS do provedor ${tenantId}
+    const nginxFile = `/etc/nginx/conf.d/kore-hotspot-provider-${safeTenantId(tenantId)}.conf`;
+    fs.writeFileSync(nginxFile, `# Gerenciado pelo Kore-HotSpot - HTTPS do provedor ${tenantId}
 server {
     listen 80;
     server_name ${domain};
@@ -1142,30 +1162,45 @@ server {
     }
 }
 `);
-  await run('nginx', ['-t'], 30000);
-  await run('systemctl', ['reload', 'nginx'], 30000).catch(() => run('systemctl', ['restart', 'nginx'], 30000));
-  await run('systemctl', ['enable', '--now', 'certbot.timer'], 30000).catch(() => null);
-  fs.mkdirSync('/etc/letsencrypt/renewal-hooks/deploy', { recursive: true });
-  const hookFile = '/etc/letsencrypt/renewal-hooks/deploy/kore-hotspot-reload-nginx.sh';
-  if (!fs.existsSync(hookFile)) {
-    fs.writeFileSync(hookFile, '#!/usr/bin/env bash\nsystemctl reload nginx || true\n');
-    fs.chmodSync(hookFile, 0o755);
-  }
+    await run('nginx', ['-t'], 30000);
+    await run('systemctl', ['reload', 'nginx'], 30000).catch(() => run('systemctl', ['restart', 'nginx'], 30000));
+    await run('systemctl', ['enable', '--now', 'certbot.timer'], 30000).catch(() => null);
+    fs.mkdirSync('/etc/letsencrypt/renewal-hooks/deploy', { recursive: true });
+    const hookFile = '/etc/letsencrypt/renewal-hooks/deploy/kore-hotspot-reload-nginx.sh';
+    if (!fs.existsSync(hookFile)) {
+      fs.writeFileSync(hookFile, '#!/usr/bin/env bash\nsystemctl reload nginx || true\n');
+      fs.chmodSync(hookFile, 0o755);
+    }
 
-  const updated = providers.map(item => {
-    if (item.id !== providerId && item._id !== providerId && item.tenant_id !== providerId) return item;
-    return {
-      ...item,
-      domain,
-      ssl_status: 'active',
-      ssl_domain: domain,
-      ssl_issued_at: new Date().toISOString(),
-      ssl_nginx_file: nginxFile,
-      updated_date: new Date().toISOString()
-    };
-  });
-  writeGlobalJson(PROVIDERS_FILE, updated);
-  return { success: true, provider: publicProvider(updated.find(item => item.id === providerId || item._id === providerId || item.tenant_id === providerId)), domain, nginx_file: nginxFile };
+    const updated = providers.map(item => {
+      if (item.id !== providerId && item._id !== providerId && item.tenant_id !== providerId) return item;
+      return {
+        ...item,
+        domain,
+        ssl_status: 'active',
+        ssl_domain: domain,
+        ssl_error: '',
+        ssl_issued_at: new Date().toISOString(),
+        ssl_nginx_file: nginxFile,
+        updated_date: new Date().toISOString()
+      };
+    });
+    writeGlobalJson(PROVIDERS_FILE, updated);
+    return { success: true, provider: publicProvider(updated.find(item => item.id === providerId || item._id === providerId || item.tenant_id === providerId)), domain, nginx_file: nginxFile };
+  } catch (error) {
+    const updated = providers.map(item => {
+      if (item.id !== providerId && item._id !== providerId && item.tenant_id !== providerId) return item;
+      return {
+        ...item,
+        domain,
+        ssl_status: 'error',
+        ssl_error: String(error.message || error).slice(0, 1000),
+        updated_date: new Date().toISOString()
+      };
+    });
+    writeGlobalJson(PROVIDERS_FILE, updated);
+    throw error;
+  }
 }
 
 async function providersCrud(req) {
