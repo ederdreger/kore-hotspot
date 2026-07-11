@@ -74,6 +74,7 @@ build_and_install() {
   fi
   cat > .env.production <<EOF
 VITE_KORE_API_URL=${API_URL}
+VITE_KORE_FORCE_API_URL=false
 VITE_KORE_API_TOKEN=${API_TOKEN}
 VITE_KORE_TENANT_ID=${TENANT_ID}
 VITE_KORE_BUILD_ID=$(date +%Y%m%d%H%M%S)

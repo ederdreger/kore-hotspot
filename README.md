@@ -233,9 +233,10 @@ npm run build
 Variáveis de build:
 
 ```bash
-VITE_KORE_API_URL=http://SEU_IP:8081
 VITE_KORE_API_TOKEN=seu-token
 ```
+
+Por padrão o painel chama a API pelo mesmo domínio em `/api`, usando o proxy do Nginx. Use `VITE_KORE_FORCE_API_URL=true` apenas em cenários especiais de desenvolvimento quando realmente precisar apontar para uma API externa.
 
 ## Observações de segurança
 

@@ -1,5 +1,7 @@
 const DEFAULT_PASSWORD = 'Admin12345';
-const VPN_API_URL = import.meta.env.VITE_KORE_API_URL || `${window.location.protocol}//${window.location.hostname}:8081`;
+const CONFIGURED_API_URL = String(import.meta.env.VITE_KORE_API_URL || '').replace(/\/+$/, '');
+const FORCE_CONFIGURED_API_URL = String(import.meta.env.VITE_KORE_FORCE_API_URL || '').toLowerCase() === 'true';
+const VPN_API_URL = FORCE_CONFIGURED_API_URL ? CONFIGURED_API_URL : '';
 const VPN_API_TOKEN = import.meta.env.VITE_KORE_API_TOKEN || 'kore-vpn-api-2026';
 const KORE_TENANT_ID = import.meta.env.VITE_KORE_TENANT_ID || window.location.hostname || 'default';
 const STORAGE_KEY = `kore_hotspot_local_db_${KORE_TENANT_ID}`;
