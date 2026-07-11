@@ -96,6 +96,7 @@ build_frontend() {
 VITE_KORE_API_URL=${API_URL}
 VITE_KORE_API_TOKEN=${API_TOKEN}
 VITE_KORE_TENANT_ID=${TENANT_ID}
+VITE_KORE_BUILD_ID=$(date +%Y%m%d%H%M%S)
 EOF
   npm ci
   npm run build
@@ -188,6 +189,17 @@ server {
 EOF
   fi
   ln -sf /etc/nginx/sites-available/kore-hotspot /etc/nginx/sites-enabled/kore-hotspot
+  nginx -t
+}
+
+configure_nginx_no_cache() {
+  log "Aplicando politica anti-cache do painel"
+  cat > /etc/nginx/conf.d/kore-hotspot-no-cache.conf <<'EOF'
+# Gerenciado pelo Kore-HotSpot. Evita frontend antigo apos atualizacoes.
+add_header Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0" always;
+add_header Pragma "no-cache" always;
+add_header Expires "0" always;
+EOF
   nginx -t
 }
 
@@ -327,6 +339,7 @@ main() {
   build_frontend
   install_backend
   configure_nginx
+  configure_nginx_no_cache
   start_services
   configure_ssl
   configure_l2tp_base

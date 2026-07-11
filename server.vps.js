@@ -1033,6 +1033,7 @@ async function providersCrud(req) {
   const id = decodeURIComponent(parts[2] || '');
   const providers = readGlobalJson(PROVIDERS_FILE, []);
   const findProvider = (providerId) => providers.find(item => item.id === providerId || item._id === providerId || item.tenant_id === providerId);
+  console.log(`[providers] ${req.method} ${req.url}`);
 
   if (req.method === 'GET') {
     return { providers: providers.map(publicProvider), commercial_plans: PROVIDER_COMMERCIAL_PLANS };
