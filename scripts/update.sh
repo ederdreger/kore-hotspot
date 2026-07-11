@@ -90,6 +90,10 @@ EOF
 
   mkdir -p "$API_DIR/data" "$API_DIR/keys"
   cp "$INSTALL_DIR/server.vps.js" "$API_DIR/server.js"
+  if [ -f "$INSTALL_DIR/scripts/provider-upsert.sh" ]; then
+    cp "$INSTALL_DIR/scripts/provider-upsert.sh" /usr/local/bin/kore-provider-upsert
+    chmod +x /usr/local/bin/kore-provider-upsert
+  fi
   chown -R root:root "$WEB_DIR" "$API_DIR"
 }
 

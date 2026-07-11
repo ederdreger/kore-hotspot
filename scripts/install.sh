@@ -245,6 +245,8 @@ install_updater() {
   mkdir -p "$CONFIG_DIR"
   cp "$INSTALL_DIR/scripts/update.sh" /usr/local/bin/kore-hotspot-update
   chmod +x /usr/local/bin/kore-hotspot-update
+  cp "$INSTALL_DIR/scripts/provider-upsert.sh" /usr/local/bin/kore-provider-upsert
+  chmod +x /usr/local/bin/kore-provider-upsert
   cat > "$CONFIG_DIR/update.env" <<EOF
 REPO_URL=${REPO_URL}
 REPO_SLUG=${REPO_SLUG}
