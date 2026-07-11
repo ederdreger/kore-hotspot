@@ -14,6 +14,8 @@ DOMAIN="${DOMAIN:-}"
 PUBLIC_URL="${PUBLIC_URL:-}"
 API_URL="${API_URL:-}"
 API_TOKEN="${API_TOKEN:-kore-vpn-api-2026}"
+TENANT_ID="${TENANT_ID:-default}"
+MULTI_TENANT="${MULTI_TENANT:-true}"
 BACKUP_DIR="${BACKUP_DIR:-/opt/kore-hotspot-backups}"
 
 log() { printf '\033[1;36m[%s]\033[0m %s\n' "$APP_NAME" "$*"; }
@@ -72,6 +74,7 @@ build_and_install() {
   cat > .env.production <<EOF
 VITE_KORE_API_URL=${API_URL}
 VITE_KORE_API_TOKEN=${API_TOKEN}
+VITE_KORE_TENANT_ID=${TENANT_ID}
 EOF
   npm ci
   npm run build

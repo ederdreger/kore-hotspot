@@ -17,6 +17,7 @@ Criador e mantenedor: **Spedynet Telecom**.
 - Integração PIX/Mercado Pago preparada para liberação automática.
 - Instalador inteligente para Ubuntu Server 20.04 ou superior.
 - Atualização automática preparada para GitHub Releases.
+- Base multi-provedor com isolamento de dados por tenant/domínio.
 
 ## Requisitos
 
@@ -57,6 +58,8 @@ Variáveis úteis:
 - `ENABLE_SSL`: `auto`, `true` ou `false`. Em `auto`, tenta emitir certificado quando `DOMAIN` estiver definido.
 - `API_TOKEN`: token usado pelo painel para falar com a API.
 - `ADMIN_PASSWORD`: senha inicial dos administradores padrão.
+- `TENANT_ID`: identificador interno do provedor, exemplo `provedor-a`.
+- `MULTI_TENANT`: `true` ou `false`. Em `true`, os dados ficam isolados por tenant/domínio.
 - `REPO_URL`: repositório Git usado pelo instalador.
 - `REPO_SLUG`: identificador GitHub, exemplo `ederdreger/kore-hotspot`.
 - `BRANCH`: branch para instalação quando não houver release.
@@ -86,6 +89,31 @@ Para testar a renovação:
 sudo certbot renew --dry-run
 sudo systemctl status certbot.timer
 ```
+
+## Modo multi-provedor
+
+O Kore-HotSpot pode operar com vários provedores na mesma base de aplicação. Cada provedor fica isolado por tenant/domínio, com arquivos próprios de clientes, planos, usuários, integrações, vouchers e configurações.
+
+Exemplo de instalação para um provedor:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ederdreger/kore-hotspot/main/scripts/install.sh | sudo env \
+  DOMAIN=wifi.provedor-a.com.br \
+  CERTBOT_EMAIL=admin@provedor-a.com.br \
+  TENANT_ID=provedor-a \
+  ADMIN_PASSWORD="senha-inicial-forte" \
+  bash
+```
+
+Estrutura de dados por tenant:
+
+```bash
+/opt/kore-hotspot-vpn-api/data/tenants/default
+/opt/kore-hotspot-vpn-api/data/tenants/provedor-a
+/opt/kore-hotspot-vpn-api/data/tenants/provedor-b
+```
+
+Em operação com múltiplos domínios apontando para a mesma VPS, o backend também identifica o tenant pelo `Host` da requisição. Para API central, pode ser usado o cabeçalho `X-Kore-Tenant`.
 
 ## Acesso inicial
 

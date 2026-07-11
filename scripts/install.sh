@@ -15,6 +15,8 @@ CERTBOT_EMAIL="${CERTBOT_EMAIL:-admin@spedynet.com.br}"
 ENABLE_SSL="${ENABLE_SSL:-auto}"
 API_TOKEN="${API_TOKEN:-}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-Admin12345}"
+TENANT_ID="${TENANT_ID:-default}"
+MULTI_TENANT="${MULTI_TENANT:-true}"
 NODE_MAJOR="${NODE_MAJOR:-20}"
 AUTO_UPDATE="${AUTO_UPDATE:-true}"
 PUBLIC_URL=""
@@ -92,6 +94,7 @@ build_frontend() {
   cat > .env.production <<EOF
 VITE_KORE_API_URL=${API_URL}
 VITE_KORE_API_TOKEN=${API_TOKEN}
+VITE_KORE_TENANT_ID=${TENANT_ID}
 EOF
   npm ci
   npm run build
@@ -121,6 +124,8 @@ Environment=PORT=8081
 Environment=KORE_VPN_API_TOKEN=${API_TOKEN}
 Environment=KORE_ADMIN_PASSWORD=${ADMIN_PASSWORD}
 Environment=KORE_PUBLIC_URL=${PUBLIC_URL}
+Environment=KORE_DEFAULT_TENANT=${TENANT_ID}
+Environment=KORE_MULTI_TENANT=${MULTI_TENANT}
 ExecStart=/usr/bin/node ${API_DIR}/server.js
 Restart=always
 RestartSec=3
@@ -241,6 +246,8 @@ PUBLIC_URL=${PUBLIC_URL}
 API_URL=${API_URL}
 API_TOKEN=${API_TOKEN}
 ADMIN_PASSWORD=${ADMIN_PASSWORD}
+TENANT_ID=${TENANT_ID}
+MULTI_TENANT=${MULTI_TENANT}
 RELEASE_CHANNEL=latest
 EOF
 
@@ -294,6 +301,7 @@ API direta:   http://${PUBLIC_HOST}:8081
 Token API:    ${API_TOKEN}
 Atualizador:  /usr/local/bin/kore-hotspot-update
 SSL:          $([ -n "$DOMAIN" ] && echo "Let's Encrypt para ${DOMAIN}" || echo "nao configurado, informe DOMAIN=seu.dominio")
+Tenant:       ${TENANT_ID}
 
 Usuario inicial do painel:
   E-mail: demo@spedynet.com.br

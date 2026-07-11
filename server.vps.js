@@ -3,6 +3,7 @@ const { execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { AsyncLocalStorage } = require('async_hooks');
 
 const PORT = Number(process.env.PORT || 8081);
 const TOKEN = process.env.KORE_VPN_API_TOKEN || 'kore-vpn-api-2026';
@@ -12,6 +13,10 @@ const KEY_DIR = '/opt/kore-hotspot-vpn-api/keys';
 const KEY_PATH = path.join(KEY_DIR, 'kore-api_rsa');
 const PUB_PATH = `${KEY_PATH}.pub`;
 const DATA_DIR = '/opt/kore-hotspot-vpn-api/data';
+const TENANTS_DIR = path.join(DATA_DIR, 'tenants');
+const DEFAULT_TENANT_ID = String(process.env.KORE_DEFAULT_TENANT || 'default').trim().toLowerCase();
+const MULTI_TENANT = String(process.env.KORE_MULTI_TENANT || 'true') !== 'false';
+const tenantStore = new AsyncLocalStorage();
 const CAPTIVE_DB = path.join(DATA_DIR, 'captive-prospects.json');
 const ENTITY_FILES = {
   admins: path.join(DATA_DIR, 'admin-users.json'),
@@ -33,10 +38,50 @@ function send(res, status, data, headers = {}) {
     'Content-Type': 'application/json; charset=utf-8',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, X-Kore-Token',
+    'Access-Control-Allow-Headers': 'Content-Type, X-Kore-Token, X-Kore-Tenant',
     ...headers
   });
   res.end(typeof data === 'string' ? data : JSON.stringify(data));
+}
+
+function safeTenantId(value) {
+  const id = String(value || '').trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0].split(':')[0];
+  const normalized = id.replace(/[^a-z0-9_.-]/g, '-').replace(/^-+|-+$/g, '').slice(0, 80);
+  if (!normalized || normalized === 'localhost' || normalized === '127.0.0.1' || /^\d{1,3}(\.\d{1,3}){3}$/.test(normalized)) {
+    return DEFAULT_TENANT_ID;
+  }
+  return normalized;
+}
+
+function tenantFromRequest(req) {
+  if (!MULTI_TENANT) return { id: DEFAULT_TENANT_ID, source: 'single' };
+  const explicit = req.headers['x-kore-tenant'];
+  if (explicit) return { id: safeTenantId(explicit), source: 'header' };
+  const host = req.headers['x-forwarded-host'] || req.headers.host || '';
+  return { id: safeTenantId(host), source: 'host' };
+}
+
+function currentTenant() {
+  return tenantStore.getStore() || { id: DEFAULT_TENANT_ID, source: 'default' };
+}
+
+function currentDataDir() {
+  const tenant = currentTenant().id || DEFAULT_TENANT_ID;
+  return MULTI_TENANT ? path.join(TENANTS_DIR, tenant) : DATA_DIR;
+}
+
+function tenantFile(file) {
+  const basename = path.basename(file);
+  return path.join(currentDataDir(), basename);
+}
+
+function migrateLegacyFile(source, target) {
+  if (currentTenant().id !== DEFAULT_TENANT_ID) return;
+  if (source === target) return;
+  if (!fs.existsSync(target) && fs.existsSync(source)) {
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(source, target);
+  }
 }
 
 function hotspotLoginHtml() {
@@ -519,25 +564,31 @@ function normalizeClientIp(value) {
 }
 
 function readCaptiveDb() {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  if (!fs.existsSync(CAPTIVE_DB)) fs.writeFileSync(CAPTIVE_DB, '[]');
-  try { return JSON.parse(fs.readFileSync(CAPTIVE_DB, 'utf8')); } catch { return []; }
+  const file = tenantFile(CAPTIVE_DB);
+  migrateLegacyFile(CAPTIVE_DB, file);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  if (!fs.existsSync(file)) fs.writeFileSync(file, '[]');
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return []; }
 }
 
 function writeCaptiveDb(items) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  fs.writeFileSync(CAPTIVE_DB, JSON.stringify(items, null, 2));
+  const file = tenantFile(CAPTIVE_DB);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(items, null, 2));
 }
 
 function readJson(file, fallback = []) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  if (!fs.existsSync(file)) fs.writeFileSync(file, JSON.stringify(fallback, null, 2));
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; }
+  const target = tenantFile(file);
+  migrateLegacyFile(file, target);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  if (!fs.existsSync(target)) fs.writeFileSync(target, JSON.stringify(fallback, null, 2));
+  try { return JSON.parse(fs.readFileSync(target, 'utf8')); } catch { return fallback; }
 }
 
 function writeJson(file, value) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(value, null, 2));
+  const target = tenantFile(file);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, JSON.stringify(value, null, 2));
 }
 
 function normalizeEmail(value) {
@@ -1587,10 +1638,10 @@ async function ixcConsultaCliente(payload = {}) {
   return { found: false, cpf, name: '', client: null, raw: { total: 0, queries: qtypes.flatMap(qtype => queries.map(query => ({ qtype, query }))) } };
 }
 
-const server = http.createServer(async (req, res) => {
+async function handleRequest(req, res) {
   try {
     if (req.method === 'OPTIONS') return send(res, 200, { ok: true });
-    if (req.url === '/health') return send(res, 200, { ok: true, service: 'kore-vpn-api' });
+    if (req.url === '/health') return send(res, 200, { ok: true, service: 'kore-vpn-api', tenant: currentTenant().id, multi_tenant: MULTI_TENANT });
     const [pathname, query = ''] = req.url.split('?');
     if (req.method === 'POST' && pathname === '/api/payments/mercadopago/webhook') return send(res, 200, await mercadoPagoWebhook(await readBody(req), query));
     if (req.method === 'GET' && req.url === '/public/hotspot-login.html') {
@@ -1602,6 +1653,9 @@ const server = http.createServer(async (req, res) => {
     }
     if (!validToken(req)) return send(res, 401, { error: 'token invalido' });
 
+    if (req.method === 'GET' && req.url === '/api/tenant/current') {
+      return send(res, 200, { tenant: currentTenant(), data_dir: currentDataDir(), multi_tenant: MULTI_TENANT });
+    }
     if (req.method === 'GET' && req.url === '/api/ssh-key') {
       await ensureSshKey();
       const pub = fs.readFileSync(PUB_PATH, 'utf8').trim();
@@ -1639,6 +1693,12 @@ const server = http.createServer(async (req, res) => {
   } catch (error) {
     return send(res, error.status || 500, { error: error.message });
   }
+}
+
+const server = http.createServer((req, res) => {
+  tenantStore.run(tenantFromRequest(req), () => {
+    handleRequest(req, res);
+  });
 });
 
 ensureSshKey().then(() => {

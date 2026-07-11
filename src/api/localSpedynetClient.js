@@ -1,8 +1,8 @@
-const STORAGE_KEY = 'kore_hotspot_local_db';
-
 const DEFAULT_PASSWORD = 'Admin12345';
 const VPN_API_URL = import.meta.env.VITE_KORE_API_URL || `${window.location.protocol}//${window.location.hostname}:8081`;
 const VPN_API_TOKEN = import.meta.env.VITE_KORE_API_TOKEN || 'kore-vpn-api-2026';
+const KORE_TENANT_ID = import.meta.env.VITE_KORE_TENANT_ID || window.location.hostname || 'default';
+const STORAGE_KEY = `kore_hotspot_local_db_${KORE_TENANT_ID}`;
 const DEFAULT_ADMINS = [
   { email: 'demo@spedynet.com.br', full_name: 'Administrador Demo', role: 'admin' },
   { email: 'spedynet@spedynet.com.br', full_name: 'Administrador Spedynet', role: 'admin' }
@@ -64,6 +64,18 @@ const REMOTE_ENTITY_MAP = {
   Setting: 'settings',
   Payment: 'payments'
 };
+
+function apiHeaders(extra = {}) {
+  return {
+    ...extra,
+    'X-Kore-Token': VPN_API_TOKEN,
+    'X-Kore-Tenant': KORE_TENANT_ID
+  };
+}
+
+function jsonHeaders() {
+  return apiHeaders({ 'Content-Type': 'application/json' });
+}
 
 function now() {
   return new Date().toISOString();
@@ -165,7 +177,7 @@ async function remoteEntityList(entityName) {
   const remote = REMOTE_ENTITY_MAP[entityName];
   if (!remote) return [];
   const response = await fetch(`${VPN_API_URL}/api/entities/${remote}`, {
-    headers: { 'X-Kore-Token': VPN_API_TOKEN }
+    headers: apiHeaders()
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || `Erro ao listar ${entityName}`);
@@ -177,10 +189,7 @@ async function remoteEntityCreate(entityName, item) {
   if (!remote) return null;
   const response = await fetch(`${VPN_API_URL}/api/entities/${remote}`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Kore-Token': VPN_API_TOKEN
-    },
+    headers: jsonHeaders(),
     body: JSON.stringify(item)
   });
   const data = await response.json().catch(() => ({}));
@@ -193,10 +202,7 @@ async function remoteEntityUpdate(entityName, id, item) {
   if (!remote) return null;
   const response = await fetch(`${VPN_API_URL}/api/entities/${remote}/${encodeURIComponent(id)}`, {
     method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Kore-Token': VPN_API_TOKEN
-    },
+    headers: jsonHeaders(),
     body: JSON.stringify(item)
   });
   const data = await response.json().catch(() => ({}));
@@ -209,7 +215,7 @@ async function remoteEntityDelete(entityName, id) {
   if (!remote) return null;
   const response = await fetch(`${VPN_API_URL}/api/entities/${remote}/${encodeURIComponent(id)}`, {
     method: 'DELETE',
-    headers: { 'X-Kore-Token': VPN_API_TOKEN }
+    headers: apiHeaders()
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || `Erro ao remover ${entityName}`);
@@ -219,7 +225,7 @@ async function remoteEntityDelete(entityName, id) {
 async function remoteProspectDelete(id) {
   const response = await fetch(`${VPN_API_URL}/api/captive/prospects/${encodeURIComponent(id)}`, {
     method: 'DELETE',
-    headers: { 'X-Kore-Token': VPN_API_TOKEN }
+    headers: apiHeaders()
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || 'Erro ao remover prospecto captive');
@@ -438,10 +444,7 @@ async function adminAuth(payload = {}) {
 async function remoteAdminAuth(payload = {}) {
   const response = await fetch(`${VPN_API_URL}/api/admin/auth`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Kore-Token': VPN_API_TOKEN
-    },
+    headers: jsonHeaders(),
     body: JSON.stringify(payload)
   });
   const data = await response.json().catch(() => ({}));
@@ -466,10 +469,7 @@ async function clientAuth(payload = {}) {
 async function vpnCreateUser(payload = {}) {
   const response = await fetch(`${VPN_API_URL}/api/vpn/users`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Kore-Token': VPN_API_TOKEN
-    },
+    headers: jsonHeaders(),
     body: JSON.stringify({
       username: payload.username,
       password: payload.password,
@@ -486,7 +486,7 @@ async function vpnCreateUser(payload = {}) {
 
 async function vpnStatus() {
   const response = await fetch(`${VPN_API_URL}/api/vpn/status`, {
-    headers: { 'X-Kore-Token': VPN_API_TOKEN }
+    headers: apiHeaders()
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || 'Erro ao consultar VPN na VPS');
@@ -497,10 +497,7 @@ async function mikrotikStatus(payload = {}) {
   const host = payload.remote_ip || payload.vpn_remote_ip || payload.host;
   const response = await fetch(`${VPN_API_URL}/api/mikrotik/status`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Kore-Token': VPN_API_TOKEN
-    },
+    headers: jsonHeaders(),
     body: JSON.stringify({
       ...payload,
       host
@@ -515,10 +512,7 @@ async function mikrotikSyncPlans(payload = {}) {
   const host = payload.remote_ip || payload.vpn_remote_ip || payload.host;
   const response = await fetch(`${VPN_API_URL}/api/mikrotik/sync-plans`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Kore-Token': VPN_API_TOKEN
-    },
+    headers: jsonHeaders(),
     body: JSON.stringify({ ...payload, host })
   });
   const data = await response.json().catch(() => ({}));
@@ -528,7 +522,7 @@ async function mikrotikSyncPlans(payload = {}) {
 
 async function radiusStatus() {
   const response = await fetch(`${VPN_API_URL}/api/radius/status`, {
-    headers: { 'X-Kore-Token': VPN_API_TOKEN }
+    headers: apiHeaders()
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || 'Erro ao consultar FreeRADIUS na VPS');
@@ -537,7 +531,7 @@ async function radiusStatus() {
 
 async function radiusSessions() {
   const response = await fetch(`${VPN_API_URL}/api/radius/sessions`, {
-    headers: { 'X-Kore-Token': VPN_API_TOKEN }
+    headers: apiHeaders()
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || 'Erro ao consultar sessoes RADIUS');
@@ -564,10 +558,7 @@ async function mikrotikPerformance(payload = {}) {
 async function captiveRegister(payload = {}) {
   const response = await fetch(`${VPN_API_URL}/api/captive/register`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Kore-Token': VPN_API_TOKEN
-    },
+    headers: jsonHeaders(),
     body: JSON.stringify(payload)
   });
   const data = await response.json().catch(() => ({}));
@@ -577,7 +568,7 @@ async function captiveRegister(payload = {}) {
 
 async function captiveProspects() {
   const response = await fetch(`${VPN_API_URL}/api/captive/prospects`, {
-    headers: { 'X-Kore-Token': VPN_API_TOKEN }
+    headers: apiHeaders()
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || 'Erro ao listar cadastros captive');
@@ -586,7 +577,7 @@ async function captiveProspects() {
 
 async function captivePlans() {
   const response = await fetch(`${VPN_API_URL}/api/captive/plans`, {
-    headers: { 'X-Kore-Token': VPN_API_TOKEN }
+    headers: apiHeaders()
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || 'Erro ao listar planos captive');
@@ -596,10 +587,7 @@ async function captivePlans() {
 async function captiveClientLogin(payload = {}) {
   const response = await fetch(`${VPN_API_URL}/api/captive/client-login`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Kore-Token': VPN_API_TOKEN
-    },
+    headers: jsonHeaders(),
     body: JSON.stringify(payload)
   });
   const data = await response.json().catch(() => ({}));
@@ -610,10 +598,7 @@ async function captiveClientLogin(payload = {}) {
 async function captiveVoucherLogin(payload = {}) {
   const response = await fetch(`${VPN_API_URL}/api/captive/voucher-login`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Kore-Token': VPN_API_TOKEN
-    },
+    headers: jsonHeaders(),
     body: JSON.stringify(payload)
   });
   const data = await response.json().catch(() => ({}));
@@ -626,10 +611,7 @@ async function ixcConsultaCliente(payload = {}) {
   const settings = Object.fromEntries((db.Setting || []).map((item) => [item.key, item.value]));
   const response = await fetch(`${VPN_API_URL}/api/ixc/cliente`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Kore-Token': VPN_API_TOKEN
-    },
+    headers: jsonHeaders(),
     body: JSON.stringify({
       cpf: payload.cpf,
       base_url: payload.base_url || settings.ixc_base_url,
@@ -645,10 +627,7 @@ async function ixcConsultaCliente(payload = {}) {
 async function createPixPayment(payload = {}) {
   const response = await fetch(`${VPN_API_URL}/api/payments/pix`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Kore-Token': VPN_API_TOKEN
-    },
+    headers: jsonHeaders(),
     body: JSON.stringify({
       client_id: payload.clientId || payload.client_id,
       plan_id: payload.planId || payload.plan_id,
@@ -664,10 +643,7 @@ async function createPixPayment(payload = {}) {
 async function activateFreePlan(payload = {}) {
   const response = await fetch(`${VPN_API_URL}/api/clients/activate-free-plan`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Kore-Token': VPN_API_TOKEN
-    },
+    headers: jsonHeaders(),
     body: JSON.stringify({
       client_id: payload.clientId || payload.client_id,
       plan_id: payload.planId || payload.plan_id,
@@ -683,10 +659,7 @@ async function activateFreePlan(payload = {}) {
 async function hotspotVipAccess(payload = {}) {
   const response = await fetch(`${VPN_API_URL}/api/hotspot/vip`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Kore-Token': VPN_API_TOKEN
-    },
+    headers: jsonHeaders(),
     body: JSON.stringify(payload)
   });
   const data = await response.json().catch(() => ({}));
@@ -697,10 +670,7 @@ async function hotspotVipAccess(payload = {}) {
 async function checkPixPayment(payload = {}) {
   const response = await fetch(`${VPN_API_URL}/api/payments/status`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Kore-Token': VPN_API_TOKEN
-    },
+    headers: jsonHeaders(),
     body: JSON.stringify({ id: payload.id, provider_payment_id: payload.provider_payment_id })
   });
   const data = await response.json().catch(() => ({}));
