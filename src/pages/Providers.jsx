@@ -41,6 +41,19 @@ const statusClass = {
   canceled: 'bg-red-500/10 text-red-500 border-red-500/20'
 };
 
+const tenantSlug = (value) => {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .split('/')[0]
+    .split(':')[0]
+    .replace(/[^a-z0-9_.-]/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+  return normalized || `provedor-${Date.now()}`;
+};
+
 export default function Providers() {
   const [providers, setProviders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -97,14 +110,17 @@ export default function Providers() {
     event.preventDefault();
     setSaving(true);
     try {
+      const tenant_id = editing?.tenant_id || editing?.id || tenantSlug(form.tenant_id || form.domain || form.name);
+      if (!String(form.name || '').trim()) throw new Error('Informe o nome do provedor');
       await spedynet.functions.invoke('providersManager', {
         ...form,
+        tenant_id,
         action: editing ? 'update' : 'create',
-        id: editing?.id || editing?._id || editing?.tenant_id
+        id: editing?.id || editing?._id || editing?.tenant_id || tenant_id
       });
       toast.success(editing ? 'Provedor atualizado' : 'Provedor criado');
       closeForm();
-      load();
+      await load();
     } catch (error) {
       toast.error(error.message || 'Erro ao salvar provedor');
     } finally {

@@ -1000,6 +1000,7 @@ async function providersCrud(req) {
   const parts = pathname.split('/').filter(Boolean);
   const id = decodeURIComponent(parts[2] || '');
   const providers = readGlobalJson(PROVIDERS_FILE, []);
+  const findProvider = (providerId) => providers.find(item => item.id === providerId || item._id === providerId || item.tenant_id === providerId);
 
   if (req.method === 'GET') {
     return { providers: providers.map(publicProvider) };
@@ -1007,7 +1008,12 @@ async function providersCrud(req) {
 
   if (req.method === 'POST') {
     const body = await readBody(req);
+    const providerName = String(body.name || '').trim();
+    if (!providerName) throw Object.assign(new Error('Nome do provedor obrigatorio'), { status: 400 });
     const tenantId = safeTenantId(body.tenant_id || body.domain || body.name || `provedor-${Date.now()}`);
+    if (!tenantId || tenantId === DEFAULT_TENANT_ID) {
+      throw Object.assign(new Error('Informe um Tenant ID valido para o provedor'), { status: 400 });
+    }
     if (providers.some(item => item.tenant_id === tenantId || item.id === tenantId)) {
       throw Object.assign(new Error('Ja existe provedor com este tenant'), { status: 409 });
     }
@@ -1016,7 +1022,7 @@ async function providersCrud(req) {
       id: tenantId,
       _id: tenantId,
       tenant_id: tenantId,
-      name: String(body.name || tenantId).trim(),
+      name: providerName,
       legal_name: String(body.legal_name || '').trim(),
       document: String(body.document || '').trim(),
       domain: String(body.domain || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, ''),
@@ -1043,6 +1049,7 @@ async function providersCrud(req) {
 
   if (req.method === 'PUT' && id) {
     const body = await readBody(req);
+    if (!findProvider(id)) throw Object.assign(new Error('Provedor nao encontrado para atualizar'), { status: 404 });
     if (body.action === 'markPaid') {
       return { provider: publicProvider(markProviderPaid(id, body)) };
     }
