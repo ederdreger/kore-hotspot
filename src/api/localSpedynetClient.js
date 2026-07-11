@@ -3,7 +3,9 @@ const CONFIGURED_API_URL = String(import.meta.env.VITE_KORE_API_URL || '').repla
 const FORCE_CONFIGURED_API_URL = String(import.meta.env.VITE_KORE_FORCE_API_URL || '').toLowerCase() === 'true';
 const VPN_API_URL = FORCE_CONFIGURED_API_URL ? CONFIGURED_API_URL : '';
 const VPN_API_TOKEN = import.meta.env.VITE_KORE_API_TOKEN || 'kore-vpn-api-2026';
-const KORE_TENANT_ID = import.meta.env.VITE_KORE_TENANT_ID || window.location.hostname || 'default';
+const CONFIGURED_TENANT_ID = String(import.meta.env.VITE_KORE_TENANT_ID || '').trim();
+const SEND_TENANT_HEADER = !!CONFIGURED_TENANT_ID && CONFIGURED_TENANT_ID.toLowerCase() !== 'default';
+const KORE_TENANT_ID = SEND_TENANT_HEADER ? CONFIGURED_TENANT_ID : (window.location.hostname || 'default');
 const ADMIN_SESSION_KEY = 'kore_admin_session';
 const STORAGE_KEY = `kore_hotspot_local_db_${KORE_TENANT_ID}`;
 const DEFAULT_ADMINS = [
@@ -73,7 +75,7 @@ function apiHeaders(extra = {}) {
   return {
     ...extra,
     'X-Kore-Token': VPN_API_TOKEN,
-    'X-Kore-Tenant': KORE_TENANT_ID,
+    ...(SEND_TENANT_HEADER ? { 'X-Kore-Tenant': KORE_TENANT_ID } : {}),
     ...(sessionToken ? { 'X-Kore-Session': sessionToken } : {})
   };
 }

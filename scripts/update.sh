@@ -9,7 +9,7 @@ RELEASE_CHANNEL="${RELEASE_CHANNEL:-latest}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/kore-hotspot-src}"
 WEB_DIR="${WEB_DIR:-/opt/kore-hotspot}"
 API_DIR="${API_DIR:-/opt/kore-hotspot-vpn-api}"
-PUBLIC_HOST="${PUBLIC_HOST:-$(hostname -I | awk '{print $1}')}"
+PUBLIC_HOST="${PUBLIC_HOST:-}"
 DOMAIN="${DOMAIN:-}"
 CERTBOT_EMAIL="${CERTBOT_EMAIL:-admin@spedynet.com.br}"
 PUBLIC_URL="${PUBLIC_URL:-}"
@@ -24,6 +24,13 @@ log() { printf '\033[1;36m[%s]\033[0m %s\n' "$APP_NAME" "$*"; }
 fail() { printf '\033[1;31m[ERRO]\033[0m %s\n' "$*" >&2; exit 1; }
 
 [ "$(id -u)" -eq 0 ] || fail "Execute como root."
+
+detect_public_host() {
+  if [ -z "$PUBLIC_HOST" ]; then
+    PUBLIC_HOST="$(curl -fsS --max-time 6 https://api.ipify.org || hostname -I | awk '{print $1}')"
+  fi
+  [ -n "$PUBLIC_HOST" ] || fail "Nao foi possivel detectar o IP publico. Defina PUBLIC_HOST=seu_ip."
+}
 
 backup_data() {
   mkdir -p "$BACKUP_DIR"
@@ -161,6 +168,7 @@ restart_services() {
 main() {
   log "Iniciando atualizacao"
   backup_data
+  detect_public_host
   prepare_source
   build_and_install
   configure_nginx_site

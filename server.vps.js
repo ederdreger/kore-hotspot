@@ -49,7 +49,7 @@ function send(res, status, data, headers = {}) {
     'Content-Type': 'application/json; charset=utf-8',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, X-Kore-Token, X-Kore-Tenant',
+    'Access-Control-Allow-Headers': 'Content-Type, X-Kore-Token, X-Kore-Tenant, X-Kore-Session, X-Admin-Session',
     ...headers
   });
   res.end(typeof data === 'string' ? data : JSON.stringify(data));
@@ -67,7 +67,8 @@ function safeTenantId(value) {
 function tenantFromRequest(req) {
   if (!MULTI_TENANT) return { id: DEFAULT_TENANT_ID, source: 'single' };
   const explicit = req.headers['x-kore-tenant'];
-  if (explicit) return { id: safeTenantId(explicit), source: 'header' };
+  const explicitTenant = explicit ? safeTenantId(explicit) : '';
+  if (explicitTenant && explicitTenant !== DEFAULT_TENANT_ID) return { id: explicitTenant, source: 'header' };
   const rawHost = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
   const host = rawHost.toLowerCase().split(':')[0];
   if (host) {
@@ -77,7 +78,7 @@ function tenantFromRequest(req) {
       if (provider) return { id: safeTenantId(provider.tenant_id || provider.id), source: 'provider-domain', host };
     } catch {}
   }
-  return { id: safeTenantId(host), source: 'host', host };
+  return { id: explicitTenant || safeTenantId(host), source: explicitTenant ? 'header-default' : 'host', host };
 }
 
 function currentTenant() {
