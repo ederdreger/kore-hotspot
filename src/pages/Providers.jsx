@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Building2, Plus, RefreshCw, Edit2, Trash2, X, CheckCircle, Globe2, Users, Server, CreditCard } from 'lucide-react';
+import { Building2, Plus, RefreshCw, Edit2, Trash2, X, CheckCircle, Globe2, Users, Server, CreditCard, QrCode, Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import { spedynet } from '@/api/spedynetClient';
 import { Button } from '@/components/ui/button';
@@ -48,6 +48,8 @@ export default function Providers() {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(emptyForm);
+  const [pixResult, setPixResult] = useState(null);
+  const [checkingPix, setCheckingPix] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -134,6 +136,49 @@ export default function Providers() {
       load();
     } catch (error) {
       toast.error(error.message || 'Erro ao registrar pagamento');
+    }
+  };
+
+  const createPix = async (provider) => {
+    try {
+      const res = await spedynet.functions.invoke('providersManager', {
+        id: provider.id || provider.tenant_id,
+        action: 'createPix'
+      });
+      setPixResult({ provider, billing: res.data.billing });
+      toast.success('Pix gerado para a mensalidade do provedor');
+      load();
+    } catch (error) {
+      toast.error(error.message || 'Erro ao gerar Pix');
+    }
+  };
+
+  const checkPix = async () => {
+    if (!pixResult?.billing) return;
+    setCheckingPix(true);
+    try {
+      const res = await spedynet.functions.invoke('providersManager', {
+        id: pixResult.provider?.id || pixResult.provider?.tenant_id || pixResult.billing.provider_id,
+        action: 'checkPix',
+        billing_id: pixResult.billing.id,
+        provider_payment_id: pixResult.billing.provider_payment_id
+      });
+      setPixResult({ provider: res.data.provider || pixResult.provider, billing: res.data.billing });
+      toast.success(res.data.billing?.status === 'approved' ? 'Pagamento aprovado e provedor renovado' : 'Pagamento consultado');
+      load();
+    } catch (error) {
+      toast.error(error.message || 'Erro ao consultar Pix');
+    } finally {
+      setCheckingPix(false);
+    }
+  };
+
+  const copyPix = async () => {
+    try {
+      await navigator.clipboard.writeText(pixResult?.billing?.qr_code || '');
+      toast.success('Codigo Pix copiado');
+    } catch {
+      toast.error('Nao foi possivel copiar o codigo Pix');
     }
   };
 
@@ -276,6 +321,7 @@ export default function Providers() {
               <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${statusClass[provider.status] || statusClass.active}`}>{statusLabel[provider.status] || provider.status}</span>
             </div>
             <div className="col-span-2 md:col-span-1 flex justify-end gap-1">
+              <button onClick={() => createPix(provider)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-primary" title="Gerar Pix"><QrCode className="w-3.5 h-3.5" /></button>
               <button onClick={() => markPaid(provider)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-success" title="Registrar pagamento"><CreditCard className="w-3.5 h-3.5" /></button>
               <button onClick={() => openEdit(provider)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-primary" title="Editar"><Edit2 className="w-3.5 h-3.5" /></button>
               <button onClick={() => remove(provider)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-destructive" title="Excluir"><Trash2 className="w-3.5 h-3.5" /></button>
@@ -292,6 +338,51 @@ export default function Providers() {
               <button onClick={closeForm} className="text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
             </div>
             {renderForm()}
+          </div>
+        </div>
+      )}
+
+      {pixResult && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+              <div>
+                <h3 className="font-semibold text-sm flex items-center gap-2"><QrCode className="w-4 h-4 text-primary" /> Pix da mensalidade</h3>
+                <p className="text-xs text-muted-foreground">{pixResult.provider?.name || pixResult.billing?.provider_name}</p>
+              </div>
+              <button onClick={() => setPixResult(null)} className="text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div className="rounded-lg border border-border bg-secondary/30 p-3">
+                  <p className="text-xs text-muted-foreground">Valor</p>
+                  <p className="font-bold text-foreground">R$ {Number(pixResult.billing?.amount || 0).toFixed(2)}</p>
+                </div>
+                <div className="rounded-lg border border-border bg-secondary/30 p-3">
+                  <p className="text-xs text-muted-foreground">Status</p>
+                  <p className="font-bold text-foreground">{pixResult.billing?.status || '-'}</p>
+                </div>
+              </div>
+              {pixResult.billing?.qr_code_base64 && (
+                <div className="flex justify-center rounded-xl border border-border bg-white p-4">
+                  <img alt="QR Code Pix" className="h-52 w-52 object-contain" src={`data:image/png;base64,${pixResult.billing.qr_code_base64}`} />
+                </div>
+              )}
+              {pixResult.billing?.qr_code && (
+                <div className="rounded-lg border border-border bg-input p-3">
+                  <p className="mb-2 text-xs font-medium text-muted-foreground">Pix copia e cola</p>
+                  <p className="max-h-24 overflow-auto break-all font-mono text-xs text-foreground">{pixResult.billing.qr_code}</p>
+                  <Button type="button" variant="outline" size="sm" onClick={copyPix} className="mt-3 gap-2"><Copy className="w-4 h-4" /> Copiar</Button>
+                </div>
+              )}
+              <div className="flex justify-end gap-2">
+                <Button type="button" variant="outline" onClick={() => setPixResult(null)}>Fechar</Button>
+                <Button type="button" onClick={checkPix} disabled={checkingPix} className="gap-2">
+                  {checkingPix ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                  Consultar pagamento
+                </Button>
+              </div>
+            </div>
           </div>
         </div>
       )}

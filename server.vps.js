@@ -15,6 +15,7 @@ const PUB_PATH = `${KEY_PATH}.pub`;
 const DATA_DIR = '/opt/kore-hotspot-vpn-api/data';
 const TENANTS_DIR = path.join(DATA_DIR, 'tenants');
 const PROVIDERS_FILE = path.join(DATA_DIR, 'providers.json');
+const PROVIDER_BILLING_FILE = path.join(DATA_DIR, 'provider-billing.json');
 const DEFAULT_TENANT_ID = String(process.env.KORE_DEFAULT_TENANT || 'default').trim().toLowerCase();
 const MULTI_TENANT = String(process.env.KORE_MULTI_TENANT || 'true') !== 'false';
 const tenantStore = new AsyncLocalStorage();
@@ -889,9 +890,21 @@ function providerStats(tenantId) {
   };
 }
 
+function latestProviderBilling(providerId) {
+  const billings = readGlobalJson(PROVIDER_BILLING_FILE, []);
+  const latest = billings
+    .filter(item => item.provider_id === providerId || item.tenant_id === providerId)
+    .sort((a, b) => new Date(b.updated_date || b.created_date || 0) - new Date(a.updated_date || a.created_date || 0))[0] || null;
+  if (!latest) return null;
+  const { raw, qr_code, qr_code_base64, ...safe } = latest;
+  return safe;
+}
+
 function publicProvider(provider) {
+  const providerId = provider.tenant_id || provider.id;
   return {
     ...provider,
+    latest_billing: latestProviderBilling(providerId),
     stats: providerStats(provider.tenant_id || provider.id)
   };
 }
@@ -958,6 +971,30 @@ function assertTenantLicense({ action = 'write', resource = '' } = {}) {
   return state;
 }
 
+function markProviderPaid(providerId, { last_payment_date, months = 1, next_due_date } = {}) {
+  const providers = readGlobalJson(PROVIDERS_FILE, []);
+  const target = providers.find(item => item.id === providerId || item._id === providerId || item.tenant_id === providerId);
+  if (!target) throw Object.assign(new Error('Provedor nao encontrado'), { status: 404 });
+
+  const paidAt = String(last_payment_date || new Date().toISOString().slice(0, 10)).slice(0, 10);
+  const baseDate = next_due_date ? new Date(`${next_due_date}T00:00:00`) : new Date(`${paidAt}T00:00:00`);
+  const nextDue = new Date(baseDate);
+  nextDue.setMonth(nextDue.getMonth() + Number(months || 1));
+
+  const updated = providers.map(item => {
+    if (item.id !== providerId && item._id !== providerId && item.tenant_id !== providerId) return item;
+    return {
+      ...item,
+      status: item.status === 'suspended' ? 'active' : item.status,
+      last_payment_date: paidAt,
+      contract_due_date: nextDue.toISOString().slice(0, 10),
+      updated_date: new Date().toISOString()
+    };
+  });
+  writeGlobalJson(PROVIDERS_FILE, updated);
+  return updated.find(item => item.id === providerId || item._id === providerId || item.tenant_id === providerId);
+}
+
 async function providersCrud(req) {
   const [pathname] = req.url.split('?');
   const parts = pathname.split('/').filter(Boolean);
@@ -1007,22 +1044,13 @@ async function providersCrud(req) {
   if (req.method === 'PUT' && id) {
     const body = await readBody(req);
     if (body.action === 'markPaid') {
-      const paidAt = String(body.last_payment_date || new Date().toISOString().slice(0, 10)).slice(0, 10);
-      const baseDate = body.next_due_date ? new Date(`${body.next_due_date}T00:00:00`) : new Date(`${paidAt}T00:00:00`);
-      const nextDue = new Date(baseDate);
-      nextDue.setMonth(nextDue.getMonth() + Number(body.months || 1));
-      const updatedPaid = providers.map(item => {
-        if (item.id !== id && item._id !== id && item.tenant_id !== id) return item;
-        return {
-          ...item,
-          status: item.status === 'suspended' ? 'active' : item.status,
-          last_payment_date: paidAt,
-          contract_due_date: nextDue.toISOString().slice(0, 10),
-          updated_date: new Date().toISOString()
-        };
-      });
-      writeGlobalJson(PROVIDERS_FILE, updatedPaid);
-      return { provider: publicProvider(updatedPaid.find(item => item.id === id || item._id === id || item.tenant_id === id)) };
+      return { provider: publicProvider(markProviderPaid(id, body)) };
+    }
+    if (body.action === 'createPix') {
+      return createProviderPix(id);
+    }
+    if (body.action === 'checkPix') {
+      return refreshProviderBillingStatus({ id: body.billing_id, provider_payment_id: body.provider_payment_id });
     }
     const updated = providers.map(item => {
       if (item.id !== id && item._id !== id && item.tenant_id !== id) return item;
@@ -1606,8 +1634,12 @@ async function activateFreePlan(payload = {}) {
   return { success: true, client, plan, authorization, login: { username: loginUser, password: loginPass } };
 }
 
-async function getMercadoPagoPayment(paymentId) {
-  const token = getSetting('mp_access_token');
+function getSaasMercadoPagoToken() {
+  return String(process.env.KORE_SAAS_MP_ACCESS_TOKEN || getSetting('mp_access_token') || '').trim();
+}
+
+async function getMercadoPagoPayment(paymentId, tokenOverride = '') {
+  const token = String(tokenOverride || getSetting('mp_access_token') || '').trim();
   if (!token) throw new Error('Configure o Access Token do Mercado Pago');
   const response = await fetch(`https://api.mercadopago.com/v1/payments/${encodeURIComponent(paymentId)}`, {
     headers: { Authorization: `Bearer ${token}` }
@@ -1615,6 +1647,105 @@ async function getMercadoPagoPayment(paymentId) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.message || data.error || `Mercado Pago HTTP ${response.status}`);
   return data;
+}
+
+async function createProviderPix(providerId) {
+  const token = getSaasMercadoPagoToken();
+  if (!token) throw new Error('Configure KORE_SAAS_MP_ACCESS_TOKEN ou o Access Token do Mercado Pago');
+
+  const providers = readGlobalJson(PROVIDERS_FILE, []);
+  const provider = providers.find(item => item.id === providerId || item._id === providerId || item.tenant_id === providerId);
+  if (!provider) throw Object.assign(new Error('Provedor nao encontrado'), { status: 404 });
+  const amount = Number(provider.monthly_price || 0);
+  if (amount <= 0) throw new Error('Defina uma mensalidade maior que zero para gerar Pix');
+
+  const localPaymentId = `saas_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const tenantId = provider.tenant_id || provider.id;
+  const payerEmail = provider.contact_email || `financeiro-${tenantId}@kore-hotspot.local`;
+  const body = {
+    transaction_amount: amount,
+    description: `Kore-HotSpot SaaS - Mensalidade - ${provider.name || tenantId}`,
+    payment_method_id: 'pix',
+    external_reference: localPaymentId,
+    notification_url: `${getPublicBaseUrl()}/api/payments/mercadopago/webhook?scope=provider`,
+    payer: {
+      email: payerEmail,
+      first_name: String(provider.contact_name || provider.name || 'Provedor').split(/\s+/)[0],
+      last_name: String(provider.contact_name || provider.name || 'Kore').split(/\s+/).slice(1).join(' ') || 'HotSpot'
+    }
+  };
+
+  const response = await fetch('https://api.mercadopago.com/v1/payments', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'X-Idempotency-Key': localPaymentId
+    },
+    body: JSON.stringify(body)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.message || data.error || `Mercado Pago HTTP ${response.status}`);
+
+  const tx = data.point_of_interaction?.transaction_data || {};
+  const billing = {
+    id: localPaymentId,
+    _id: localPaymentId,
+    scope: 'provider_saas',
+    provider: 'mercadopago',
+    provider_id: provider.id || provider.tenant_id,
+    tenant_id: tenantId,
+    provider_name: provider.name || tenantId,
+    provider_payment_id: String(data.id || ''),
+    amount,
+    status: data.status || 'pending',
+    status_detail: data.status_detail || '',
+    qr_code: tx.qr_code || '',
+    qr_code_base64: tx.qr_code_base64 || '',
+    ticket_url: tx.ticket_url || '',
+    due_before_payment: provider.contract_due_date || '',
+    created_date: new Date().toISOString(),
+    updated_date: new Date().toISOString(),
+    raw: data
+  };
+  const billings = readGlobalJson(PROVIDER_BILLING_FILE, []);
+  writeGlobalJson(PROVIDER_BILLING_FILE, [billing, ...billings].slice(0, 5000));
+  return { success: true, billing, provider: publicProvider(provider) };
+}
+
+async function refreshProviderBillingStatus({ id, provider_payment_id }) {
+  const billings = readGlobalJson(PROVIDER_BILLING_FILE, []);
+  let billing = billings.find(item => item.id === id || item._id === id || item.provider_payment_id === String(provider_payment_id || ''));
+  if (!billing) throw new Error('Cobranca SaaS nao encontrada');
+
+  const mpPayment = await getMercadoPagoPayment(billing.provider_payment_id, getSaasMercadoPagoToken());
+  billing = {
+    ...billing,
+    status: mpPayment.status || billing.status,
+    status_detail: mpPayment.status_detail || billing.status_detail,
+    updated_date: new Date().toISOString(),
+    raw: mpPayment
+  };
+
+  let provider = null;
+  if (billing.status === 'approved' && !billing.applied_to_provider) {
+    provider = markProviderPaid(billing.provider_id || billing.tenant_id, {
+      last_payment_date: new Date().toISOString().slice(0, 10),
+      months: 1
+    });
+    billing = {
+      ...billing,
+      applied_to_provider: true,
+      applied_at: new Date().toISOString(),
+      next_due_date: provider.contract_due_date || ''
+    };
+  } else {
+    provider = providerForTenant(billing.tenant_id || billing.provider_id);
+  }
+
+  const next = [billing, ...billings.filter(item => item.id !== billing.id && item._id !== billing.id)];
+  writeGlobalJson(PROVIDER_BILLING_FILE, next.slice(0, 5000));
+  return { success: true, billing, provider: provider ? publicProvider(provider) : null };
 }
 
 async function provisionPaidPlan({ payment, mpPayment = null }) {
@@ -1770,6 +1901,9 @@ async function mercadoPagoWebhook(payload = {}, query = '') {
   const params = new URLSearchParams(query.replace(/^\?/, ''));
   const paymentId = payload?.data?.id || payload?.id || params.get('data.id') || params.get('id');
   if (!paymentId) return { success: true, ignored: true };
+  if ((params.get('scope') || payload?.scope) === 'provider') {
+    return refreshProviderBillingStatus({ provider_payment_id: paymentId }).catch(error => ({ success: false, error: error.message }));
+  }
   return refreshPaymentStatus({ provider_payment_id: paymentId }).catch(error => ({ success: false, error: error.message }));
 }
 

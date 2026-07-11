@@ -60,6 +60,7 @@ Variáveis úteis:
 - `ADMIN_PASSWORD`: senha inicial dos administradores padrão.
 - `TENANT_ID`: identificador interno do provedor, exemplo `provedor-a`.
 - `MULTI_TENANT`: `true` ou `false`. Em `true`, os dados ficam isolados por tenant/domínio.
+- `KORE_SAAS_MP_ACCESS_TOKEN`: Access Token do Mercado Pago usado para cobrar mensalidade dos provedores via Pix.
 - `REPO_URL`: repositório Git usado pelo instalador.
 - `REPO_SLUG`: identificador GitHub, exemplo `ederdreger/kore-hotspot`.
 - `BRANCH`: branch para instalação quando não houver release.
@@ -114,6 +115,32 @@ Estrutura de dados por tenant:
 ```
 
 Em operação com múltiplos domínios apontando para a mesma VPS, o backend também identifica o tenant pelo `Host` da requisição. Para API central, pode ser usado o cabeçalho `X-Kore-Tenant`.
+
+## Cobrança SaaS dos provedores
+
+No menu **Provedores**, cada provedor pode ter mensalidade, vencimento, tolerância e bloqueio por inadimplência. O botão **Gerar Pix** cria uma cobrança Mercado Pago para a mensalidade do provedor.
+
+Quando o pagamento é aprovado pelo webhook ou pela consulta manual no painel, o sistema registra o pagamento, renova o vencimento por mais um mês e reativa o provedor caso ele estivesse suspenso.
+
+Configure o token da conta central de cobrança:
+
+```bash
+sudo systemctl edit kore-hotspot-vpn-api
+```
+
+Adicione:
+
+```ini
+[Service]
+Environment=KORE_SAAS_MP_ACCESS_TOKEN=APP_USR_SEU_TOKEN_MERCADO_PAGO
+```
+
+Depois aplique:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart kore-hotspot-vpn-api
+```
 
 ## Acesso inicial
 
