@@ -20,12 +20,22 @@ export const APP_MODULES = [
   { key: 'settings', label: 'Configuracoes', icon: Settings, path: '/settings' },
 ];
 
+export const SYSTEM_MODULES = ['providers'];
+export const TENANT_ADMIN_PERMISSIONS = APP_MODULES
+  .map(module => module.key)
+  .filter(key => !SYSTEM_MODULES.includes(key));
+
+export function isSystemAdmin(user) {
+  return user?.role === 'super_admin' || user?.scope === 'system';
+}
+
 export function userCanAccess(user, moduleKey) {
   if (!moduleKey) return true;
   if (!user) return false;
-  if (user.role === 'admin') return true;
+  if (isSystemAdmin(user)) return true;
+  if (SYSTEM_MODULES.includes(moduleKey)) return false;
   const permissions = Array.isArray(user.permissions) ? user.permissions : [];
-  return permissions.includes('*') || permissions.includes(moduleKey);
+  return (permissions.includes('*') && !SYSTEM_MODULES.includes(moduleKey)) || permissions.includes(moduleKey);
 }
 
 export function moduleKeyFromPath(pathname = '') {

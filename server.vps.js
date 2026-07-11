@@ -39,9 +39,11 @@ const ENTITY_FILES = {
   payments: path.join(DATA_DIR, 'payments.json')
 };
 const DEFAULT_ADMINS = [
-  { email: 'demo@spedynet.com.br', full_name: 'Administrador Demo', role: 'admin' },
-  { email: 'spedynet@spedynet.com.br', full_name: 'Administrador Spedynet', role: 'admin' }
+  { email: 'demo@spedynet.com.br', full_name: 'Administrador Demo', role: 'super_admin' },
+  { email: 'spedynet@spedynet.com.br', full_name: 'Administrador Spedynet', role: 'super_admin' }
 ];
+const SYSTEM_MODULES = ['providers'];
+const TENANT_ADMIN_PERMISSIONS = ['dashboard', 'clients', 'prospects', 'mikrotiks', 'vpn', 'plans', 'vouchers', 'campaigns', 'radius', 'ap-monitor', 'logs', 'users', 'settings'];
 const radiusRateCache = new Map();
 
 function send(res, status, data, headers = {}) {
@@ -78,7 +80,7 @@ function tenantFromRequest(req) {
       if (provider) return { id: safeTenantId(provider.tenant_id || provider.id), source: 'provider-domain', host };
     } catch {}
   }
-  return { id: explicitTenant || safeTenantId(host), source: explicitTenant ? 'header-default' : 'host', host };
+  return { id: explicitTenant || DEFAULT_TENANT_ID, source: explicitTenant ? 'header-default' : 'default-host', host };
 }
 
 function currentTenant() {
@@ -665,7 +667,18 @@ function ensureDefaultAdmins({ resetPassword = false, force = false } = {}) {
         delete user.password;
         changedExisting = true;
       }
-      if (user.role === 'admin' && !Array.isArray(user.permissions)) {
+      if (currentTenant().id === DEFAULT_TENANT_ID && user.role === 'admin' && user.permissions?.includes('*')) {
+        user.role = 'super_admin';
+        user.scope = 'system';
+        changedExisting = true;
+      }
+      if (currentTenant().id !== DEFAULT_TENANT_ID && (user.permissions?.includes('*') || user.role === 'admin' || user.role === 'super_admin')) {
+        user.role = 'provider_admin';
+        user.scope = 'tenant';
+        user.permissions = TENANT_ADMIN_PERMISSIONS;
+        changedExisting = true;
+      }
+      if ((user.role === 'admin' || user.role === 'super_admin') && !Array.isArray(user.permissions)) {
         user.permissions = ['*'];
         changedExisting = true;
       }
@@ -685,6 +698,7 @@ function ensureDefaultAdmins({ resetPassword = false, force = false } = {}) {
         ...admin,
         email,
         status: 'active',
+        scope: 'system',
         permissions: ['*'],
         password_hash: passwordHash(DEFAULT_ADMIN_PASSWORD),
         created_date: new Date().toISOString(),
@@ -692,8 +706,9 @@ function ensureDefaultAdmins({ resetPassword = false, force = false } = {}) {
       });
       changed = true;
     } else {
-      existing.role = 'admin';
+      existing.role = 'super_admin';
       existing.status = 'active';
+      existing.scope = 'system';
       existing.permissions = ['*'];
       existing.updated_date = new Date().toISOString();
       if (resetPassword || (!existing.password_hash && !existing.password)) {
@@ -1002,6 +1017,12 @@ function assertTenantLicense({ action = 'write', resource = '' } = {}) {
   return state;
 }
 
+function assertSystemTenant() {
+  if (currentTenant().id !== DEFAULT_TENANT_ID) {
+    throw Object.assign(new Error('Modulo exclusivo do administrador geral do sistema'), { status: 403 });
+  }
+}
+
 function markProviderPaid(providerId, { last_payment_date, months = 1, next_due_date } = {}) {
   const providers = readGlobalJson(PROVIDERS_FILE, []);
   const target = providers.find(item => item.id === providerId || item._id === providerId || item.tenant_id === providerId);
@@ -1080,9 +1101,10 @@ function ensureProviderAdmin(provider, options = {}) {
   if (existing) {
     if (options.resetPassword) {
       existing.full_name = provider.contact_name || provider.name || existing.full_name || email;
-      existing.role = 'admin';
+      existing.role = 'provider_admin';
       existing.status = 'active';
-      existing.permissions = ['*'];
+      existing.scope = 'tenant';
+      existing.permissions = TENANT_ADMIN_PERMISSIONS;
       existing.password_hash = passwordHash(DEFAULT_ADMIN_PASSWORD);
       delete existing.password;
       existing.updated_date = new Date().toISOString();
@@ -1098,9 +1120,10 @@ function ensureProviderAdmin(provider, options = {}) {
     _id: id,
     email,
     full_name: provider.contact_name || provider.name || email,
-    role: 'admin',
+    role: 'provider_admin',
     status: 'active',
-    permissions: ['*'],
+    scope: 'tenant',
+    permissions: TENANT_ADMIN_PERMISSIONS,
     password_hash: passwordHash(DEFAULT_ADMIN_PASSWORD),
     created_date: new Date().toISOString(),
     updated_date: new Date().toISOString()
@@ -1153,27 +1176,65 @@ async function issueProviderCertificate(providerId) {
   const domain = validateCertificateDomain(provider.domain);
   const tenantId = provider.tenant_id || provider.id;
   const email = provider.contact_email || CERTBOT_EMAIL;
+  const nginxFile = `/etc/nginx/conf.d/kore-hotspot-provider-${safeTenantId(tenantId)}.conf`;
 
   try {
-    await assertDomainPointsToServer(domain);
     fs.mkdirSync(path.join(WEB_DIR, '.well-known', 'acme-challenge'), { recursive: true });
+    fs.writeFileSync(nginxFile, `# Gerenciado pelo Kore-HotSpot - HTTP do provedor ${tenantId}
+server {
+    listen 80;
+    server_name ${domain};
+    root ${WEB_DIR};
+    index index.html;
+
+    location ^~ /.well-known/acme-challenge/ {
+        default_type "text/plain";
+        try_files $uri =404;
+    }
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:8081;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+`);
+    await run('nginx', ['-t'], 30000);
+    await run('systemctl', ['reload', 'nginx'], 30000).catch(() => run('systemctl', ['restart', 'nginx'], 30000));
     await run('certbot', [
       'certonly',
       '--webroot',
       '-w', WEB_DIR,
       '-d', domain,
+      '--cert-name', domain,
+      '--preferred-challenges', 'http',
       '--non-interactive',
       '--agree-tos',
       '-m', email,
       '--keep-until-expiring'
     ], 120000);
 
-    const nginxFile = `/etc/nginx/conf.d/kore-hotspot-provider-${safeTenantId(tenantId)}.conf`;
     fs.writeFileSync(nginxFile, `# Gerenciado pelo Kore-HotSpot - HTTPS do provedor ${tenantId}
 server {
     listen 80;
     server_name ${domain};
-    return 301 https://$host$request_uri;
+    root ${WEB_DIR};
+
+    location ^~ /.well-known/acme-challenge/ {
+        default_type "text/plain";
+        try_files $uri =404;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
 }
 
 server {
@@ -2261,6 +2322,7 @@ async function handleRequest(req, res) {
     }
     if (req.method === 'GET' && req.url === '/api/license/status') return send(res, 200, licenseState());
     if (req.url.startsWith('/api/providers')) {
+      assertSystemTenant();
       const result = await providersCrud(req);
       if (result) return send(res, 200, result);
     }

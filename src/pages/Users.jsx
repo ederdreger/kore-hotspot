@@ -8,8 +8,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { APP_MODULES } from '@/lib/modulePermissions';
 
-const ROLE_LABELS = { admin: 'Administrador', manager: 'Gerente', user: 'Usuario', inactive: 'Inativo' };
+const ROLE_LABELS = { super_admin: 'Admin Geral', provider_admin: 'Admin Provedor', admin: 'Administrador', manager: 'Gerente', user: 'Usuario', inactive: 'Inativo' };
 const ROLE_COLORS = {
+  super_admin: 'bg-red-500/10 text-red-400 border border-red-500/20',
+  provider_admin: 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20',
   admin: 'bg-red-500/10 text-red-400 border border-red-500/20',
   manager: 'bg-orange-500/10 text-orange-400 border border-orange-500/20',
   user: 'bg-blue-500/10 text-blue-400 border border-blue-500/20',
@@ -47,7 +49,7 @@ export default function UsersPage() {
 
   const resetForm = () => setForm(defaultForm);
 
-  const permissionsForSubmit = () => (form.role === 'admin' ? ['*'] : (form.permissions || []));
+  const permissionsForSubmit = () => (['admin', 'super_admin'].includes(form.role) ? ['*'] : (form.permissions || []));
 
   const handleCreate = async (event) => {
     event.preventDefault();
@@ -156,7 +158,8 @@ export default function UsersPage() {
   };
 
   const moduleSummary = (user) => {
-    if (user.role === 'admin' || user.permissions?.includes('*')) return 'Todos os modulos';
+    if (user.role === 'super_admin') return 'Todos os modulos do sistema';
+    if (user.role === 'admin' || user.permissions?.includes('*')) return 'Todos os modulos do tenant';
     const permissions = Array.isArray(user.permissions) ? user.permissions : [];
     if (!permissions.length) return 'Sem modulos';
     return APP_MODULES.filter(module => permissions.includes(module.key)).map(module => module.label).join(', ');
@@ -196,7 +199,7 @@ export default function UsersPage() {
         ))}
       </div>
 
-      {form.role !== 'admin' && (
+      {!['admin', 'super_admin'].includes(form.role) && (
         <div>
           <Label className="text-xs text-muted-foreground mb-2 block">Modulos permitidos</Label>
           <div className="grid grid-cols-2 gap-2 max-h-56 overflow-y-auto rounded-xl border border-border bg-secondary/20 p-3">
@@ -235,13 +238,13 @@ export default function UsersPage() {
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={load} className="gap-1.5 border-border"><RefreshCw className="w-3.5 h-3.5" /> Atualizar</Button>
-          {currentUser?.role === 'admin' && <Button variant="outline" size="sm" onClick={handleResetDefault} className="gap-1.5 border-border"><RefreshCw className="w-3.5 h-3.5" /> Resetar Padrao</Button>}
+          {currentUser?.role === 'super_admin' && <Button variant="outline" size="sm" onClick={handleResetDefault} className="gap-1.5 border-border"><RefreshCw className="w-3.5 h-3.5" /> Resetar Padrao</Button>}
           <Button size="sm" onClick={() => setShowCreate(true)} className="gap-1.5"><Plus className="w-3.5 h-3.5" /> Criar Usuario</Button>
         </div>
       </div>
 
       <div className="grid grid-cols-2 gap-4 mb-6">
-        <div className="bg-card border border-border rounded-xl p-4 flex items-center gap-3"><Shield className="w-5 h-5 text-red-400" /><div><p className="text-xs text-muted-foreground">Administradores</p><p className="text-xl font-bold">{users.filter(user => user.role === 'admin').length}</p></div></div>
+        <div className="bg-card border border-border rounded-xl p-4 flex items-center gap-3"><Shield className="w-5 h-5 text-red-400" /><div><p className="text-xs text-muted-foreground">Administradores</p><p className="text-xl font-bold">{users.filter(user => ['admin', 'super_admin', 'provider_admin'].includes(user.role)).length}</p></div></div>
         <div className="bg-card border border-border rounded-xl p-4 flex items-center gap-3"><User className="w-5 h-5 text-blue-400" /><div><p className="text-xs text-muted-foreground">Usuarios</p><p className="text-xl font-bold">{users.length}</p></div></div>
       </div>
 
