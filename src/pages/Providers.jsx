@@ -107,7 +107,7 @@ export default function Providers() {
   };
 
   const save = async (event) => {
-    event.preventDefault();
+    event?.preventDefault?.();
     setSaving(true);
     try {
       const tenant_id = editing?.tenant_id || editing?.id || tenantSlug(form.tenant_id || form.domain || form.name);
@@ -207,7 +207,7 @@ export default function Providers() {
   };
 
   const renderForm = () => (
-    <form onSubmit={save} className="p-5 space-y-4">
+    <form onSubmit={save} noValidate className="p-5 space-y-4">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div>
           <Label className="text-xs text-muted-foreground mb-1.5 block">Nome do provedor</Label>
@@ -236,7 +236,7 @@ export default function Providers() {
         </div>
         <div>
           <Label className="text-xs text-muted-foreground mb-1.5 block">E-mail</Label>
-          <Input type="email" value={form.contact_email} onChange={e => setForm({ ...form, contact_email: e.target.value })} className="bg-input border-border h-9" />
+          <Input type="text" value={form.contact_email} onChange={e => setForm({ ...form, contact_email: e.target.value })} className="bg-input border-border h-9" />
         </div>
         <div>
           <Label className="text-xs text-muted-foreground mb-1.5 block">Telefone</Label>
@@ -285,7 +285,7 @@ export default function Providers() {
       </div>
       <div className="flex justify-end gap-2">
         <Button type="button" variant="outline" onClick={closeForm}>Cancelar</Button>
-        <Button type="submit" disabled={saving} className="gap-2">{saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />} Salvar</Button>
+        <Button type="button" onClick={() => save()} disabled={saving} className="gap-2">{saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />} Salvar</Button>
       </div>
     </form>
   );
