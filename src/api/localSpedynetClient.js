@@ -4,6 +4,7 @@ const FORCE_CONFIGURED_API_URL = String(import.meta.env.VITE_KORE_FORCE_API_URL 
 const VPN_API_URL = FORCE_CONFIGURED_API_URL ? CONFIGURED_API_URL : '';
 const VPN_API_TOKEN = import.meta.env.VITE_KORE_API_TOKEN || 'kore-vpn-api-2026';
 const KORE_TENANT_ID = import.meta.env.VITE_KORE_TENANT_ID || window.location.hostname || 'default';
+const ADMIN_SESSION_KEY = 'kore_admin_session';
 const STORAGE_KEY = `kore_hotspot_local_db_${KORE_TENANT_ID}`;
 const DEFAULT_ADMINS = [
   { email: 'demo@spedynet.com.br', full_name: 'Administrador Demo', role: 'admin' },
@@ -68,10 +69,12 @@ const REMOTE_ENTITY_MAP = {
 };
 
 function apiHeaders(extra = {}) {
+  const sessionToken = localStorage.getItem(ADMIN_SESSION_KEY) || '';
   return {
     ...extra,
     'X-Kore-Token': VPN_API_TOKEN,
-    'X-Kore-Tenant': KORE_TENANT_ID
+    'X-Kore-Tenant': KORE_TENANT_ID,
+    ...(sessionToken ? { 'X-Kore-Session': sessionToken } : {})
   };
 }
 

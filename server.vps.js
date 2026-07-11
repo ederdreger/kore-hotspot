@@ -148,7 +148,9 @@ async function ensureSshKey() {
 }
 
 function validToken(req) {
-  return req.headers['x-kore-token'] === TOKEN;
+  if (req.headers['x-kore-token'] === TOKEN) return true;
+  const sessionToken = req.headers['x-kore-session'] || req.headers['x-admin-session'];
+  return !!getAdminSession(sessionToken);
 }
 
 function normalizeUser(value) {
@@ -2029,6 +2031,7 @@ async function handleRequest(req, res) {
       await ensureSshKey();
       return send(res, 200, fs.readFileSync(PUB_PATH, 'utf8'), { 'Content-Type': 'text/plain; charset=utf-8' });
     }
+    if (req.method === 'POST' && req.url === '/api/admin/auth') return send(res, 200, await adminAuth(await readBody(req)));
     if (!validToken(req)) return send(res, 401, { error: 'token invalido' });
 
     if (req.method === 'GET' && req.url === '/api/tenant/current') {
@@ -2044,7 +2047,6 @@ async function handleRequest(req, res) {
       const pub = fs.readFileSync(PUB_PATH, 'utf8').trim();
       return send(res, 200, { public_key: pub, public_key_url: 'http://190.8.174.155:8081/public/kore-api.pub' });
     }
-    if (req.method === 'POST' && req.url === '/api/admin/auth') return send(res, 200, await adminAuth(await readBody(req)));
     if (req.method === 'GET' && req.url === '/api/radius/status') return send(res, 200, await radiusStatus());
     if (req.method === 'GET' && req.url === '/api/radius/sessions') return send(res, 200, await radiusSessions());
     if (req.method === 'GET' && req.url === '/api/captive/prospects') return send(res, 200, { prospects: readCaptiveDb() });
