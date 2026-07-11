@@ -22,6 +22,7 @@ import APMonitor from '@/pages/APMonitor';
 import HotspotPlans from '@/pages/HotspotPlans';
 import HotspotLogin from '@/pages/HotspotLogin';
 import UsersPage from '@/pages/Users';
+import Providers from '@/pages/Providers';
 import Login from '@/pages/Login';
 import MikrotikManager from '@/pages/MikrotikManager';
 import ClientPortalLogin from '@/pages/ClientPortalLogin';
@@ -40,6 +41,7 @@ const AuthenticatedApp = () => {
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route element={<ProtectedRoute unauthenticatedElement={<Navigate to="/login" replace />} />}>
           <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/providers" element={<Providers />} />
           <Route path="/clients" element={<Clients />} />
           <Route path="/prospects" element={<Prospects />} />
           <Route path="/plans" element={<HotspotPlans />} />

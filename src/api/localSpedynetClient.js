@@ -678,6 +678,21 @@ async function checkPixPayment(payload = {}) {
   return data;
 }
 
+async function providersManager(payload = {}) {
+  const action = payload.action || 'list';
+  const id = payload.id || payload._id || payload.tenant_id || '';
+  const method = action === 'create' ? 'POST' : action === 'update' ? 'PUT' : action === 'delete' ? 'DELETE' : 'GET';
+  const url = `${VPN_API_URL}/api/providers${id && method !== 'POST' ? `/${encodeURIComponent(id)}` : ''}`;
+  const response = await fetch(url, {
+    method,
+    headers: method === 'GET' || method === 'DELETE' ? apiHeaders() : jsonHeaders(),
+    body: method === 'GET' || method === 'DELETE' ? undefined : JSON.stringify(payload)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || 'Erro ao gerenciar provedores');
+  return data;
+}
+
 async function invoke(functionName, payload) {
   const handlers = {
     adminAuth: async (body) => remoteAdminAuth(body).catch(async (error) => {
@@ -702,6 +717,7 @@ async function invoke(functionName, payload) {
     activateFreePlan,
     hotspotVipAccess,
     checkPixPayment,
+    providersManager,
     createMercadoPagoCheckout: createPixPayment,
     getClientPortalData: async ({ clientId }) => {
       const db = readDb();

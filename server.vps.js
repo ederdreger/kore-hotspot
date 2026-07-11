@@ -14,6 +14,7 @@ const KEY_PATH = path.join(KEY_DIR, 'kore-api_rsa');
 const PUB_PATH = `${KEY_PATH}.pub`;
 const DATA_DIR = '/opt/kore-hotspot-vpn-api/data';
 const TENANTS_DIR = path.join(DATA_DIR, 'tenants');
+const PROVIDERS_FILE = path.join(DATA_DIR, 'providers.json');
 const DEFAULT_TENANT_ID = String(process.env.KORE_DEFAULT_TENANT || 'default').trim().toLowerCase();
 const MULTI_TENANT = String(process.env.KORE_MULTI_TENANT || 'true') !== 'false';
 const tenantStore = new AsyncLocalStorage();
@@ -591,6 +592,17 @@ function writeJson(file, value) {
   fs.writeFileSync(target, JSON.stringify(value, null, 2));
 }
 
+function readGlobalJson(file, fallback = []) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  if (!fs.existsSync(file)) fs.writeFileSync(file, JSON.stringify(fallback, null, 2));
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; }
+}
+
+function writeGlobalJson(file, value) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(value, null, 2));
+}
+
 function normalizeEmail(value) {
   return String(value || '').trim().toLowerCase();
 }
@@ -858,6 +870,108 @@ function upsertById(file, item) {
   const next = [item, ...items.filter(existing => existing.id !== id && existing._id !== id)];
   writeJson(file, next.slice(0, 5000));
   return item;
+}
+
+function providerStats(tenantId) {
+  const dir = path.join(TENANTS_DIR, safeTenantId(tenantId));
+  const read = (name) => {
+    const file = path.join(dir, name);
+    if (!fs.existsSync(file)) return [];
+    try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return []; }
+  };
+  return {
+    clients: read('clients.json').length,
+    prospects: read('captive-prospects.json').length,
+    plans: read('plans.json').length,
+    users: read('admin-users.json').length,
+    vouchers: read('vouchers.json').length
+  };
+}
+
+function publicProvider(provider) {
+  return {
+    ...provider,
+    stats: providerStats(provider.tenant_id || provider.id)
+  };
+}
+
+async function providersCrud(req) {
+  const [pathname] = req.url.split('?');
+  const parts = pathname.split('/').filter(Boolean);
+  const id = decodeURIComponent(parts[2] || '');
+  const providers = readGlobalJson(PROVIDERS_FILE, []);
+
+  if (req.method === 'GET') {
+    return { providers: providers.map(publicProvider) };
+  }
+
+  if (req.method === 'POST') {
+    const body = await readBody(req);
+    const tenantId = safeTenantId(body.tenant_id || body.domain || body.name || `provedor-${Date.now()}`);
+    if (providers.some(item => item.tenant_id === tenantId || item.id === tenantId)) {
+      throw Object.assign(new Error('Ja existe provedor com este tenant'), { status: 409 });
+    }
+    const nowIso = new Date().toISOString();
+    const provider = {
+      id: tenantId,
+      _id: tenantId,
+      tenant_id: tenantId,
+      name: String(body.name || tenantId).trim(),
+      legal_name: String(body.legal_name || '').trim(),
+      document: String(body.document || '').trim(),
+      domain: String(body.domain || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, ''),
+      contact_name: String(body.contact_name || '').trim(),
+      contact_email: String(body.contact_email || '').trim().toLowerCase(),
+      contact_phone: String(body.contact_phone || '').trim(),
+      commercial_plan: String(body.commercial_plan || 'starter'),
+      status: String(body.status || 'active'),
+      max_clients: Number(body.max_clients || 0),
+      max_mikrotiks: Number(body.max_mikrotiks || 0),
+      notes: String(body.notes || ''),
+      created_date: nowIso,
+      updated_date: nowIso
+    };
+    fs.mkdirSync(path.join(TENANTS_DIR, tenantId), { recursive: true });
+    writeGlobalJson(PROVIDERS_FILE, [provider, ...providers].slice(0, 1000));
+    return { provider: publicProvider(provider) };
+  }
+
+  if (req.method === 'PUT' && id) {
+    const body = await readBody(req);
+    const updated = providers.map(item => {
+      if (item.id !== id && item._id !== id && item.tenant_id !== id) return item;
+      return {
+        ...item,
+        name: body.name ?? item.name,
+        legal_name: body.legal_name ?? item.legal_name,
+        document: body.document ?? item.document,
+        domain: body.domain !== undefined ? String(body.domain || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, '') : item.domain,
+        contact_name: body.contact_name ?? item.contact_name,
+        contact_email: body.contact_email !== undefined ? String(body.contact_email || '').trim().toLowerCase() : item.contact_email,
+        contact_phone: body.contact_phone ?? item.contact_phone,
+        commercial_plan: body.commercial_plan ?? item.commercial_plan,
+        status: body.status ?? item.status,
+        max_clients: body.max_clients !== undefined ? Number(body.max_clients || 0) : item.max_clients,
+        max_mikrotiks: body.max_mikrotiks !== undefined ? Number(body.max_mikrotiks || 0) : item.max_mikrotiks,
+        notes: body.notes ?? item.notes,
+        updated_date: new Date().toISOString()
+      };
+    });
+    writeGlobalJson(PROVIDERS_FILE, updated);
+    return { provider: publicProvider(updated.find(item => item.id === id || item._id === id || item.tenant_id === id)) };
+  }
+
+  if (req.method === 'DELETE' && id) {
+    const target = providers.find(item => item.id === id || item._id === id || item.tenant_id === id);
+    if (!target) throw Object.assign(new Error('Provedor nao encontrado'), { status: 404 });
+    if (target.tenant_id === DEFAULT_TENANT_ID) {
+      throw Object.assign(new Error('Nao e permitido excluir o tenant padrao'), { status: 400 });
+    }
+    writeGlobalJson(PROVIDERS_FILE, providers.filter(item => item.id !== id && item._id !== id && item.tenant_id !== id));
+    return { success: true };
+  }
+
+  return null;
 }
 
 function paidPlan(plan) {
@@ -1655,6 +1769,10 @@ async function handleRequest(req, res) {
 
     if (req.method === 'GET' && req.url === '/api/tenant/current') {
       return send(res, 200, { tenant: currentTenant(), data_dir: currentDataDir(), multi_tenant: MULTI_TENANT });
+    }
+    if (req.url.startsWith('/api/providers')) {
+      const result = await providersCrud(req);
+      if (result) return send(res, 200, result);
     }
     if (req.method === 'GET' && req.url === '/api/ssh-key') {
       await ensureSshKey();

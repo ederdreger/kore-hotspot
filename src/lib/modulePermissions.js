@@ -1,10 +1,11 @@
 import {
   LayoutDashboard, Users, UserSearch, Zap, Ticket, Megaphone,
-  Settings, ScrollText, Radio, Signal, UserCog, Network, Server
+  Settings, ScrollText, Radio, Signal, UserCog, Network, Server, Building2
 } from 'lucide-react';
 
 export const APP_MODULES = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard' },
+  { key: 'providers', label: 'Provedores', icon: Building2, path: '/providers' },
   { key: 'clients', label: 'Clientes', icon: Users, path: '/clients' },
   { key: 'prospects', label: 'Prospectos', icon: UserSearch, path: '/prospects' },
   { key: 'mikrotiks', label: 'Equipamentos', icon: Server, path: '/mikrotiks' },

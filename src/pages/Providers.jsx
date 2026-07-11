@@ -1,0 +1,243 @@
+import { useEffect, useState } from 'react';
+import { Building2, Plus, RefreshCw, Edit2, Trash2, X, CheckCircle, Globe2, Users, Server } from 'lucide-react';
+import { toast } from 'sonner';
+import { spedynet } from '@/api/spedynetClient';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+
+const emptyForm = {
+  name: '',
+  tenant_id: '',
+  domain: '',
+  legal_name: '',
+  document: '',
+  contact_name: '',
+  contact_email: '',
+  contact_phone: '',
+  commercial_plan: 'starter',
+  status: 'active',
+  max_clients: '',
+  max_mikrotiks: '',
+  notes: ''
+};
+
+const statusLabel = {
+  active: 'Ativo',
+  trial: 'Teste',
+  suspended: 'Suspenso',
+  canceled: 'Cancelado'
+};
+
+const statusClass = {
+  active: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20',
+  trial: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
+  suspended: 'bg-amber-500/10 text-amber-500 border-amber-500/20',
+  canceled: 'bg-red-500/10 text-red-500 border-red-500/20'
+};
+
+export default function Providers() {
+  const [providers, setProviders] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState(emptyForm);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const res = await spedynet.functions.invoke('providersManager', { action: 'list' });
+      setProviders(res.data.providers || []);
+    } catch (error) {
+      toast.error(error.message || 'Erro ao carregar provedores');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const closeForm = () => {
+    setShowForm(false);
+    setEditing(null);
+    setForm(emptyForm);
+  };
+
+  const openCreate = () => {
+    setEditing(null);
+    setForm(emptyForm);
+    setShowForm(true);
+  };
+
+  const openEdit = (provider) => {
+    setEditing(provider);
+    setForm({
+      ...emptyForm,
+      ...provider,
+      max_clients: provider.max_clients || '',
+      max_mikrotiks: provider.max_mikrotiks || ''
+    });
+    setShowForm(true);
+  };
+
+  const save = async (event) => {
+    event.preventDefault();
+    setSaving(true);
+    try {
+      await spedynet.functions.invoke('providersManager', {
+        ...form,
+        action: editing ? 'update' : 'create',
+        id: editing?.id || editing?._id || editing?.tenant_id
+      });
+      toast.success(editing ? 'Provedor atualizado' : 'Provedor criado');
+      closeForm();
+      load();
+    } catch (error) {
+      toast.error(error.message || 'Erro ao salvar provedor');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async (provider) => {
+    if (!window.confirm(`Excluir o provedor ${provider.name}? Os dados do tenant serao preservados no servidor.`)) return;
+    try {
+      await spedynet.functions.invoke('providersManager', { action: 'delete', id: provider.id || provider.tenant_id });
+      toast.success('Provedor removido da lista');
+      load();
+    } catch (error) {
+      toast.error(error.message || 'Erro ao excluir provedor');
+    }
+  };
+
+  const renderForm = () => (
+    <form onSubmit={save} className="p-5 space-y-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <Label className="text-xs text-muted-foreground mb-1.5 block">Nome do provedor</Label>
+          <Input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required className="bg-input border-border h-9" />
+        </div>
+        <div>
+          <Label className="text-xs text-muted-foreground mb-1.5 block">Tenant ID</Label>
+          <Input value={form.tenant_id} onChange={e => setForm({ ...form, tenant_id: e.target.value })} disabled={!!editing} placeholder="provedor-a" className="bg-input border-border h-9 font-mono" />
+        </div>
+        <div>
+          <Label className="text-xs text-muted-foreground mb-1.5 block">Dominio</Label>
+          <Input value={form.domain} onChange={e => setForm({ ...form, domain: e.target.value })} placeholder="wifi.provedor.com.br" className="bg-input border-border h-9 font-mono" />
+        </div>
+        <div>
+          <Label className="text-xs text-muted-foreground mb-1.5 block">Status</Label>
+          <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })} className="w-full h-9 rounded-md border border-border bg-input px-3 text-sm text-foreground">
+            <option value="active">Ativo</option>
+            <option value="trial">Teste</option>
+            <option value="suspended">Suspenso</option>
+            <option value="canceled">Cancelado</option>
+          </select>
+        </div>
+        <div>
+          <Label className="text-xs text-muted-foreground mb-1.5 block">Responsavel</Label>
+          <Input value={form.contact_name} onChange={e => setForm({ ...form, contact_name: e.target.value })} className="bg-input border-border h-9" />
+        </div>
+        <div>
+          <Label className="text-xs text-muted-foreground mb-1.5 block">E-mail</Label>
+          <Input type="email" value={form.contact_email} onChange={e => setForm({ ...form, contact_email: e.target.value })} className="bg-input border-border h-9" />
+        </div>
+        <div>
+          <Label className="text-xs text-muted-foreground mb-1.5 block">Telefone</Label>
+          <Input value={form.contact_phone} onChange={e => setForm({ ...form, contact_phone: e.target.value })} className="bg-input border-border h-9" />
+        </div>
+        <div>
+          <Label className="text-xs text-muted-foreground mb-1.5 block">Plano comercial</Label>
+          <select value={form.commercial_plan} onChange={e => setForm({ ...form, commercial_plan: e.target.value })} className="w-full h-9 rounded-md border border-border bg-input px-3 text-sm text-foreground">
+            <option value="starter">Starter</option>
+            <option value="professional">Professional</option>
+            <option value="enterprise">Enterprise</option>
+          </select>
+        </div>
+        <div>
+          <Label className="text-xs text-muted-foreground mb-1.5 block">Limite de clientes</Label>
+          <Input type="number" value={form.max_clients} onChange={e => setForm({ ...form, max_clients: e.target.value })} placeholder="0 = ilimitado" className="bg-input border-border h-9" />
+        </div>
+        <div>
+          <Label className="text-xs text-muted-foreground mb-1.5 block">Limite de MikroTiks</Label>
+          <Input type="number" value={form.max_mikrotiks} onChange={e => setForm({ ...form, max_mikrotiks: e.target.value })} placeholder="0 = ilimitado" className="bg-input border-border h-9" />
+        </div>
+      </div>
+      <div>
+        <Label className="text-xs text-muted-foreground mb-1.5 block">Observacoes</Label>
+        <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} className="w-full min-h-20 rounded-md border border-border bg-input px-3 py-2 text-sm text-foreground" />
+      </div>
+      <div className="flex justify-end gap-2">
+        <Button type="button" variant="outline" onClick={closeForm}>Cancelar</Button>
+        <Button type="submit" disabled={saving} className="gap-2">{saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />} Salvar</Button>
+      </div>
+    </form>
+  );
+
+  return (
+    <div className="p-6 max-w-7xl mx-auto">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-xl font-bold text-foreground flex items-center gap-2"><Building2 className="w-5 h-5 text-primary" /> Provedores</h1>
+          <p className="text-xs text-muted-foreground mt-0.5">Gerencie tenants, dominios, limites e status comercial dos provedores.</p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={load} className="gap-2"><RefreshCw className="w-4 h-4" /> Atualizar</Button>
+          <Button size="sm" onClick={openCreate} className="gap-2"><Plus className="w-4 h-4" /> Novo Provedor</Button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div className="rounded-xl border border-border bg-card p-4"><p className="text-xs text-muted-foreground">Provedores ativos</p><p className="text-2xl font-bold text-foreground">{providers.filter(p => p.status === 'active').length}</p></div>
+        <div className="rounded-xl border border-border bg-card p-4"><p className="text-xs text-muted-foreground">Em teste</p><p className="text-2xl font-bold text-foreground">{providers.filter(p => p.status === 'trial').length}</p></div>
+        <div className="rounded-xl border border-border bg-card p-4"><p className="text-xs text-muted-foreground">Clientes totais</p><p className="text-2xl font-bold text-foreground">{providers.reduce((sum, p) => sum + Number(p.stats?.clients || 0), 0)}</p></div>
+      </div>
+
+      <div className="rounded-xl border border-border bg-card overflow-hidden">
+        <div className="px-4 py-3 border-b border-border bg-secondary/30">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Provedores cadastrados ({providers.length})</p>
+        </div>
+        {loading ? (
+          <div className="p-8 text-center text-muted-foreground">Carregando...</div>
+        ) : providers.length === 0 ? (
+          <div className="p-12 text-center text-muted-foreground">Nenhum provedor cadastrado</div>
+        ) : providers.map((provider) => (
+          <div key={provider.id || provider.tenant_id} className="grid grid-cols-12 gap-3 items-center px-4 py-4 border-b border-border last:border-0">
+            <div className="col-span-12 md:col-span-4 min-w-0">
+              <p className="text-sm font-semibold text-foreground truncate">{provider.name}</p>
+              <p className="text-xs text-muted-foreground font-mono truncate">{provider.tenant_id}</p>
+            </div>
+            <div className="col-span-12 md:col-span-3 text-xs text-muted-foreground min-w-0">
+              <p className="flex items-center gap-1 truncate"><Globe2 className="w-3 h-3" /> {provider.domain || '-'}</p>
+              <p className="truncate">{provider.contact_email || provider.contact_phone || '-'}</p>
+            </div>
+            <div className="col-span-6 md:col-span-2 flex gap-3 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1"><Users className="w-3 h-3" /> {provider.stats?.clients || 0}/{provider.max_clients || '∞'}</span>
+              <span className="flex items-center gap-1"><Server className="w-3 h-3" /> {provider.max_mikrotiks || '∞'}</span>
+            </div>
+            <div className="col-span-4 md:col-span-2">
+              <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${statusClass[provider.status] || statusClass.active}`}>{statusLabel[provider.status] || provider.status}</span>
+            </div>
+            <div className="col-span-2 md:col-span-1 flex justify-end gap-1">
+              <button onClick={() => openEdit(provider)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-primary" title="Editar"><Edit2 className="w-3.5 h-3.5" /></button>
+              <button onClick={() => remove(provider)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-destructive" title="Excluir"><Trash2 className="w-3.5 h-3.5" /></button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {showForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+              <h3 className="font-semibold text-sm">{editing ? 'Editar provedor' : 'Novo provedor'}</h3>
+              <button onClick={closeForm} className="text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
+            </div>
+            {renderForm()}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
