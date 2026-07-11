@@ -110,6 +110,36 @@ EOF
   fi
 }
 
+configure_nginx_site() {
+  if command -v nginx >/dev/null 2>&1; then
+    cat > /etc/nginx/sites-available/kore-hotspot <<EOF
+server {
+    listen 80 default_server;
+    listen 8080 default_server;
+    server_name _;
+    root ${WEB_DIR};
+    index index.html;
+
+    location / {
+        try_files \$uri \$uri/ /index.html;
+    }
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:8081;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOF
+    rm -f /etc/nginx/sites-enabled/default
+    ln -sf /etc/nginx/sites-available/kore-hotspot /etc/nginx/sites-enabled/kore-hotspot
+    nginx -t
+  fi
+}
+
 restart_services() {
   systemctl daemon-reload
   systemctl restart kore-vpn-api
@@ -121,6 +151,7 @@ main() {
   backup_data
   prepare_source
   build_and_install
+  configure_nginx_site
   configure_nginx_no_cache
   restart_services
   log "Atualizacao concluida"
