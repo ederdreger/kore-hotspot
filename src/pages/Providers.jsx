@@ -6,6 +6,14 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
+const commercialPlans = [
+  { id: 'starter', label: 'Starter', price: 100 },
+  { id: 'professional', label: 'Professional', price: 200 },
+  { id: 'enterprise', label: 'Enterprise', price: 300 }
+];
+
+const commercialPlanPrice = (planId) => commercialPlans.find(plan => plan.id === planId)?.price || 0;
+
 const emptyForm = {
   name: '',
   tenant_id: '',
@@ -17,7 +25,7 @@ const emptyForm = {
   contact_phone: '',
   commercial_plan: 'starter',
   status: 'active',
-  monthly_price: '',
+  monthly_price: String(commercialPlanPrice('starter')),
   contract_due_date: '',
   grace_days: '5',
   last_payment_date: '',
@@ -86,7 +94,7 @@ export default function Providers() {
 
   const openCreate = () => {
     setEditing(null);
-    setForm(emptyForm);
+    setForm({ ...emptyForm, monthly_price: String(commercialPlanPrice(emptyForm.commercial_plan)) });
     setShowForm(true);
   };
 
@@ -97,7 +105,7 @@ export default function Providers() {
       ...provider,
       max_clients: provider.max_clients || '',
       max_mikrotiks: provider.max_mikrotiks || '',
-      monthly_price: provider.monthly_price || '',
+      monthly_price: String(provider.monthly_price || commercialPlanPrice(provider.commercial_plan || emptyForm.commercial_plan)),
       contract_due_date: provider.contract_due_date || '',
       grace_days: provider.grace_days ?? '5',
       last_payment_date: provider.last_payment_date || '',
@@ -112,13 +120,17 @@ export default function Providers() {
     try {
       const tenant_id = editing?.tenant_id || editing?.id || tenantSlug(form.tenant_id || form.domain || form.name);
       if (!String(form.name || '').trim()) throw new Error('Informe o nome do provedor');
-      await spedynet.functions.invoke('providersManager', {
+      const commercial_plan = form.commercial_plan || emptyForm.commercial_plan;
+      const monthly_price = commercialPlanPrice(commercial_plan);
+      const res = await spedynet.functions.invoke('providersManager', {
         ...form,
         tenant_id,
-        action: editing ? 'update' : 'create',
+        commercial_plan,
+        monthly_price,
+        action: 'upsert',
         id: editing?.id || editing?._id || editing?.tenant_id || tenant_id
       });
-      toast.success(editing ? 'Provedor atualizado' : 'Provedor criado');
+      toast.success(res.data?.created ? 'Provedor criado' : 'Provedor atualizado');
       closeForm();
       await load();
     } catch (error) {
@@ -244,15 +256,19 @@ export default function Providers() {
         </div>
         <div>
           <Label className="text-xs text-muted-foreground mb-1.5 block">Plano comercial</Label>
-          <select value={form.commercial_plan} onChange={e => setForm({ ...form, commercial_plan: e.target.value })} className="w-full h-9 rounded-md border border-border bg-input px-3 text-sm text-foreground">
-            <option value="starter">Starter</option>
-            <option value="professional">Professional</option>
-            <option value="enterprise">Enterprise</option>
+          <select
+            value={form.commercial_plan}
+            onChange={e => setForm({ ...form, commercial_plan: e.target.value, monthly_price: String(commercialPlanPrice(e.target.value)) })}
+            className="w-full h-9 rounded-md border border-border bg-input px-3 text-sm text-foreground"
+          >
+            {commercialPlans.map(plan => (
+              <option key={plan.id} value={plan.id}>{plan.label} - R$ {plan.price.toFixed(2)}</option>
+            ))}
           </select>
         </div>
         <div>
-          <Label className="text-xs text-muted-foreground mb-1.5 block">Mensalidade (R$)</Label>
-          <Input type="number" step="0.01" value={form.monthly_price} onChange={e => setForm({ ...form, monthly_price: e.target.value })} className="bg-input border-border h-9" />
+          <Label className="text-xs text-muted-foreground mb-1.5 block">Mensalidade do plano</Label>
+          <Input value={`R$ ${Number(form.monthly_price || commercialPlanPrice(form.commercial_plan)).toFixed(2)}`} readOnly className="bg-muted border-border h-9" />
         </div>
         <div>
           <Label className="text-xs text-muted-foreground mb-1.5 block">Vencimento do contrato</Label>

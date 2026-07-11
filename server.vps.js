@@ -16,6 +16,11 @@ const DATA_DIR = '/opt/kore-hotspot-vpn-api/data';
 const TENANTS_DIR = path.join(DATA_DIR, 'tenants');
 const PROVIDERS_FILE = path.join(DATA_DIR, 'providers.json');
 const PROVIDER_BILLING_FILE = path.join(DATA_DIR, 'provider-billing.json');
+const PROVIDER_COMMERCIAL_PLANS = {
+  starter: { label: 'Starter', price: 100 },
+  professional: { label: 'Professional', price: 200 },
+  enterprise: { label: 'Enterprise', price: 300 }
+};
 const DEFAULT_TENANT_ID = String(process.env.KORE_DEFAULT_TENANT || 'default').trim().toLowerCase();
 const MULTI_TENANT = String(process.env.KORE_MULTI_TENANT || 'true') !== 'false';
 const tenantStore = new AsyncLocalStorage();
@@ -995,6 +1000,33 @@ function markProviderPaid(providerId, { last_payment_date, months = 1, next_due_
   return updated.find(item => item.id === providerId || item._id === providerId || item.tenant_id === providerId);
 }
 
+function providerCommercialPrice(planId, fallback = 0) {
+  return Number(PROVIDER_COMMERCIAL_PLANS[String(planId || '').toLowerCase()]?.price ?? fallback ?? 0);
+}
+
+function providerPayload(body = {}, tenantId = '') {
+  const commercialPlan = String(body.commercial_plan || 'starter').toLowerCase();
+  return {
+    name: String(body.name || tenantId).trim(),
+    legal_name: String(body.legal_name || '').trim(),
+    document: String(body.document || '').trim(),
+    domain: String(body.domain || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, ''),
+    contact_name: String(body.contact_name || '').trim(),
+    contact_email: String(body.contact_email || '').trim().toLowerCase(),
+    contact_phone: String(body.contact_phone || '').trim(),
+    commercial_plan: commercialPlan,
+    status: String(body.status || 'active'),
+    monthly_price: providerCommercialPrice(commercialPlan, body.monthly_price),
+    contract_due_date: String(body.contract_due_date || '').slice(0, 10),
+    grace_days: Number(body.grace_days ?? 5),
+    last_payment_date: String(body.last_payment_date || '').slice(0, 10),
+    block_on_overdue: body.block_on_overdue !== false,
+    max_clients: Number(body.max_clients || 0),
+    max_mikrotiks: Number(body.max_mikrotiks || 0),
+    notes: String(body.notes || '')
+  };
+}
+
 async function providersCrud(req) {
   const [pathname] = req.url.split('?');
   const parts = pathname.split('/').filter(Boolean);
@@ -1003,7 +1035,7 @@ async function providersCrud(req) {
   const findProvider = (providerId) => providers.find(item => item.id === providerId || item._id === providerId || item.tenant_id === providerId);
 
   if (req.method === 'GET') {
-    return { providers: providers.map(publicProvider) };
+    return { providers: providers.map(publicProvider), commercial_plans: PROVIDER_COMMERCIAL_PLANS };
   }
 
   if (req.method === 'POST') {
@@ -1018,27 +1050,13 @@ async function providersCrud(req) {
       throw Object.assign(new Error('Ja existe provedor com este tenant'), { status: 409 });
     }
     const nowIso = new Date().toISOString();
+    const payload = providerPayload(body, tenantId);
     const provider = {
       id: tenantId,
       _id: tenantId,
       tenant_id: tenantId,
       name: providerName,
-      legal_name: String(body.legal_name || '').trim(),
-      document: String(body.document || '').trim(),
-      domain: String(body.domain || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, ''),
-      contact_name: String(body.contact_name || '').trim(),
-      contact_email: String(body.contact_email || '').trim().toLowerCase(),
-      contact_phone: String(body.contact_phone || '').trim(),
-      commercial_plan: String(body.commercial_plan || 'starter'),
-      status: String(body.status || 'active'),
-      monthly_price: Number(body.monthly_price || 0),
-      contract_due_date: String(body.contract_due_date || '').slice(0, 10),
-      grace_days: Number(body.grace_days ?? 5),
-      last_payment_date: String(body.last_payment_date || '').slice(0, 10),
-      block_on_overdue: body.block_on_overdue !== false,
-      max_clients: Number(body.max_clients || 0),
-      max_mikrotiks: Number(body.max_mikrotiks || 0),
-      notes: String(body.notes || ''),
+      ...payload,
       created_date: nowIso,
       updated_date: nowIso
     };
@@ -1049,7 +1067,28 @@ async function providersCrud(req) {
 
   if (req.method === 'PUT' && id) {
     const body = await readBody(req);
-    if (!findProvider(id)) throw Object.assign(new Error('Provedor nao encontrado para atualizar'), { status: 404 });
+    const existingProvider = findProvider(id);
+    if (body.action === 'upsert' && !existingProvider) {
+      const tenantId = safeTenantId(id || body.tenant_id || body.domain || body.name || `provedor-${Date.now()}`);
+      const providerName = String(body.name || '').trim();
+      if (!providerName) throw Object.assign(new Error('Nome do provedor obrigatorio'), { status: 400 });
+      if (!tenantId || tenantId === DEFAULT_TENANT_ID) throw Object.assign(new Error('Informe um Tenant ID valido para o provedor'), { status: 400 });
+      if (providers.some(item => item.tenant_id === tenantId || item.id === tenantId)) throw Object.assign(new Error('Ja existe provedor com este tenant'), { status: 409 });
+      const nowIso = new Date().toISOString();
+      const provider = {
+        id: tenantId,
+        _id: tenantId,
+        tenant_id: tenantId,
+        ...providerPayload(body, tenantId),
+        name: providerName,
+        created_date: nowIso,
+        updated_date: nowIso
+      };
+      fs.mkdirSync(path.join(TENANTS_DIR, tenantId), { recursive: true });
+      writeGlobalJson(PROVIDERS_FILE, [provider, ...providers].slice(0, 1000));
+      return { created: true, provider: publicProvider(provider), commercial_plans: PROVIDER_COMMERCIAL_PLANS };
+    }
+    if (!existingProvider) throw Object.assign(new Error('Provedor nao encontrado para atualizar'), { status: 404 });
     if (body.action === 'markPaid') {
       return { provider: publicProvider(markProviderPaid(id, body)) };
     }
@@ -1061,30 +1100,15 @@ async function providersCrud(req) {
     }
     const updated = providers.map(item => {
       if (item.id !== id && item._id !== id && item.tenant_id !== id) return item;
+      const payload = providerPayload({ ...item, ...body }, item.tenant_id || item.id);
       return {
         ...item,
-        name: body.name ?? item.name,
-        legal_name: body.legal_name ?? item.legal_name,
-        document: body.document ?? item.document,
-        domain: body.domain !== undefined ? String(body.domain || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, '') : item.domain,
-        contact_name: body.contact_name ?? item.contact_name,
-        contact_email: body.contact_email !== undefined ? String(body.contact_email || '').trim().toLowerCase() : item.contact_email,
-        contact_phone: body.contact_phone ?? item.contact_phone,
-        commercial_plan: body.commercial_plan ?? item.commercial_plan,
-        status: body.status ?? item.status,
-        monthly_price: body.monthly_price !== undefined ? Number(body.monthly_price || 0) : item.monthly_price,
-        contract_due_date: body.contract_due_date !== undefined ? String(body.contract_due_date || '').slice(0, 10) : item.contract_due_date,
-        grace_days: body.grace_days !== undefined ? Number(body.grace_days || 0) : item.grace_days,
-        last_payment_date: body.last_payment_date !== undefined ? String(body.last_payment_date || '').slice(0, 10) : item.last_payment_date,
-        block_on_overdue: body.block_on_overdue !== undefined ? body.block_on_overdue !== false : item.block_on_overdue,
-        max_clients: body.max_clients !== undefined ? Number(body.max_clients || 0) : item.max_clients,
-        max_mikrotiks: body.max_mikrotiks !== undefined ? Number(body.max_mikrotiks || 0) : item.max_mikrotiks,
-        notes: body.notes ?? item.notes,
+        ...payload,
         updated_date: new Date().toISOString()
       };
     });
     writeGlobalJson(PROVIDERS_FILE, updated);
-    return { provider: publicProvider(updated.find(item => item.id === id || item._id === id || item.tenant_id === id)) };
+    return { created: false, provider: publicProvider(updated.find(item => item.id === id || item._id === id || item.tenant_id === id)), commercial_plans: PROVIDER_COMMERCIAL_PLANS };
   }
 
   if (req.method === 'DELETE' && id) {
