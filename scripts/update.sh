@@ -147,6 +147,7 @@ configure_api_environment() {
 [Service]
 Environment=KORE_WEB_DIR=${WEB_DIR}
 Environment=KORE_CERTBOT_EMAIL=${CERTBOT_EMAIL:-admin@spedynet.com.br}
+Environment=KORE_PUBLIC_HOST=${PUBLIC_HOST}
 Environment=KORE_SAAS_MP_ACCESS_TOKEN=${KORE_SAAS_MP_ACCESS_TOKEN}
 EOF
 }

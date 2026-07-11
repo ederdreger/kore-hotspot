@@ -72,6 +72,7 @@ export default function Providers() {
   const [pixResult, setPixResult] = useState(null);
   const [checkingPix, setCheckingPix] = useState(false);
   const [issuingSsl, setIssuingSsl] = useState(null);
+  const [resettingAdmin, setResettingAdmin] = useState(null);
   const [adminCredentials, setAdminCredentials] = useState(null);
 
   const load = async () => {
@@ -209,6 +210,34 @@ export default function Providers() {
       toast.error(error.message || 'Erro ao emitir certificado');
     } finally {
       setIssuingSsl(null);
+    }
+  };
+
+  const resetProviderAdmin = async (provider) => {
+    if (!provider.contact_email) {
+      toast.error('Informe o e-mail do provedor antes de resetar o acesso');
+      return;
+    }
+    if (!window.confirm(`Resetar o acesso administrativo de ${provider.name} para o e-mail ${provider.contact_email}?`)) return;
+    const id = provider.id || provider.tenant_id;
+    setResettingAdmin(id);
+    try {
+      const res = await spedynet.functions.invoke('providersManager', {
+        id,
+        action: 'resetProviderAdmin'
+      });
+      if (res.data?.admin_credentials?.password) {
+        setAdminCredentials({
+          provider: provider.name,
+          email: res.data.admin_credentials.email,
+          password: res.data.admin_credentials.password
+        });
+      }
+      toast.success('Acesso do provedor resetado');
+    } catch (error) {
+      toast.error(error.message || 'Erro ao resetar acesso');
+    } finally {
+      setResettingAdmin(null);
     }
   };
 
@@ -389,6 +418,7 @@ export default function Providers() {
             </div>
             <div className="col-span-2 md:col-span-1 flex justify-end gap-1">
               <button onClick={() => issueCertificate(provider)} disabled={issuingSsl === (provider.id || provider.tenant_id)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-info disabled:opacity-50" title="Emitir certificado SSL">{issuingSsl === (provider.id || provider.tenant_id) ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}</button>
+              <button onClick={() => resetProviderAdmin(provider)} disabled={resettingAdmin === (provider.id || provider.tenant_id)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-info disabled:opacity-50" title="Resetar acesso do provedor">{resettingAdmin === (provider.id || provider.tenant_id) ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <KeyRound className="w-3.5 h-3.5" />}</button>
               <button onClick={() => createPix(provider)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-primary" title="Gerar Pix"><QrCode className="w-3.5 h-3.5" /></button>
               <button onClick={() => markPaid(provider)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-success" title="Registrar pagamento"><CreditCard className="w-3.5 h-3.5" /></button>
               <button onClick={() => openEdit(provider)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-primary" title="Editar"><Edit2 className="w-3.5 h-3.5" /></button>

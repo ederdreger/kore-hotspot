@@ -132,6 +132,7 @@ Environment=KORE_MULTI_TENANT=${MULTI_TENANT}
 Environment=KORE_SAAS_MP_ACCESS_TOKEN=${KORE_SAAS_MP_ACCESS_TOKEN}
 Environment=KORE_WEB_DIR=${WEB_DIR}
 Environment=KORE_CERTBOT_EMAIL=${CERTBOT_EMAIL}
+Environment=KORE_PUBLIC_HOST=${PUBLIC_HOST}
 ExecStart=/usr/bin/node ${API_DIR}/server.js
 Restart=always
 RestartSec=3

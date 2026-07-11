@@ -3,6 +3,7 @@ const { execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const dns = require('dns').promises;
 const { AsyncLocalStorage } = require('async_hooks');
 
 const PORT = Number(process.env.PORT || 8081);
@@ -16,6 +17,7 @@ const DATA_DIR = '/opt/kore-hotspot-vpn-api/data';
 const TENANTS_DIR = path.join(DATA_DIR, 'tenants');
 const WEB_DIR = process.env.KORE_WEB_DIR || '/opt/kore-hotspot';
 const CERTBOT_EMAIL = process.env.KORE_CERTBOT_EMAIL || 'admin@spedynet.com.br';
+const PUBLIC_HOST = process.env.KORE_PUBLIC_HOST || '';
 const PROVIDERS_FILE = path.join(DATA_DIR, 'providers.json');
 const PROVIDER_BILLING_FILE = path.join(DATA_DIR, 'provider-billing.json');
 const PROVIDER_COMMERCIAL_PLANS = {
@@ -1067,7 +1069,7 @@ function writeTenantJson(tenantId, fileName, value) {
   fs.writeFileSync(file, JSON.stringify(value, null, 2));
 }
 
-function ensureProviderAdmin(provider) {
+function ensureProviderAdmin(provider, options = {}) {
   const tenantId = provider.tenant_id || provider.id;
   const email = normalizeEmail(provider.contact_email);
   if (!tenantId || !email) return null;
@@ -1075,7 +1077,18 @@ function ensureProviderAdmin(provider) {
   const users = readTenantJson(tenantId, 'admin-users.json', []);
   const existing = users.find(user => normalizeEmail(user.email) === email);
   if (existing) {
-    return { email, password: null, created: false };
+    if (options.resetPassword) {
+      existing.full_name = provider.contact_name || provider.name || existing.full_name || email;
+      existing.role = 'admin';
+      existing.status = 'active';
+      existing.permissions = ['*'];
+      existing.password_hash = passwordHash(DEFAULT_ADMIN_PASSWORD);
+      delete existing.password;
+      existing.updated_date = new Date().toISOString();
+      writeTenantJson(tenantId, 'admin-users.json', users);
+      return { email, password: DEFAULT_ADMIN_PASSWORD, created: false, reset: true };
+    }
+    return { email, password: null, created: false, reset: false };
   }
 
   const id = `admin_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -1093,6 +1106,28 @@ function ensureProviderAdmin(provider) {
   };
   writeTenantJson(tenantId, 'admin-users.json', [user, ...users]);
   return { email, password: DEFAULT_ADMIN_PASSWORD, created: true };
+}
+
+function compactCertificateError(message) {
+  const lines = String(message || '')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .filter(line => !/^saving debug log/i.test(line));
+  return (lines.length ? lines.slice(-10).join(' | ') : String(message || 'Erro ao emitir certificado')).slice(0, 1600);
+}
+
+async function assertDomainPointsToServer(domain) {
+  if (!PUBLIC_HOST || /^\d{1,3}(\.\d{1,3}){3}$/.test(domain)) return;
+  let addresses = [];
+  try {
+    addresses = await dns.resolve4(domain);
+  } catch (error) {
+    throw new Error(`DNS do dominio ${domain} nao resolveu registro A. Corrija o DNS antes de emitir o certificado.`);
+  }
+  if (!addresses.includes(PUBLIC_HOST)) {
+    throw new Error(`DNS do dominio ${domain} aponta para ${addresses.join(', ')}, mas esta VPS esta configurada como ${PUBLIC_HOST}. Corrija o registro A do dominio e tente novamente.`);
+  }
 }
 
 function providerDomain(provider) {
@@ -1119,6 +1154,7 @@ async function issueProviderCertificate(providerId) {
   const email = provider.contact_email || CERTBOT_EMAIL;
 
   try {
+    await assertDomainPointsToServer(domain);
     fs.mkdirSync(path.join(WEB_DIR, '.well-known', 'acme-challenge'), { recursive: true });
     await run('certbot', [
       'certonly',
@@ -1194,7 +1230,7 @@ server {
         ...item,
         domain,
         ssl_status: 'error',
-        ssl_error: String(error.message || error).slice(0, 1000),
+        ssl_error: compactCertificateError(error.message || error),
         updated_date: new Date().toISOString()
       };
     });
@@ -1279,6 +1315,10 @@ async function providersCrud(req) {
     }
     if (body.action === 'issueCertificate') {
       return issueProviderCertificate(id);
+    }
+    if (body.action === 'resetProviderAdmin') {
+      const admin_credentials = ensureProviderAdmin(existingProvider, { resetPassword: true });
+      return { provider: publicProvider(existingProvider), admin_credentials, commercial_plans: PROVIDER_COMMERCIAL_PLANS };
     }
     const updated = providers.map(item => {
       if (item.id !== id && item._id !== id && item.tenant_id !== id) return item;
