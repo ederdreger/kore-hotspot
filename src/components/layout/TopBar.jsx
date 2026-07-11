@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Menu, Bell, Activity, LogOut, Sun, Moon } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '@/lib/AuthContext';
+import { spedynet } from '@/api/spedynetClient';
 
 const routeLabels = {
   '/': 'Dashboard',
@@ -22,11 +22,21 @@ export default function TopBar({ onMenuClick }) {
   const { logout, user } = useAuth();
   const label = routeLabels[location.pathname] || 'Kore-HotSpot';
   const [theme, setTheme] = useState(() => localStorage.getItem('kore_theme') || 'dark');
+  const [license, setLicense] = useState(null);
 
   useEffect(() => {
     document.documentElement.classList.toggle('light', theme === 'light');
     localStorage.setItem('kore_theme', theme);
   }, [theme]);
+
+  useEffect(() => {
+    spedynet.functions.invoke('licenseStatus', {})
+      .then((res) => setLicense(res.data))
+      .catch(() => setLicense(null));
+  }, []);
+
+  const licenseBlocked = license && !license.ok;
+  const licenseWarn = license?.warnings?.length > 0;
 
   return (
     <header className="h-14 border-b border-border bg-card/80 backdrop-blur-sm flex items-center justify-between px-4 lg:px-6 sticky top-0 z-30">
@@ -42,9 +52,13 @@ export default function TopBar({ onMenuClick }) {
 
       <div className="flex items-center gap-3">
         {/* Status badge */}
-        <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-success/10 border border-success/20">
-          <div className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
-          <span className="text-xs text-success font-medium">Sistema Online</span>
+        <div className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full border ${
+          licenseBlocked ? 'bg-destructive/10 border-destructive/20' : licenseWarn ? 'bg-warning/10 border-warning/20' : 'bg-success/10 border-success/20'
+        }`}>
+          <div className={`w-1.5 h-1.5 rounded-full animate-pulse ${licenseBlocked ? 'bg-destructive' : licenseWarn ? 'bg-warning' : 'bg-success'}`} />
+          <span className={`text-xs font-medium ${licenseBlocked ? 'text-destructive' : licenseWarn ? 'text-warning' : 'text-success'}`}>
+            {licenseBlocked ? 'Licenca bloqueada' : licenseWarn ? license.warnings[0] : 'Sistema Online'}
+          </span>
         </div>
 
         <button className="relative p-2 text-muted-foreground hover:text-foreground transition-colors">

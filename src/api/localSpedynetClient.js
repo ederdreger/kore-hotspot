@@ -693,6 +693,15 @@ async function providersManager(payload = {}) {
   return data;
 }
 
+async function licenseStatus() {
+  const response = await fetch(`${VPN_API_URL}/api/license/status`, {
+    headers: apiHeaders()
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || 'Erro ao consultar licenca');
+  return data;
+}
+
 async function invoke(functionName, payload) {
   const handlers = {
     adminAuth: async (body) => remoteAdminAuth(body).catch(async (error) => {
@@ -718,6 +727,7 @@ async function invoke(functionName, payload) {
     hotspotVipAccess,
     checkPixPayment,
     providersManager,
+    licenseStatus,
     createMercadoPagoCheckout: createPixPayment,
     getClientPortalData: async ({ clientId }) => {
       const db = readDb();

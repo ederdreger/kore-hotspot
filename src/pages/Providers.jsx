@@ -203,7 +203,7 @@ export default function Providers() {
         ) : providers.length === 0 ? (
           <div className="p-12 text-center text-muted-foreground">Nenhum provedor cadastrado</div>
         ) : providers.map((provider) => (
-          <div key={provider.id || provider.tenant_id} className="grid grid-cols-12 gap-3 items-center px-4 py-4 border-b border-border last:border-0">
+          <div key={provider.id || provider.tenant_id} className={`grid grid-cols-12 gap-3 items-center px-4 py-4 border-b border-border last:border-0 ${['suspended', 'canceled'].includes(provider.status) ? 'bg-destructive/5' : ''}`}>
             <div className="col-span-12 md:col-span-4 min-w-0">
               <p className="text-sm font-semibold text-foreground truncate">{provider.name}</p>
               <p className="text-xs text-muted-foreground font-mono truncate">{provider.tenant_id}</p>
@@ -213,8 +213,8 @@ export default function Providers() {
               <p className="truncate">{provider.contact_email || provider.contact_phone || '-'}</p>
             </div>
             <div className="col-span-6 md:col-span-2 flex gap-3 text-xs text-muted-foreground">
-              <span className="flex items-center gap-1"><Users className="w-3 h-3" /> {provider.stats?.clients || 0}/{provider.max_clients || '∞'}</span>
-              <span className="flex items-center gap-1"><Server className="w-3 h-3" /> {provider.max_mikrotiks || '∞'}</span>
+              <span className={`flex items-center gap-1 ${provider.max_clients && provider.stats?.clients >= provider.max_clients ? 'text-warning' : ''}`}><Users className="w-3 h-3" /> {provider.stats?.clients || 0}/{provider.max_clients || '∞'}</span>
+              <span className={`flex items-center gap-1 ${provider.max_mikrotiks && provider.stats?.mikrotiks >= provider.max_mikrotiks ? 'text-warning' : ''}`}><Server className="w-3 h-3" /> {provider.stats?.mikrotiks || 0}/{provider.max_mikrotiks || '∞'}</span>
             </div>
             <div className="col-span-4 md:col-span-2">
               <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${statusClass[provider.status] || statusClass.active}`}>{statusLabel[provider.status] || provider.status}</span>

@@ -884,7 +884,8 @@ function providerStats(tenantId) {
     prospects: read('captive-prospects.json').length,
     plans: read('plans.json').length,
     users: read('admin-users.json').length,
-    vouchers: read('vouchers.json').length
+    vouchers: read('vouchers.json').length,
+    mikrotiks: read('settings.json').filter(item => item.category === 'mikrotik_device').length
   };
 }
 
@@ -893,6 +894,50 @@ function publicProvider(provider) {
     ...provider,
     stats: providerStats(provider.tenant_id || provider.id)
   };
+}
+
+function providerForTenant(tenantId = currentTenant().id) {
+  const providers = readGlobalJson(PROVIDERS_FILE, []);
+  return providers.find(item => item.tenant_id === tenantId || item.id === tenantId || safeTenantId(item.domain) === tenantId) || null;
+}
+
+function licenseState(tenantId = currentTenant().id) {
+  const provider = providerForTenant(tenantId);
+  if (!provider) {
+    return { ok: true, tenant_id: tenantId, status: 'unregistered', label: 'Tenant sem contrato cadastrado', provider: null, stats: providerStats(tenantId), warnings: [] };
+  }
+  const stats = providerStats(provider.tenant_id || provider.id);
+  const warnings = [];
+  const maxClients = Number(provider.max_clients || 0);
+  const maxMikrotiks = Number(provider.max_mikrotiks || 0);
+  if (maxClients > 0 && stats.clients >= maxClients) warnings.push('Limite de clientes atingido');
+  if (maxMikrotiks > 0 && stats.mikrotiks >= maxMikrotiks) warnings.push('Limite de MikroTiks atingido');
+  const blocked = ['suspended', 'canceled'].includes(String(provider.status || '').toLowerCase());
+  return {
+    ok: !blocked,
+    tenant_id: provider.tenant_id || provider.id,
+    status: provider.status || 'active',
+    label: blocked ? 'Licenca bloqueada' : 'Licenca ativa',
+    provider: publicProvider(provider),
+    stats,
+    warnings
+  };
+}
+
+function assertTenantLicense({ action = 'write', resource = '' } = {}) {
+  const state = licenseState();
+  if (!state.ok) {
+    throw Object.assign(new Error('Licenca do provedor suspensa ou cancelada'), { status: 402, license: state });
+  }
+  const provider = state.provider;
+  if (!provider) return state;
+  if (action === 'create' && resource === 'client' && Number(provider.max_clients || 0) > 0 && state.stats.clients >= Number(provider.max_clients || 0)) {
+    throw Object.assign(new Error('Limite de clientes do provedor atingido'), { status: 402, license: state });
+  }
+  if (action === 'create' && resource === 'mikrotik' && Number(provider.max_mikrotiks || 0) > 0 && state.stats.mikrotiks >= Number(provider.max_mikrotiks || 0)) {
+    throw Object.assign(new Error('Limite de MikroTiks do provedor atingido'), { status: 402, license: state });
+  }
+  return state;
 }
 
 async function providersCrud(req) {
@@ -1034,6 +1079,9 @@ async function entityCrud(req) {
 
   if (req.method === 'POST') {
     const body = await readBody(req);
+    if (parsed.entity === 'clients') assertTenantLicense({ action: 'create', resource: 'client' });
+    if (parsed.entity === 'settings' && body.category === 'mikrotik_device') assertTenantLicense({ action: 'create', resource: 'mikrotik' });
+    if (parsed.entity !== 'clients' && !(parsed.entity === 'settings' && body.category === 'mikrotik_device')) assertTenantLicense({ action: 'write', resource: parsed.entity });
     const id = body.id || body._id || `${parsed.entity}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const item = {
       ...body,
@@ -1050,6 +1098,7 @@ async function entityCrud(req) {
 
   if (req.method === 'PUT' && parsed.id) {
     const body = await readBody(req);
+    assertTenantLicense({ action: 'write', resource: parsed.entity });
     const updated = items.map(item => (
       item.id === parsed.id || item._id === parsed.id ? { ...item, ...body, updated_date: new Date().toISOString() } : item
     ));
@@ -1058,6 +1107,7 @@ async function entityCrud(req) {
   }
 
   if (req.method === 'DELETE' && parsed.id) {
+    assertTenantLicense({ action: 'write', resource: parsed.entity });
     const removedItem = items.find(item => item.id === parsed.id || item._id === parsed.id);
     if (parsed.entity === 'clients' && removedItem) {
       await cleanupMikrotikAccess(removedItem).catch(error => ({ error: error.message }));
@@ -1216,6 +1266,7 @@ async function cleanupMikrotikAccess(item = {}) {
 }
 
 async function setVipAccess(payload = {}) {
+  assertTenantLicense({ action: 'write', resource: 'hotspot' });
   const entity = normalizeText(payload.entity || payload.entity_type || 'client');
   const id = String(payload.id || payload._id || payload.client_id || payload.prospect_id || '').trim();
   const enabled = payload.enabled !== false;
@@ -1264,6 +1315,7 @@ async function setVipAccess(payload = {}) {
 }
 
 async function captiveRegister(payload = {}) {
+  assertTenantLicense({ action: 'create', resource: 'client' });
   const created = new Date().toISOString();
   const cleanCpf = String(payload.cpf || '').replace(/\D/g, '');
   const plans = readJson(ENTITY_FILES.plans, []);
@@ -1768,8 +1820,9 @@ async function handleRequest(req, res) {
     if (!validToken(req)) return send(res, 401, { error: 'token invalido' });
 
     if (req.method === 'GET' && req.url === '/api/tenant/current') {
-      return send(res, 200, { tenant: currentTenant(), data_dir: currentDataDir(), multi_tenant: MULTI_TENANT });
+      return send(res, 200, { tenant: currentTenant(), data_dir: currentDataDir(), multi_tenant: MULTI_TENANT, license: licenseState() });
     }
+    if (req.method === 'GET' && req.url === '/api/license/status') return send(res, 200, licenseState());
     if (req.url.startsWith('/api/providers')) {
       const result = await providersCrud(req);
       if (result) return send(res, 200, result);
@@ -1789,23 +1842,23 @@ async function handleRequest(req, res) {
       return send(res, 200, { plans });
     }
     if (req.method === 'POST' && req.url === '/api/captive/register') return send(res, 200, await captiveRegister(await readBody(req)));
-    if (req.method === 'POST' && req.url === '/api/captive/client-login') return send(res, 200, await captiveClientLogin(await readBody(req)));
-    if (req.method === 'POST' && req.url === '/api/captive/voucher-login') return send(res, 200, await captiveVoucherLogin(await readBody(req)));
+    if (req.method === 'POST' && req.url === '/api/captive/client-login') { assertTenantLicense({ action: 'write', resource: 'client' }); return send(res, 200, await captiveClientLogin(await readBody(req))); }
+    if (req.method === 'POST' && req.url === '/api/captive/voucher-login') { assertTenantLicense({ action: 'write', resource: 'voucher' }); return send(res, 200, await captiveVoucherLogin(await readBody(req))); }
     if (req.method === 'POST' && req.url === '/api/ixc/cliente') return send(res, 200, await ixcConsultaCliente(await readBody(req)));
-    if (req.method === 'POST' && req.url === '/api/clients/activate-free-plan') return send(res, 200, await activateFreePlan(await readBody(req)));
+    if (req.method === 'POST' && req.url === '/api/clients/activate-free-plan') { assertTenantLicense({ action: 'write', resource: 'client' }); return send(res, 200, await activateFreePlan(await readBody(req))); }
     if (req.method === 'POST' && req.url === '/api/hotspot/vip') return send(res, 200, await setVipAccess(await readBody(req)));
     if (req.method === 'POST' && req.url === '/api/mikrotik/cleanup-access') return send(res, 200, await cleanupMikrotikAccess(await readBody(req)));
-    if (req.method === 'POST' && req.url === '/api/payments/pix') return send(res, 200, await createPixPayment(await readBody(req)));
-    if (req.method === 'POST' && req.url === '/api/payments/status') return send(res, 200, await refreshPaymentStatus(await readBody(req)));
+    if (req.method === 'POST' && req.url === '/api/payments/pix') { assertTenantLicense({ action: 'write', resource: 'payment' }); return send(res, 200, await createPixPayment(await readBody(req))); }
+    if (req.method === 'POST' && req.url === '/api/payments/status') { assertTenantLicense({ action: 'write', resource: 'payment' }); return send(res, 200, await refreshPaymentStatus(await readBody(req))); }
     if (req.url.startsWith('/api/entities/')) {
       const result = await entityCrud(req);
       if (result) return send(res, 200, result);
     }
     if (req.method === 'GET' && req.url === '/api/vpn/users') return send(res, 200, { users: await listUsers() });
     if (req.method === 'GET' && req.url === '/api/vpn/status') return send(res, 200, await vpnStatus());
-    if (req.method === 'POST' && req.url === '/api/vpn/users') return send(res, 200, await ensureUser(await readBody(req)));
+    if (req.method === 'POST' && req.url === '/api/vpn/users') { assertTenantLicense({ action: 'write', resource: 'vpn' }); return send(res, 200, await ensureUser(await readBody(req))); }
     if (req.method === 'POST' && req.url === '/api/mikrotik/status') return send(res, 200, await mikrotikStatus(await readBody(req)));
-    if (req.method === 'POST' && req.url === '/api/mikrotik/sync-plans') return send(res, 200, await mikrotikSyncPlans(await readBody(req)));
+    if (req.method === 'POST' && req.url === '/api/mikrotik/sync-plans') { assertTenantLicense({ action: 'write', resource: 'mikrotik' }); return send(res, 200, await mikrotikSyncPlans(await readBody(req))); }
 
     return send(res, 404, { error: 'rota nao encontrada' });
   } catch (error) {
