@@ -686,7 +686,7 @@ async function checkPixPayment(payload = {}) {
 async function providersManager(payload = {}) {
   const action = payload.action || 'list';
   const id = payload.id || payload._id || payload.tenant_id || '';
-  const method = action === 'create' ? 'POST' : ['update', 'upsert', 'markPaid', 'createPix', 'checkPix'].includes(action) ? 'PUT' : action === 'delete' ? 'DELETE' : 'GET';
+  const method = action === 'create' ? 'POST' : ['update', 'upsert', 'markPaid', 'createPix', 'checkPix', 'issueCertificate'].includes(action) ? 'PUT' : action === 'delete' ? 'DELETE' : 'GET';
   const url = `${VPN_API_URL}/api/providers${id && method !== 'POST' ? `/${encodeURIComponent(id)}` : ''}`;
   const response = await fetch(url, {
     method,

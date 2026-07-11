@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Building2, Plus, RefreshCw, Edit2, Trash2, X, CheckCircle, Globe2, Users, Server, CreditCard, QrCode, Copy } from 'lucide-react';
+import { Building2, Plus, RefreshCw, Edit2, Trash2, X, CheckCircle, Globe2, Users, Server, CreditCard, QrCode, Copy, ShieldCheck, KeyRound } from 'lucide-react';
 import { toast } from 'sonner';
 import { spedynet } from '@/api/spedynetClient';
 import { Button } from '@/components/ui/button';
@@ -71,6 +71,8 @@ export default function Providers() {
   const [form, setForm] = useState(emptyForm);
   const [pixResult, setPixResult] = useState(null);
   const [checkingPix, setCheckingPix] = useState(false);
+  const [issuingSsl, setIssuingSsl] = useState(null);
+  const [adminCredentials, setAdminCredentials] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -130,6 +132,13 @@ export default function Providers() {
         action: 'upsert',
         id: editing?.id || editing?._id || editing?.tenant_id || tenant_id
       });
+      if (res.data?.admin_credentials?.created && res.data.admin_credentials.password) {
+        setAdminCredentials({
+          provider: form.name,
+          email: res.data.admin_credentials.email,
+          password: res.data.admin_credentials.password
+        });
+      }
       toast.success(res.data?.created ? 'Provedor criado' : 'Provedor atualizado');
       closeForm();
       await load();
@@ -178,6 +187,28 @@ export default function Providers() {
       load();
     } catch (error) {
       toast.error(error.message || 'Erro ao gerar Pix');
+    }
+  };
+
+  const issueCertificate = async (provider) => {
+    if (!provider.domain) {
+      toast.error('Informe o dominio do provedor antes de emitir certificado');
+      return;
+    }
+    if (!window.confirm(`Emitir certificado gratis Let's Encrypt para ${provider.domain}? O DNS precisa apontar para esta VPS e a porta 80 precisa estar liberada.`)) return;
+    const id = provider.id || provider.tenant_id;
+    setIssuingSsl(id);
+    try {
+      await spedynet.functions.invoke('providersManager', {
+        id,
+        action: 'issueCertificate'
+      });
+      toast.success('Certificado emitido e Nginx atualizado');
+      await load();
+    } catch (error) {
+      toast.error(error.message || 'Erro ao emitir certificado');
+    } finally {
+      setIssuingSsl(null);
     }
   };
 
@@ -344,6 +375,7 @@ export default function Providers() {
               <p className="flex items-center gap-1 truncate"><Globe2 className="w-3 h-3" /> {provider.domain || '-'}</p>
               <p className="truncate">{provider.contact_email || provider.contact_phone || '-'}</p>
               <p className={isOverdue(provider) ? 'text-destructive font-medium' : ''}>Vence: {provider.contract_due_date || '-'}</p>
+              <p className={provider.ssl_status === 'active' ? 'text-success' : 'text-warning'}>SSL: {provider.ssl_status === 'active' ? 'ativo' : 'pendente'}</p>
             </div>
             <div className="col-span-6 md:col-span-2 flex gap-3 text-xs text-muted-foreground">
               <span className={`flex items-center gap-1 ${provider.max_clients && provider.stats?.clients >= provider.max_clients ? 'text-warning' : ''}`}><Users className="w-3 h-3" /> {provider.stats?.clients || 0}/{provider.max_clients || '∞'}</span>
@@ -353,6 +385,7 @@ export default function Providers() {
               <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${statusClass[provider.status] || statusClass.active}`}>{statusLabel[provider.status] || provider.status}</span>
             </div>
             <div className="col-span-2 md:col-span-1 flex justify-end gap-1">
+              <button onClick={() => issueCertificate(provider)} disabled={issuingSsl === (provider.id || provider.tenant_id)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-info disabled:opacity-50" title="Emitir certificado SSL">{issuingSsl === (provider.id || provider.tenant_id) ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}</button>
               <button onClick={() => createPix(provider)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-primary" title="Gerar Pix"><QrCode className="w-3.5 h-3.5" /></button>
               <button onClick={() => markPaid(provider)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-success" title="Registrar pagamento"><CreditCard className="w-3.5 h-3.5" /></button>
               <button onClick={() => openEdit(provider)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-primary" title="Editar"><Edit2 className="w-3.5 h-3.5" /></button>
@@ -413,6 +446,34 @@ export default function Providers() {
                   {checkingPix ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
                   Consultar pagamento
                 </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {adminCredentials && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+              <div>
+                <h3 className="font-semibold text-sm flex items-center gap-2"><KeyRound className="w-4 h-4 text-primary" /> Acesso inicial do provedor</h3>
+                <p className="text-xs text-muted-foreground">{adminCredentials.provider}</p>
+              </div>
+              <button onClick={() => setAdminCredentials(null)} className="text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="rounded-lg border border-border bg-secondary/30 p-3">
+                <p className="text-xs text-muted-foreground">E-mail</p>
+                <p className="font-mono text-sm text-foreground break-all">{adminCredentials.email}</p>
+              </div>
+              <div className="rounded-lg border border-border bg-secondary/30 p-3">
+                <p className="text-xs text-muted-foreground">Senha inicial</p>
+                <p className="font-mono text-sm text-foreground">{adminCredentials.password}</p>
+              </div>
+              <p className="text-xs text-muted-foreground">Oriente o provedor a trocar a senha no primeiro acesso.</p>
+              <div className="flex justify-end">
+                <Button type="button" onClick={() => setAdminCredentials(null)}>Entendi</Button>
               </div>
             </div>
           </div>

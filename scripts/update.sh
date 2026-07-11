@@ -11,6 +11,7 @@ WEB_DIR="${WEB_DIR:-/opt/kore-hotspot}"
 API_DIR="${API_DIR:-/opt/kore-hotspot-vpn-api}"
 PUBLIC_HOST="${PUBLIC_HOST:-$(hostname -I | awk '{print $1}')}"
 DOMAIN="${DOMAIN:-}"
+CERTBOT_EMAIL="${CERTBOT_EMAIL:-admin@spedynet.com.br}"
 PUBLIC_URL="${PUBLIC_URL:-}"
 API_URL="${API_URL:-}"
 API_TOKEN="${API_TOKEN:-kore-vpn-api-2026}"
@@ -140,6 +141,16 @@ EOF
   fi
 }
 
+configure_api_environment() {
+  mkdir -p /etc/systemd/system/kore-vpn-api.service.d
+  cat > /etc/systemd/system/kore-vpn-api.service.d/20-kore-env.conf <<EOF
+[Service]
+Environment=KORE_WEB_DIR=${WEB_DIR}
+Environment=KORE_CERTBOT_EMAIL=${CERTBOT_EMAIL:-admin@spedynet.com.br}
+Environment=KORE_SAAS_MP_ACCESS_TOKEN=${KORE_SAAS_MP_ACCESS_TOKEN}
+EOF
+}
+
 restart_services() {
   systemctl daemon-reload
   systemctl restart kore-vpn-api
@@ -153,6 +164,7 @@ main() {
   build_and_install
   configure_nginx_site
   configure_nginx_no_cache
+  configure_api_environment
   restart_services
   log "Atualizacao concluida"
 }

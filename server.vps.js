@@ -14,6 +14,8 @@ const KEY_PATH = path.join(KEY_DIR, 'kore-api_rsa');
 const PUB_PATH = `${KEY_PATH}.pub`;
 const DATA_DIR = '/opt/kore-hotspot-vpn-api/data';
 const TENANTS_DIR = path.join(DATA_DIR, 'tenants');
+const WEB_DIR = process.env.KORE_WEB_DIR || '/opt/kore-hotspot';
+const CERTBOT_EMAIL = process.env.KORE_CERTBOT_EMAIL || 'admin@spedynet.com.br';
 const PROVIDERS_FILE = path.join(DATA_DIR, 'providers.json');
 const PROVIDER_BILLING_FILE = path.join(DATA_DIR, 'provider-billing.json');
 const PROVIDER_COMMERCIAL_PLANS = {
@@ -1029,6 +1031,143 @@ function providerPayload(body = {}, tenantId = '') {
   };
 }
 
+function tenantJsonFile(tenantId, fileName) {
+  return path.join(TENANTS_DIR, safeTenantId(tenantId), fileName);
+}
+
+function readTenantJson(tenantId, fileName, fallback = []) {
+  const file = tenantJsonFile(tenantId, fileName);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  if (!fs.existsSync(file)) fs.writeFileSync(file, JSON.stringify(fallback, null, 2));
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; }
+}
+
+function writeTenantJson(tenantId, fileName, value) {
+  const file = tenantJsonFile(tenantId, fileName);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(value, null, 2));
+}
+
+function ensureProviderAdmin(provider) {
+  const tenantId = provider.tenant_id || provider.id;
+  const email = normalizeEmail(provider.contact_email);
+  if (!tenantId || !email) return null;
+
+  const users = readTenantJson(tenantId, 'admin-users.json', []);
+  const existing = users.find(user => normalizeEmail(user.email) === email);
+  if (existing) {
+    return { email, password: null, created: false };
+  }
+
+  const id = `admin_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const user = {
+    id,
+    _id: id,
+    email,
+    full_name: provider.contact_name || provider.name || email,
+    role: 'admin',
+    status: 'active',
+    permissions: ['*'],
+    password_hash: passwordHash(DEFAULT_ADMIN_PASSWORD),
+    created_date: new Date().toISOString(),
+    updated_date: new Date().toISOString()
+  };
+  writeTenantJson(tenantId, 'admin-users.json', [user, ...users]);
+  return { email, password: DEFAULT_ADMIN_PASSWORD, created: true };
+}
+
+function providerDomain(provider) {
+  return String(provider?.domain || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, '').split('/')[0];
+}
+
+function validateCertificateDomain(domain) {
+  const clean = providerDomain({ domain });
+  if (!clean || clean === 'localhost' || /^\d{1,3}(\.\d{1,3}){3}$/.test(clean)) {
+    throw Object.assign(new Error('Informe um dominio valido para emitir certificado'), { status: 400 });
+  }
+  if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(clean)) {
+    throw Object.assign(new Error('Dominio invalido para certificado'), { status: 400 });
+  }
+  return clean;
+}
+
+async function issueProviderCertificate(providerId) {
+  const providers = readGlobalJson(PROVIDERS_FILE, []);
+  const provider = providers.find(item => item.id === providerId || item._id === providerId || item.tenant_id === providerId);
+  if (!provider) throw Object.assign(new Error('Provedor nao encontrado'), { status: 404 });
+  const domain = validateCertificateDomain(provider.domain);
+  const tenantId = provider.tenant_id || provider.id;
+  const email = provider.contact_email || CERTBOT_EMAIL;
+
+  fs.mkdirSync(path.join(WEB_DIR, '.well-known', 'acme-challenge'), { recursive: true });
+  await run('certbot', [
+    'certonly',
+    '--webroot',
+    '-w', WEB_DIR,
+    '-d', domain,
+    '--non-interactive',
+    '--agree-tos',
+    '-m', email,
+    '--keep-until-expiring'
+  ], 120000);
+
+  const nginxFile = `/etc/nginx/conf.d/kore-hotspot-provider-${safeTenantId(tenantId)}.conf`;
+  fs.writeFileSync(nginxFile, `# Gerenciado pelo Kore-HotSpot - HTTPS do provedor ${tenantId}
+server {
+    listen 80;
+    server_name ${domain};
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name ${domain};
+    root ${WEB_DIR};
+    index index.html;
+
+    ssl_certificate /etc/letsencrypt/live/${domain}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${domain}/privkey.pem;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:8081;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+`);
+  await run('nginx', ['-t'], 30000);
+  await run('systemctl', ['reload', 'nginx'], 30000).catch(() => run('systemctl', ['restart', 'nginx'], 30000));
+  await run('systemctl', ['enable', '--now', 'certbot.timer'], 30000).catch(() => null);
+  fs.mkdirSync('/etc/letsencrypt/renewal-hooks/deploy', { recursive: true });
+  const hookFile = '/etc/letsencrypt/renewal-hooks/deploy/kore-hotspot-reload-nginx.sh';
+  if (!fs.existsSync(hookFile)) {
+    fs.writeFileSync(hookFile, '#!/usr/bin/env bash\nsystemctl reload nginx || true\n');
+    fs.chmodSync(hookFile, 0o755);
+  }
+
+  const updated = providers.map(item => {
+    if (item.id !== providerId && item._id !== providerId && item.tenant_id !== providerId) return item;
+    return {
+      ...item,
+      domain,
+      ssl_status: 'active',
+      ssl_domain: domain,
+      ssl_issued_at: new Date().toISOString(),
+      ssl_nginx_file: nginxFile,
+      updated_date: new Date().toISOString()
+    };
+  });
+  writeGlobalJson(PROVIDERS_FILE, updated);
+  return { success: true, provider: publicProvider(updated.find(item => item.id === providerId || item._id === providerId || item.tenant_id === providerId)), domain, nginx_file: nginxFile };
+}
+
 async function providersCrud(req) {
   const [pathname] = req.url.split('?');
   const parts = pathname.split('/').filter(Boolean);
@@ -1064,8 +1203,9 @@ async function providersCrud(req) {
       updated_date: nowIso
     };
     fs.mkdirSync(path.join(TENANTS_DIR, tenantId), { recursive: true });
+    const admin_credentials = ensureProviderAdmin(provider);
     writeGlobalJson(PROVIDERS_FILE, [provider, ...providers].slice(0, 1000));
-    return { provider: publicProvider(provider) };
+    return { provider: publicProvider(provider), admin_credentials };
   }
 
   if (req.method === 'PUT' && id) {
@@ -1088,8 +1228,9 @@ async function providersCrud(req) {
         updated_date: nowIso
       };
       fs.mkdirSync(path.join(TENANTS_DIR, tenantId), { recursive: true });
+      const admin_credentials = ensureProviderAdmin(provider);
       writeGlobalJson(PROVIDERS_FILE, [provider, ...providers].slice(0, 1000));
-      return { created: true, provider: publicProvider(provider), commercial_plans: PROVIDER_COMMERCIAL_PLANS };
+      return { created: true, provider: publicProvider(provider), admin_credentials, commercial_plans: PROVIDER_COMMERCIAL_PLANS };
     }
     if (!existingProvider) throw Object.assign(new Error('Provedor nao encontrado para atualizar'), { status: 404 });
     if (body.action === 'markPaid') {
@@ -1101,6 +1242,9 @@ async function providersCrud(req) {
     if (body.action === 'checkPix') {
       return refreshProviderBillingStatus({ id: body.billing_id, provider_payment_id: body.provider_payment_id });
     }
+    if (body.action === 'issueCertificate') {
+      return issueProviderCertificate(id);
+    }
     const updated = providers.map(item => {
       if (item.id !== id && item._id !== id && item.tenant_id !== id) return item;
       const payload = providerPayload({ ...item, ...body }, item.tenant_id || item.id);
@@ -1111,7 +1255,9 @@ async function providersCrud(req) {
       };
     });
     writeGlobalJson(PROVIDERS_FILE, updated);
-    return { created: false, provider: publicProvider(updated.find(item => item.id === id || item._id === id || item.tenant_id === id)), commercial_plans: PROVIDER_COMMERCIAL_PLANS };
+    const updatedProvider = updated.find(item => item.id === id || item._id === id || item.tenant_id === id);
+    const admin_credentials = ensureProviderAdmin(updatedProvider);
+    return { created: false, provider: publicProvider(updatedProvider), admin_credentials, commercial_plans: PROVIDER_COMMERCIAL_PLANS };
   }
 
   if (req.method === 'DELETE' && id) {
