@@ -616,6 +616,28 @@ function writeJson(file, value) {
   fs.writeFileSync(target, JSON.stringify(value, null, 2));
 }
 
+function ensureRuntimeSettings() {
+  const settings = readJson(ENTITY_FILES.settings, []);
+  const runtime = [
+    { key: 'vpn_server_host', value: PUBLIC_HOST, category: 'system', label: 'VPN Server Host' },
+    { key: 'public_base_url', value: process.env.KORE_PUBLIC_URL || (PUBLIC_HOST ? `http://${PUBLIC_HOST}:8080` : ''), category: 'system', label: 'URL Publica' }
+  ].filter(item => item.value);
+  let changed = false;
+  for (const item of runtime) {
+    const existing = settings.find(setting => setting.key === item.key);
+    if (!existing) {
+      const id = `setting_${item.key}`;
+      settings.push({ id, _id: id, ...item, created_date: new Date().toISOString(), updated_date: new Date().toISOString() });
+      changed = true;
+    } else if (item.key === 'vpn_server_host' && existing.value !== item.value) {
+      existing.value = item.value;
+      existing.updated_date = new Date().toISOString();
+      changed = true;
+    }
+  }
+  if (changed) writeJson(ENTITY_FILES.settings, settings);
+}
+
 function readGlobalJson(file, fallback = []) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   if (!fs.existsSync(file)) fs.writeFileSync(file, JSON.stringify(fallback, null, 2));
@@ -2305,6 +2327,7 @@ async function ixcConsultaCliente(payload = {}) {
 
 async function handleRequest(req, res) {
   try {
+    ensureRuntimeSettings();
     if (req.method === 'OPTIONS') return send(res, 200, { ok: true });
     if (req.url === '/health') return send(res, 200, { ok: true, service: 'kore-vpn-api', tenant: currentTenant().id, multi_tenant: MULTI_TENANT });
     const [pathname, query = ''] = req.url.split('?');

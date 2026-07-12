@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 APP_NAME="Kore-HotSpot"
-SCRIPT_VERSION="v0.2.28"
+SCRIPT_VERSION="v0.2.29"
 REPO_URL="${REPO_URL:-https://github.com/ederdreger/kore-hotspot.git}"
 REPO_SLUG="${REPO_SLUG:-ederdreger/kore-hotspot}"
 BRANCH="${BRANCH:-main}"
@@ -190,14 +190,18 @@ EOF
 
 migrate_public_endpoints() {
   local settings_file tmp_file
+  local default_settings="${API_DIR}/data/tenants/${TENANT_ID}/settings.json"
+  mkdir -p "$(dirname "$default_settings")"
+  [ -f "$default_settings" ] || printf '[]\n' > "$default_settings"
   while IFS= read -r -d '' settings_file; do
     tmp_file="$(mktemp)"
     jq --arg host "$PUBLIC_HOST" --arg base "$PUBLIC_URL" '
-      map(
-        if .key == "vpn_server_host" then .value = $host
-        elif .key == "public_base_url" and ((.value // "") | test("190\\.8\\.174\\.155")) then .value = $base
-        else . end
-      )
+      (if any(.key == "vpn_server_host") then
+        map(if .key == "vpn_server_host" then .value = $host else . end)
+      else . + [{id:"setting_vpn_server_host",_id:"setting_vpn_server_host",key:"vpn_server_host",value:$host,category:"system",label:"VPN Server Host"}] end)
+      | (if any(.key == "public_base_url") then
+          map(if .key == "public_base_url" and ((.value // "") | test("190\\.8\\.174\\.155")) then .value = $base else . end)
+        else . + [{id:"setting_public_base_url",_id:"setting_public_base_url",key:"public_base_url",value:$base,category:"system",label:"URL Publica"}] end)
     ' "$settings_file" > "$tmp_file"
     chown --reference="$settings_file" "$tmp_file" 2>/dev/null || true
     chmod --reference="$settings_file" "$tmp_file" 2>/dev/null || true

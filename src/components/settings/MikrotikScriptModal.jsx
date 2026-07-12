@@ -74,7 +74,7 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
     const sshPublicKeyUrl = `http://${publicServerHost}:8081/public/kore-api.pub`;
     const hotspotLoginUrl = `http://${publicServerHost}:8081/public/hotspot-login.html`;
     const captivePortalHost = publicServerHost;
-    const captivePortalUrl = `http://${captivePortalHost}:8080/captive-portal`;
+    const captivePortalUrl = `${window.location.origin}/captive-portal`;
     const radiusName = 'Kore-HotSpot';
     const profileName = 'kore-hotspot-profile';
     const hotspotName = 'kore-hotspot';
@@ -209,8 +209,10 @@ ${profileScript || ':put "Nenhum perfil de velocidade cadastrado no sistema"'}
 
 # Captive Portal Kore-HotSpot
 # Libera o painel/portal antes da autenticacao e substitui a tela padrao do MikroTik
+/ip hotspot walled-garden ip add dst-address=${captivePortalHost} protocol=tcp dst-port=80 action=accept comment="Kore-HotSpot captive portal HTTP"
+/ip hotspot walled-garden ip add dst-address=${captivePortalHost} protocol=tcp dst-port=443 action=accept comment="Kore-HotSpot captive portal HTTPS"
 /ip hotspot walled-garden ip add dst-address=${captivePortalHost} protocol=tcp dst-port=8080 action=accept comment="Kore-HotSpot captive portal 8080"
-/ip hotspot walled-garden ip add dst-address=${captivePortalHost} protocol=tcp dst-port=8081 action=accept comment="Kore-HotSpot captive portal api"
+/ip hotspot walled-garden ip add dst-address=${captivePortalHost} protocol=tcp dst-port=8081 action=accept comment="Kore-HotSpot captive portal API"
 :if ([:len [/file find where name="flash/hotspot"]] > 0) do={
   :foreach f in={"login.html";"rlogin.html";"redirect.html";"alogin.html"} do={
     :do { /file remove [find where name=("flash/hotspot/" . $f)] } on-error={}
