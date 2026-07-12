@@ -75,6 +75,7 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
     const hotspotLoginUrl = `http://${publicServerHost}:8081/public/hotspot-login.html`;
     const captivePortalHost = publicServerHost;
     const captivePortalUrl = `${window.location.origin}/captive-portal`;
+    const managementSource = mikrotik.vpn_enabled ? '10.255.255.1' : publicServerHost;
     const radiusName = 'Kore-HotSpot';
     const profileName = 'kore-hotspot-profile';
     const hotspotName = 'kore-hotspot';
@@ -158,7 +159,7 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 
 # SSH e SNMP para coleta de Performance (Dashboard)
 # Habilita SNMP para monitoramento em tempo real (CPU, Memoria e Uso de Interface)
-/ip service set ssh disabled=no port=${sshPort} address=10.255.255.1/32
+/ip service set ssh disabled=no port=${sshPort} address=${managementSource}/32
 :if ([:len [/user find where name="${sshUser}"]] = 0) do={
   /user add name="${sshUser}" group=full password="${sshFallbackPassword}"
 } else={
@@ -173,13 +174,13 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 :if ([:len [/user ssh-keys find where user="${sshUser}"]] = 0) do={ :error "ERRO: chave SSH nao ficou vinculada ao usuario ${sshUser}" }
 /snmp set enabled=yes contact="Kore-HotSpot" location="Hotspot" trap-version=2
 /snmp community remove [find where name="${snmpCommunity}"]
-/snmp community add name="${snmpCommunity}" addresses=0.0.0.0/0 read-access=yes write-access=no disabled=no
+/snmp community add name="${snmpCommunity}" addresses=${managementSource}/32 read-access=yes write-access=no disabled=no
 /ip dns set allow-remote-requests=yes
 
 # Firewall INPUT para SSH/SNMP
 /ip firewall filter add chain=input connection-state=established,related action=accept comment="Kore-HotSpot allow established" disabled=no
 /ip firewall filter add chain=input protocol=udp dst-port=161 action=accept comment="Kore-HotSpot allow SNMP UDP 161" disabled=no
-/ip firewall filter add chain=input src-address=10.255.255.1 protocol=tcp dst-port=${sshPort} action=accept comment="Kore-HotSpot allow SSH" disabled=no
+/ip firewall filter add chain=input src-address=${managementSource} protocol=tcp dst-port=${sshPort} action=accept comment="Kore-HotSpot allow SSH" disabled=no
 /ip firewall filter add chain=input in-interface="${finalHotspotInterface}" protocol=udp dst-port=67,68 action=accept comment="Kore-HotSpot allow DHCP" disabled=no
 /ip firewall filter add chain=input in-interface="${finalHotspotInterface}" protocol=udp dst-port=53 action=accept comment="Kore-HotSpot allow DNS UDP" disabled=no
 /ip firewall filter add chain=input in-interface="${finalHotspotInterface}" protocol=tcp dst-port=53 action=accept comment="Kore-HotSpot allow DNS TCP" disabled=no

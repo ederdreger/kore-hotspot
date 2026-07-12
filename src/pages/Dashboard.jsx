@@ -31,8 +31,6 @@ export default function Dashboard() {
   const loadRadiusData = useCallback(async () => {
     const res = await spedynet.functions.invoke('radiusSessions', {}).catch(() => ({ data: { sessions: [] } }));
     const sessions = res.data?.sessions || [];
-    const download = sessions.reduce((sum, s) => sum + Number(s.downloadRate || 0), 0);
-    const upload = sessions.reduce((sum, s) => sum + Number(s.uploadRate || 0), 0);
     setOnlineUsers(sessions.map((s) => ({
       name: s.fullName && s.fullName !== '-' ? s.fullName : s.username,
       ip: s.framedIp,
@@ -42,6 +40,21 @@ export default function Dashboard() {
       downloadRate: Number(s.downloadRate || 0),
       uploadRate: Number(s.uploadRate || 0)
     })));
+  }, []);
+
+  const loadInterfaceData = useCallback(async () => {
+    if (!primaryMikrotik) return;
+    const res = await spedynet.functions.invoke('mikrotikPerformance', {
+      host: primaryMikrotik.host,
+      port: primaryMikrotik.port,
+      user: primaryMikrotik.user,
+      password: primaryMikrotik.password,
+      auth_method: primaryMikrotik.ssh_auth_method || 'key',
+      interface_name: primaryMikrotik.wan_interface || primaryMikrotik.physical_interface || primaryMikrotik.hotspot_interface || 'ether1'
+    }).catch(() => ({ data: {} }));
+    const raw = res.data?.data || res.data || {};
+    const download = Number(raw.rxMbps ?? raw.rx_mbps ?? 0);
+    const upload = Number(raw.txMbps ?? raw.tx_mbps ?? 0);
     setNetworkTotals({ download, upload });
     setTrafficData(prev => {
       const next = [...prev, {
@@ -51,7 +64,7 @@ export default function Dashboard() {
       }];
       return next.slice(-24);
     });
-  }, []);
+  }, [primaryMikrotik]);
 
   useEffect(() => {
     spedynet.entities.Client.list('-created_date', 100).then(setClients).catch(() => {});
@@ -66,6 +79,13 @@ export default function Dashboard() {
     }).catch(() => {});
     return () => clearInterval(interval);
   }, [loadRadiusData]);
+
+  useEffect(() => {
+    if (!primaryMikrotik) return undefined;
+    loadInterfaceData();
+    const interval = setInterval(loadInterfaceData, 15000);
+    return () => clearInterval(interval);
+  }, [primaryMikrotik, loadInterfaceData]);
 
   const activeClients = clients.filter(c => c.status === 'active').length;
   const trialClients = clients.filter(c => c.status === 'trial').length;
@@ -90,9 +110,9 @@ export default function Dashboard() {
     <div className="space-y-6">
       {/* Stats Row */}
       <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
-        <StatCard title="Clientes Ativos" value={activeClients} subtitle={`${trialClients} em trial`} icon={Users} color="primary" trend="up" trendValue="+5%" onClick={() => navigate('/clients')} />
-        <StatCard title="Prospectos" value={newProspects} subtitle="Novos este mês" icon={UserSearch} color="info" trend="up" trendValue="+12%" onClick={() => navigate('/prospects')} />
-        <StatCard title="Online Agora" value={onlineUsers.length} subtitle="Coleta MikroTik/Radius" icon={Wifi} color="success" onClick={() => navigate('/radius')} />
+        <StatCard title="Clientes Ativos" value={activeClients} subtitle={`${trialClients} em trial`} icon={Users} color="primary" onClick={() => navigate('/clients')} />
+        <StatCard title="Prospectos" value={newProspects} subtitle="Cadastros recentes" icon={UserSearch} color="info" onClick={() => navigate('/prospects')} />
+        <StatCard title="Clientes Online" value={onlineUsers.length} subtitle="Sessões ativas no MikroTik" icon={Wifi} color="success" onClick={() => navigate('/radius')} />
         <StatCard title="Download" value={`${networkTotals.download.toFixed(2)}M`} subtitle="Taxa atual" icon={TrendingDown} color="primary" onClick={() => navigate('/radius')} />
         <StatCard title="Upload" value={`${networkTotals.upload.toFixed(2)}M`} subtitle="Taxa atual" icon={TrendingUp} color="success" onClick={() => navigate('/radius')} />
         <StatCard title="Vouchers" value={availableVouchers} subtitle="Disponíveis" icon={Ticket} color="warning" onClick={() => navigate('/vouchers')} />
@@ -183,7 +203,7 @@ export default function Dashboard() {
         {/* Online Users */}
         <div className="bg-card border border-border rounded-xl p-5">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-semibold text-foreground">Usuários Online</h3>
+            <h3 className="text-sm font-semibold text-foreground">Clientes Online</h3>
             <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-success/10 border border-success/20">
               <div className="w-1.5 h-1.5 bg-success rounded-full animate-pulse" />
               <span className="text-xs text-success font-medium">{onlineUsers.length} online</span>
@@ -221,7 +241,7 @@ export default function Dashboard() {
           ) : (
             <div className="flex flex-col items-center justify-center h-32 text-muted-foreground">
               <Wifi className="w-8 h-8 mb-2 opacity-30" />
-              <p className="text-xs">Nenhum usuário online no momento</p>
+              <p className="text-xs">Nenhum cliente online no momento</p>
             </div>
           )}
         </div>

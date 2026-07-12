@@ -45,7 +45,7 @@ export default function SnmpPerformanceDashboard({ mikrotik, token }) {
           password: mikrotik.password,
           auth_method: mikrotik.ssh_auth_method || 'key',
           community: mikrotik.snmp_community || 'public',
-          interface_name: mikrotik.physical_interface || 'ether1',
+          interface_name: mikrotik.wan_interface || mikrotik.physical_interface || mikrotik.hotspot_interface || 'ether1',
           token: token
         });
         

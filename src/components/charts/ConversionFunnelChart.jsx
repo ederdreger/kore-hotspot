@@ -57,16 +57,7 @@ export default function ConversionFunnelChart({ prospects, clients }) {
     return { month: m.label, prospects: monthProspects, clients: monthClients, rate };
   });
 
-  // Fallback demo data if empty
-  const hasData = data.some(d => d.prospects > 0 || d.clients > 0);
-  const chartData = hasData ? data : [
-    { month: 'Jan', prospects: 18, clients: 4, rate: 22.2 },
-    { month: 'Fev', prospects: 24, clients: 7, rate: 29.2 },
-    { month: 'Mar', prospects: 32, clients: 9, rate: 28.1 },
-    { month: 'Abr', prospects: 28, clients: 11, rate: 39.3 },
-    { month: 'Mai', prospects: 41, clients: 15, rate: 36.6 },
-    { month: 'Jun', prospects: 35, clients: 16, rate: 45.7 },
-  ];
+  const chartData = data;
 
   const totalProspects = chartData.reduce((a, d) => a + d.prospects, 0);
   const totalClients = chartData.reduce((a, d) => a + d.clients, 0);
