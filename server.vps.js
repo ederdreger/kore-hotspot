@@ -9,11 +9,11 @@ const { AsyncLocalStorage } = require('async_hooks');
 const PORT = Number(process.env.PORT || 8081);
 const TOKEN = process.env.KORE_VPN_API_TOKEN || 'kore-vpn-api-2026';
 const DEFAULT_ADMIN_PASSWORD = process.env.KORE_ADMIN_PASSWORD || 'Admin12345';
-const CHAP = '/etc/ppp/chap-secrets';
-const KEY_DIR = '/opt/kore-hotspot-vpn-api/keys';
+const CHAP = process.env.KORE_CHAP_FILE || '/etc/ppp/chap-secrets';
+const KEY_DIR = process.env.KORE_KEY_DIR || '/opt/kore-hotspot-vpn-api/keys';
 const KEY_PATH = path.join(KEY_DIR, 'kore-api_rsa');
 const PUB_PATH = `${KEY_PATH}.pub`;
-const DATA_DIR = '/opt/kore-hotspot-vpn-api/data';
+const DATA_DIR = process.env.KORE_DATA_DIR || '/opt/kore-hotspot-vpn-api/data';
 const TENANTS_DIR = path.join(DATA_DIR, 'tenants');
 const WEB_DIR = process.env.KORE_WEB_DIR || '/opt/kore-hotspot';
 const CERTBOT_EMAIL = process.env.KORE_CERTBOT_EMAIL || 'admin@spedynet.com.br';
@@ -177,9 +177,20 @@ async function ensureSshKey() {
 }
 
 function validToken(req) {
-  if (req.headers['x-kore-token'] === TOKEN) return true;
   const sessionToken = req.headers['x-kore-session'] || req.headers['x-admin-session'];
   return !!getAdminSession(sessionToken);
+}
+
+function requestAdminSession(req) {
+  return getAdminSession(req.headers['x-kore-session'] || req.headers['x-admin-session']);
+}
+
+function requireSystemAdmin(req) {
+  const session = requestAdminSession(req);
+  if (!session || session.role !== 'super_admin') {
+    throw Object.assign(new Error('Apenas o administrador geral pode gerenciar provedores'), { status: 403 });
+  }
+  return session;
 }
 
 function normalizeUser(value) {
@@ -348,11 +359,12 @@ function rateToMbps(value) {
   if (!match) return Number(text) || 0;
   const number = Number(match[1]) || 0;
   const unit = match[2];
+  const hasBitsSuffix = /(?:bps|b\/s)$/.test(text);
   if (unit === 'k') return number / 1000;
-  if (unit === 'm' || unit === '') return number;
+  if (unit === 'm') return number;
   if (unit === 'g') return number * 1000;
   if (unit === 't') return number * 1000 * 1000;
-  return number;
+  return hasBitsSuffix ? number / 1000 / 1000 : number;
 }
 
 function enrichRadiusSession(session) {
@@ -436,14 +448,21 @@ function resolveMikrotikTarget(payload = {}, item = {}) {
 
 async function mikrotikHotspotSessions() {
   const devices = getMikrotikDevices();
-  if (!devices.length) return [];
+  if (!devices.length) return { sessions: [], errors: ['Nenhum MikroTik cadastrado'], devices_checked: 0 };
   const sessions = [];
+  const errors = [];
   await ensureSshKey();
   for (const device of devices.slice(0, 5)) {
     const sshBase = ['-i', KEY_PATH, '-o', 'IdentitiesOnly=yes', '-o', 'PreferredAuthentications=publickey', '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa', '-o', 'HostkeyAlgorithms=+ssh-rsa', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=8', '-p', String(device.port || '22'), `${device.user || 'kore-api'}@${device.host}`];
-    let active = await run('ssh', [...sshBase, '/ip hotspot active print stats detail without-paging'], 12000).catch(() => ({ stdout: '' }));
-    if (!parseKeyValueRows(active.stdout).length) {
-      active = await run('ssh', [...sshBase, '/ip hotspot active print detail without-paging'], 12000).catch(() => ({ stdout: '' }));
+    let active;
+    try {
+      active = await run('ssh', [...sshBase, '/ip hotspot active print stats detail without-paging'], 12000);
+      if (!parseKeyValueRows(active.stdout).length) {
+        active = await run('ssh', [...sshBase, '/ip hotspot active print detail without-paging'], 12000);
+      }
+    } catch (error) {
+      errors.push(`${device.name || device.host}: ${error.message}`);
+      continue;
     }
     for (const [index, row] of parseKeyValueRows(active.stdout).entries()) {
       const ip = row.address || row['to-address'] || '';
@@ -468,31 +487,34 @@ async function mikrotikHotspotSessions() {
       }));
     }
   }
-  return sessions;
+  return { sessions, errors, devices_checked: Math.min(devices.length, 5) };
 }
 
 async function radiusSessions() {
-  const [status, sql, mikrotik] = await Promise.all([
+  const [status, sql, mikrotikResult] = await Promise.all([
     radiusStatus().catch(error => ({ status: 'offline', error: error.message })),
     radiusSqlSessions().catch(() => []),
-    mikrotikHotspotSessions().catch(() => [])
+    mikrotikHotspotSessions().catch(error => ({ sessions: [], errors: [error.message], devices_checked: 0 }))
   ]);
+  const mikrotik = mikrotikResult.sessions;
   const byKey = new Map();
-  for (const session of [...sql, ...mikrotik]) {
+  // O MikroTik confirma presenca. O radacct apenas enriquece a sessao, pois
+  // registros sem Accounting-Stop podem permanecer abertos indevidamente.
+  for (const session of mikrotik) {
     const key = `${normalizeText(session.username)}-${normalizeClientIp(session.framedIp)}-${normalizeMac(session.macAddress)}`;
-    const current = byKey.get(key);
-    if (!current) {
-      byKey.set(key, session);
-      continue;
-    }
+    const current = sql.find(item =>
+      normalizeText(item.username) === normalizeText(session.username) ||
+      (normalizeClientIp(item.framedIp) && normalizeClientIp(item.framedIp) === normalizeClientIp(session.framedIp)) ||
+      (normalizeMac(item.macAddress) && normalizeMac(item.macAddress) === normalizeMac(session.macAddress))
+    );
     byKey.set(key, {
-      ...current,
+      ...(current || {}),
       ...session,
-      fullName: current.fullName !== '-' ? current.fullName : session.fullName,
-      planName: current.planName !== '-' ? current.planName : session.planName,
-      downloadMb: Math.max(Number(current.downloadMb || 0), Number(session.downloadMb || 0)),
-      uploadMb: Math.max(Number(current.uploadMb || 0), Number(session.uploadMb || 0)),
-      sessionTime: current.sessionTime && current.sessionTime !== '-' ? current.sessionTime : session.sessionTime
+      fullName: current?.fullName && current.fullName !== '-' ? current.fullName : session.fullName,
+      planName: current?.planName && current.planName !== '-' ? current.planName : session.planName,
+      downloadMb: Math.max(Number(current?.downloadMb || 0), Number(session.downloadMb || 0)),
+      uploadMb: Math.max(Number(current?.uploadMb || 0), Number(session.uploadMb || 0)),
+      sessionTime: session.sessionTime || current?.sessionTime || '-'
     });
   }
 
@@ -516,7 +538,12 @@ async function radiusSessions() {
       uploadRate: Number(uploadRate.toFixed(2))
     };
   });
-  return { success: true, status, sessions };
+  const collection = {
+    healthy: mikrotikResult.devices_checked > 0 && mikrotikResult.errors.length === 0,
+    devices_checked: mikrotikResult.devices_checked,
+    errors: mikrotikResult.errors
+  };
+  return { success: collection.healthy, status, collection, sessions };
 }
 
 function parseRouterValue(output, key) {
@@ -625,6 +652,61 @@ function writeCaptiveDb(items) {
   const file = tenantFile(CAPTIVE_DB);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(items, null, 2));
+}
+
+function captivePublicConfig(payload = {}) {
+  const allowedKeys = new Set([
+    'captive_portal_title', 'captive_portal_subtitle', 'captive_portal_logo_url',
+    'captive_prospect_plan_id', 'captive_vip_plan_id', 'captive_redirect_url'
+  ]);
+  const settings = Object.fromEntries(
+    readJson(ENTITY_FILES.settings, [])
+      .filter(item => allowedKeys.has(item.key))
+      .map(item => [item.key, item.value])
+  );
+  const mac = normalizeMac(payload.mac);
+  const prospect = mac ? readCaptiveDb().find(item => normalizeMac(item.mac_address) === mac) : null;
+  return { settings, prospect: prospect || null };
+}
+
+function ensureCaptivePlanClient(payload = {}) {
+  const clients = readJson(ENTITY_FILES.clients, []);
+  const prospects = readCaptiveDb();
+  const mac = normalizeMac(payload.mac);
+  const cpf = normalizeDigits(payload.cpf);
+  const phone = normalizeDigits(payload.phone);
+  const prospect = prospects.find(item =>
+    (mac && normalizeMac(item.mac_address) === mac) ||
+    (cpf && normalizeDigits(item.cpf) === cpf) ||
+    (phone && normalizeDigits(item.phone) === phone)
+  );
+  let client = clients.find(item =>
+    (mac && normalizeMac(item.mac_address) === mac) ||
+    (cpf && normalizeDigits(item.cpf) === cpf) ||
+    (phone && normalizeDigits(item.phone) === phone)
+  );
+  if (client) return { client };
+  const source = prospect || payload;
+  if (!source.name || (!normalizeDigits(source.phone) && !normalizeDigits(source.cpf))) {
+    throw Object.assign(new Error('Identificacao insuficiente para selecionar um plano'), { status: 400 });
+  }
+  const id = `client_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  client = {
+    id,
+    _id: id,
+    name: source.name,
+    phone: source.phone || '',
+    cpf: source.cpf || '',
+    cep: source.cep || '',
+    mac_address: mac || normalizeMac(source.mac_address),
+    ip_address: normalizeClientIp(payload.ip) || normalizeClientIp(source.ip_address),
+    status: 'pending_payment',
+    source: 'captive_portal',
+    created_date: new Date().toISOString(),
+    updated_date: new Date().toISOString()
+  };
+  writeJson(ENTITY_FILES.clients, [client, ...clients].slice(0, 5000));
+  return { client };
 }
 
 function readJson(file, fallback = []) {
@@ -780,6 +862,7 @@ function createAdminSession(user) {
     admin_user_id: user.id || user._id,
     email: user.email,
     role: user.role,
+    permissions: Array.isArray(user.permissions) ? user.permissions : [],
     expires_at: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7).toISOString(),
     created_date: new Date().toISOString()
   };
@@ -796,12 +879,6 @@ function getAdminSession(token) {
 
 async function adminAuth(payload = {}) {
   const action = payload.action || 'login';
-  if (action === 'resetDefaults') {
-    const users = ensureDefaultAdmins({ resetPassword: true, force: true });
-    writeJson(ENTITY_FILES.admin_sessions, []);
-    return { success: true, email: DEFAULT_ADMINS.map(user => user.email).join(' / '), password: DEFAULT_ADMIN_PASSWORD, users: users.map(publicAdmin) };
-  }
-
   ensureDefaultAdmins();
   const users = readJson(ENTITY_FILES.admins, []);
 
@@ -830,6 +907,18 @@ async function adminAuth(payload = {}) {
 
   const session = getAdminSession(payload.token);
   if (!session) throw Object.assign(new Error('Sessao expirada'), { status: 401 });
+
+  const userManagementActions = new Set(['listUsers', 'createUser', 'updateUser', 'deleteUser', 'resetDefaults']);
+  if (userManagementActions.has(action) && !['super_admin', 'provider_admin', 'admin'].includes(session.role)) {
+    throw Object.assign(new Error('Acesso negado para gerenciar usuarios'), { status: 403 });
+  }
+
+  if (action === 'resetDefaults') {
+    if (!['super_admin', 'admin'].includes(session.role)) throw Object.assign(new Error('Acesso negado'), { status: 403 });
+    const resetUsers = ensureDefaultAdmins({ resetPassword: true, force: true });
+    writeJson(ENTITY_FILES.admin_sessions, [session]);
+    return { success: true, email: DEFAULT_ADMINS.map(user => user.email).join(' / '), password: DEFAULT_ADMIN_PASSWORD, users: resetUsers.map(publicAdmin) };
+  }
 
   if (action === 'listUsers') return { users: users.map(publicAdmin) };
 
@@ -1550,7 +1639,7 @@ async function entityCrud(req) {
     assertTenantLicense({ action: 'write', resource: parsed.entity });
     const removedItem = items.find(item => item.id === parsed.id || item._id === parsed.id);
     if (parsed.entity === 'clients' && removedItem) {
-      await cleanupMikrotikAccess(removedItem).catch(error => ({ error: error.message }));
+      await cleanupMikrotikAccess(removedItem);
     }
     writeJson(file, items.filter(item => item.id !== parsed.id && item._id !== parsed.id));
     return { success: true };
@@ -1722,14 +1811,21 @@ async function cleanupMikrotikAccess(item = {}) {
   ].filter(Boolean).join('; ');
 
   if (!commands) return { success: true, skipped: true };
+  if (!targets.length) throw new Error('Nenhum MikroTik cadastrado para revogar o acesso do cliente');
   await ensureSshKey();
   const results = [];
+  const errors = [];
   for (const device of targets.slice(0, 5)) {
     const host = device.host || device.vpn_remote_ip || device.remote_ip;
     if (!host) continue;
-    const { stdout } = await run('ssh', ['-i', KEY_PATH, '-o', 'LogLevel=ERROR', '-o', 'IdentitiesOnly=yes', '-o', 'PreferredAuthentications=publickey', '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa', '-o', 'HostkeyAlgorithms=+ssh-rsa', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=8', '-p', String(device.port || '22'), `${device.user || 'kore-api'}@${host}`, commands], 15000).catch(error => ({ stdout: '', error: error.message }));
-    results.push({ host, stdout });
+    try {
+      const { stdout } = await runSshWithRetry(['-i', KEY_PATH, '-o', 'LogLevel=ERROR', '-o', 'IdentitiesOnly=yes', '-o', 'PreferredAuthentications=publickey', '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa', '-o', 'HostkeyAlgorithms=+ssh-rsa', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=8', '-p', String(device.port || '22'), `${device.user || 'kore-api'}@${host}`, commands], 15000);
+      results.push({ host, stdout });
+    } catch (error) {
+      errors.push(`${device.name || host}: ${error.message}`);
+    }
   }
+  if (errors.length) throw new Error(`Nao foi possivel revogar o acesso no MikroTik: ${errors.join(' | ')}`);
   return { success: true, results };
 }
 
@@ -2404,6 +2500,17 @@ async function handleRequest(req, res) {
       return send(res, 200, fs.readFileSync(PUB_PATH, 'utf8'), { 'Content-Type': 'text/plain; charset=utf-8' });
     }
     if (req.method === 'POST' && req.url === '/api/admin/auth') return send(res, 200, await adminAuth(await readBody(req)));
+    if (req.method === 'POST' && req.url === '/api/captive/config') return send(res, 200, captivePublicConfig(await readBody(req)));
+    if (req.method === 'POST' && req.url === '/api/captive/plan-client') return send(res, 200, ensureCaptivePlanClient(await readBody(req)));
+    if (req.method === 'GET' && req.url === '/api/captive/plans') {
+      const plans = readJson(ENTITY_FILES.plans, []).map(publicPlan).filter(plan => plan.status === 'active');
+      return send(res, 200, { plans });
+    }
+    if (req.method === 'POST' && req.url === '/api/captive/register') return send(res, 200, await captiveRegister(await readBody(req)));
+    if (req.method === 'POST' && req.url === '/api/captive/client-login') { assertTenantLicense({ action: 'write', resource: 'client' }); return send(res, 200, await captiveClientLogin(await readBody(req))); }
+    if (req.method === 'POST' && req.url === '/api/captive/voucher-login') { assertTenantLicense({ action: 'write', resource: 'voucher' }); return send(res, 200, await captiveVoucherLogin(await readBody(req))); }
+    if (req.method === 'POST' && req.url === '/api/payments/pix') { assertTenantLicense({ action: 'write', resource: 'payment' }); return send(res, 200, await createPixPayment(await readBody(req))); }
+    if (req.method === 'POST' && req.url === '/api/payments/status') { assertTenantLicense({ action: 'write', resource: 'payment' }); return send(res, 200, await refreshPaymentStatus(await readBody(req))); }
     if (!validToken(req)) return send(res, 401, { error: 'token invalido' });
 
     if (req.method === 'GET' && req.url === '/api/tenant/current') {
@@ -2411,6 +2518,7 @@ async function handleRequest(req, res) {
     }
     if (req.method === 'GET' && req.url === '/api/license/status') return send(res, 200, licenseState());
     if (req.url.startsWith('/api/providers')) {
+      requireSystemAdmin(req);
       assertSystemTenant();
       const result = await providersCrud(req);
       if (result) return send(res, 200, result);
@@ -2424,19 +2532,10 @@ async function handleRequest(req, res) {
     if (req.method === 'GET' && req.url === '/api/radius/sessions') return send(res, 200, await radiusSessions());
     if (req.method === 'GET' && req.url === '/api/captive/prospects') return send(res, 200, { prospects: readCaptiveDb() });
     if (req.method === 'DELETE' && req.url.startsWith('/api/captive/prospects/')) return send(res, 200, await deleteCaptiveProspect(decodeURIComponent(req.url.split('/').pop())));
-    if (req.method === 'GET' && req.url === '/api/captive/plans') {
-      const plans = readJson(ENTITY_FILES.plans, []).map(publicPlan).filter(plan => plan.status === 'active');
-      return send(res, 200, { plans });
-    }
-    if (req.method === 'POST' && req.url === '/api/captive/register') return send(res, 200, await captiveRegister(await readBody(req)));
-    if (req.method === 'POST' && req.url === '/api/captive/client-login') { assertTenantLicense({ action: 'write', resource: 'client' }); return send(res, 200, await captiveClientLogin(await readBody(req))); }
-    if (req.method === 'POST' && req.url === '/api/captive/voucher-login') { assertTenantLicense({ action: 'write', resource: 'voucher' }); return send(res, 200, await captiveVoucherLogin(await readBody(req))); }
     if (req.method === 'POST' && req.url === '/api/ixc/cliente') return send(res, 200, await ixcConsultaCliente(await readBody(req)));
     if (req.method === 'POST' && req.url === '/api/clients/activate-free-plan') { assertTenantLicense({ action: 'write', resource: 'client' }); return send(res, 200, await activateFreePlan(await readBody(req))); }
     if (req.method === 'POST' && req.url === '/api/hotspot/vip') return send(res, 200, await setVipAccess(await readBody(req)));
     if (req.method === 'POST' && req.url === '/api/mikrotik/cleanup-access') return send(res, 200, await cleanupMikrotikAccess(await readBody(req)));
-    if (req.method === 'POST' && req.url === '/api/payments/pix') { assertTenantLicense({ action: 'write', resource: 'payment' }); return send(res, 200, await createPixPayment(await readBody(req))); }
-    if (req.method === 'POST' && req.url === '/api/payments/status') { assertTenantLicense({ action: 'write', resource: 'payment' }); return send(res, 200, await refreshPaymentStatus(await readBody(req))); }
     if (req.url.startsWith('/api/entities/')) {
       const result = await entityCrud(req);
       if (result) return send(res, 200, result);

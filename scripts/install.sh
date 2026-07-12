@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 APP_NAME="Kore-HotSpot"
-SCRIPT_VERSION="v0.2.34"
+SCRIPT_VERSION="v0.2.35"
 REPO_URL="${REPO_URL:-https://github.com/ederdreger/kore-hotspot.git}"
 REPO_SLUG="${REPO_SLUG:-ederdreger/kore-hotspot}"
 BRANCH="${BRANCH:-main}"
@@ -15,7 +15,7 @@ DOMAIN="${DOMAIN:-}"
 CERTBOT_EMAIL="${CERTBOT_EMAIL:-admin@spedynet.com.br}"
 ENABLE_SSL="${ENABLE_SSL:-auto}"
 API_TOKEN="${API_TOKEN:-}"
-ADMIN_PASSWORD="${ADMIN_PASSWORD:-Admin12345}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
 SSH_PORT="${SSH_PORT:-}"
 VPN_LOCAL_IP="${VPN_LOCAL_IP:-10.255.255.1}"
 VPN_IP_RANGE="${VPN_IP_RANGE:-10.255.255.2-10.255.255.254}"
@@ -114,10 +114,24 @@ EOF
 
 install_backend() {
   log "Instalando API local"
-  mkdir -p "$API_DIR/data" "$API_DIR/keys"
+  mkdir -p "$API_DIR/data" "$API_DIR/keys" "$CONFIG_DIR"
   cp "$INSTALL_DIR/server.vps.js" "$API_DIR/server.js"
   chown -R root:root "$API_DIR"
   chmod 700 "$API_DIR/keys"
+
+  cat > "$CONFIG_DIR/runtime.env" <<EOF
+PORT=8081
+KORE_VPN_API_TOKEN=${API_TOKEN}
+KORE_ADMIN_PASSWORD=${ADMIN_PASSWORD}
+KORE_PUBLIC_URL=${PUBLIC_URL}
+KORE_DEFAULT_TENANT=${TENANT_ID}
+KORE_MULTI_TENANT=${MULTI_TENANT}
+KORE_SAAS_MP_ACCESS_TOKEN=${KORE_SAAS_MP_ACCESS_TOKEN}
+KORE_WEB_DIR=${WEB_DIR}
+KORE_CERTBOT_EMAIL=${CERTBOT_EMAIL}
+KORE_PUBLIC_HOST=${PUBLIC_HOST}
+EOF
+  chmod 600 "$CONFIG_DIR/runtime.env"
 
   cat > /etc/systemd/system/kore-vpn-api.service <<EOF
 [Unit]
@@ -128,16 +142,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=${API_DIR}
-Environment=PORT=8081
-Environment=KORE_VPN_API_TOKEN=${API_TOKEN}
-Environment=KORE_ADMIN_PASSWORD=${ADMIN_PASSWORD}
-Environment=KORE_PUBLIC_URL=${PUBLIC_URL}
-Environment=KORE_DEFAULT_TENANT=${TENANT_ID}
-Environment=KORE_MULTI_TENANT=${MULTI_TENANT}
-Environment=KORE_SAAS_MP_ACCESS_TOKEN=${KORE_SAAS_MP_ACCESS_TOKEN}
-Environment=KORE_WEB_DIR=${WEB_DIR}
-Environment=KORE_CERTBOT_EMAIL=${CERTBOT_EMAIL}
-Environment=KORE_PUBLIC_HOST=${PUBLIC_HOST}
+EnvironmentFile=${CONFIG_DIR}/runtime.env
 ExecStart=/usr/bin/node ${API_DIR}/server.js
 Restart=always
 RestartSec=3
@@ -391,6 +396,8 @@ journalctl --no-pager -n 180 -u strongswan-starter || journalctl --no-pager -n 1
 journalctl --no-pager -n 240 | grep -iE 'charon|ipsec|xl2tpd|pppd|l2tp' || true
 EOF
   chmod +x /usr/local/bin/kore-vpn-diagnose
+  cp "$INSTALL_DIR/scripts/doctor.sh" /usr/local/bin/kore-hotspot-doctor
+  chmod +x /usr/local/bin/kore-hotspot-doctor
 }
 
 install_updater() {
@@ -424,6 +431,7 @@ MULTI_TENANT=${MULTI_TENANT}
 KORE_SAAS_MP_ACCESS_TOKEN=${KORE_SAAS_MP_ACCESS_TOKEN}
 RELEASE_CHANNEL=latest
 EOF
+  chmod 600 "$CONFIG_DIR/update.env"
 
   cat > /etc/systemd/system/kore-hotspot-update.service <<EOF
 [Unit]
@@ -462,6 +470,11 @@ start_services() {
   systemctl restart kore-vpn-api nginx
 }
 
+verify_installation() {
+  log "Validando instalacao"
+  API_DIR="$API_DIR" WEB_DIR="$WEB_DIR" /usr/local/bin/kore-hotspot-doctor || fail "A instalacao nao passou no diagnostico. Execute kore-hotspot-doctor para detalhes."
+}
+
 print_summary() {
   cat <<EOF
 
@@ -478,7 +491,7 @@ SSL:          $([ -n "$DOMAIN" ] && echo "Let's Encrypt para ${DOMAIN}" || echo 
 Tenant:       ${TENANT_ID}
 
 Usuario inicial do painel:
-  E-mail: demo@spedynet.com.br
+  E-mail: spedynet@spedynet.com.br
   Senha:  ${ADMIN_PASSWORD}
 
 Para atualizar manualmente:
@@ -489,10 +502,12 @@ EOF
 }
 
 main() {
+  log "Iniciando instalacao ${SCRIPT_VERSION}"
   require_root
   check_ubuntu
   detect_public_host
   API_TOKEN="${API_TOKEN:-$(openssl rand -hex 24)}"
+  ADMIN_PASSWORD="${ADMIN_PASSWORD:-Kore$(openssl rand -hex 10)!}"
   install_packages
   prepare_source
   build_frontend
@@ -506,6 +521,7 @@ main() {
   configure_l2tp_base
   install_updater
   start_services
+  verify_installation
   print_summary
 }
 

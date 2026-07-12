@@ -143,9 +143,13 @@ export default function UsersPage() {
   };
 
   const handleResetDefault = async () => {
-    const res = await spedynet.functions.invoke('adminAuth', { action: 'resetDefaults' });
-    toast.success(`Logins padrao prontos. Senha: ${res.data.password}`);
-    load();
+    try {
+      const data = await callAdmin({ action: 'resetDefaults' });
+      toast.success(`Logins padrao prontos. Senha: ${data.password}`);
+      load();
+    } catch (error) {
+      toast.error(error.message || 'Nao foi possivel restaurar os administradores');
+    }
   };
 
   const togglePermission = (moduleKey) => {

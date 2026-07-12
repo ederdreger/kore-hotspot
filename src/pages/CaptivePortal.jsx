@@ -3,7 +3,7 @@ import { spedynet } from '@/api/spedynetClient';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ArrowRight, Check, CheckCircle2, Copy, Loader2, Phone, QrCode, User, Users, Wifi } from 'lucide-react';
+import { ArrowRight, Check, CheckCircle2, Copy, Loader2, QrCode, User, Users } from 'lucide-react';
 import { toast } from 'sonner';
 
 function getPortalParams() {
@@ -132,8 +132,6 @@ function PlanCard({ plan, selected, onSelect }) {
 export default function CaptivePortal() {
   const [stage, setStage] = useState(() => window.location.pathname.includes('captive-plans') ? 'plans' : 'choice');
   const [plans, setPlans] = useState([]);
-  const [clients, setClients] = useState([]);
-  const [prospects, setProspects] = useState([]);
   const [settings, setSettings] = useState({});
   const [phone, setPhone] = useState('');
   const [clientIdentifier, setClientIdentifier] = useState('');
@@ -162,20 +160,15 @@ export default function CaptivePortal() {
 
   useEffect(() => {
     async function load() {
-      const [planData, clientData, prospectData, settingsData] = await Promise.all([
+      const params = getPortalParams();
+      const [planData, config] = await Promise.all([
         spedynet.functions.invoke('captivePlans', {}).then((res) => res.data || []).catch(() => []),
-        spedynet.entities.Client.list('-created_date', 500).catch(() => []),
-        spedynet.functions.invoke('captiveProspects', {}).then((res) => res.data || []).catch(() => []),
-        spedynet.entities.Setting.list().catch(() => [])
+        spedynet.functions.invoke('captiveConfig', { mac: params.mac, ip: params.ip }).then((res) => res.data).catch(() => ({ settings: {}, prospect: null }))
       ]);
       setPlans(planData);
-      setClients(clientData);
-      setProspects(prospectData);
-      setSettings(Object.fromEntries(settingsData.map((item) => [item.key, item.value])));
+      setSettings(config.settings || {});
 
-      const params = getPortalParams();
-      const mac = normalizeMac(params.mac);
-      const known = prospectData.find((item) => mac && normalizeMac(item.mac_address) === mac);
+      const known = config.prospect;
       if (known?.trial_expires_at && new Date(known.trial_expires_at) <= new Date()) {
         setActiveProspect(known);
         setNotice('Seu periodo gratis terminou. Escolha um plano para continuar navegando.');
@@ -188,22 +181,21 @@ export default function CaptivePortal() {
   const findClient = (value) => {
     const d = digits(value);
     const q = String(value || '').toLowerCase().trim();
-    return clients.find((client) =>
-      digits(client.phone) === d ||
-      digits(client.cpf) === d ||
-      String(client.email || '').toLowerCase() === q ||
-      String(client.radius_username || '').toLowerCase() === q
-    );
+    return activeClient && (
+      digits(activeClient.phone) === d || digits(activeClient.cpf) === d ||
+      String(activeClient.email || '').toLowerCase() === q ||
+      String(activeClient.radius_username || '').toLowerCase() === q
+    ) ? activeClient : null;
   };
 
   const findProspect = (value) => {
     const d = digits(value);
     const params = getPortalParams();
     const mac = normalizeMac(params.mac);
-    return prospects.find((item) =>
-      (d && digits(item.phone) === d) ||
-      (mac && normalizeMac(item.mac_address) === mac)
-    );
+    return activeProspect && (
+      (d && digits(activeProspect.phone) === d) ||
+      (mac && normalizeMac(activeProspect.mac_address) === mac)
+    ) ? activeProspect : null;
   };
 
   const startByPhone = async (event) => {
@@ -310,14 +302,16 @@ export default function CaptivePortal() {
     if (activeClient) return activeClient;
     const existing = findClient(form.phone || phone);
     if (existing) return existing;
-    const created = await spedynet.entities.Client.create({
+    const params = getPortalParams();
+    const response = await spedynet.functions.invoke('captivePlanClient', {
       name: form.name || activeProspect?.name || 'Cliente Hotspot',
       phone: form.phone || activeProspect?.phone || phone,
       cpf: form.cpf || activeProspect?.cpf || '',
       cep: form.cep || activeProspect?.cep || '',
-      status: 'pending_payment',
-      source: 'captive_portal'
+      mac: params.mac,
+      ip: params.ip
     });
+    const created = response.data.client;
     setActiveClient(created);
     return created;
   };

@@ -66,7 +66,6 @@ export default function MikrotikDashboard({ mikrotik, onClose }) {
       });
       setMetrics(response.data);
     } catch (err) {
-      // Fallback with mock/estimated data when API is unreachable
       setMetrics({
         uptime: null,
         cpu_load: null,

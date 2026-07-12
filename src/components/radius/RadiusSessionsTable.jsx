@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import { LogOut, Zap, ChevronDown, ChevronUp, Unlock, Search, Filter } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { LogOut, Zap, ChevronDown, ChevronUp, Unlock, Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import StatusBadge from '@/components/ui/StatusBadge';
 import RadiusProfileModal from './RadiusProfileModal';

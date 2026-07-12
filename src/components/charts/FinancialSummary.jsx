@@ -2,7 +2,6 @@ import { useMemo } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } from 'recharts';
 import { DollarSign, Clock, CalendarClock, TrendingUp } from 'lucide-react';
 import { format, differenceInDays, addDays } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
 
 export default function FinancialSummary({ clients, plans }) {
   const { totalRevenue, planDist, upcomingExpirations } = useMemo(() => {

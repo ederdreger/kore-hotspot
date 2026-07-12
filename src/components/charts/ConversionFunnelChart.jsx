@@ -1,6 +1,6 @@
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, Cell, Legend, ReferenceLine
+  ResponsiveContainer
 } from 'recharts';
 import { TrendingUp } from 'lucide-react';
 

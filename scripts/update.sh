@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 APP_NAME="Kore-HotSpot"
-SCRIPT_VERSION="v0.2.34"
+SCRIPT_VERSION="v0.2.35"
 REPO_URL="${REPO_URL:-https://github.com/ederdreger/kore-hotspot.git}"
 REPO_SLUG="${REPO_SLUG:-ederdreger/kore-hotspot}"
 BRANCH="${BRANCH:-main}"
@@ -243,6 +243,8 @@ journalctl --no-pager -n 180 -u strongswan-starter || journalctl --no-pager -n 1
 journalctl --no-pager -n 240 | grep -iE 'charon|ipsec|xl2tpd|pppd|l2tp' || true
 EOF
   chmod +x /usr/local/bin/kore-vpn-diagnose
+  cp "$INSTALL_DIR/scripts/doctor.sh" /usr/local/bin/kore-hotspot-doctor
+  chmod +x /usr/local/bin/kore-hotspot-doctor
 }
 
 download_release() {
@@ -295,6 +297,7 @@ VITE_KORE_BUILD_ID=$(date +%Y%m%d%H%M%S)
 EOF
   npm ci
   npm run build
+  node --check "$INSTALL_DIR/server.vps.js"
 
   rm -rf "${WEB_DIR}.new"
   mkdir -p "${WEB_DIR}.new"
@@ -304,6 +307,7 @@ EOF
   mv "${WEB_DIR}.new" "$WEB_DIR"
 
   mkdir -p "$API_DIR/data" "$API_DIR/keys"
+  [ -f "$API_DIR/server.js" ] && cp "$API_DIR/server.js" "$API_DIR/server.js.rollback"
   cp "$INSTALL_DIR/server.vps.js" "$API_DIR/server.js"
   if [ -f "$INSTALL_DIR/scripts/provider-upsert.sh" ]; then
     cp "$INSTALL_DIR/scripts/provider-upsert.sh" /usr/local/bin/kore-provider-upsert
@@ -444,6 +448,25 @@ restart_services() {
   systemctl reload nginx || systemctl restart nginx
 }
 
+verify_or_rollback() {
+  local _
+  for _ in $(seq 1 15); do
+    if curl -fsS --max-time 3 http://127.0.0.1:8081/health | jq -e '.ok == true' >/dev/null 2>&1; then
+      API_DIR="$API_DIR" WEB_DIR="$WEB_DIR" /usr/local/bin/kore-hotspot-doctor
+      rm -f "$API_DIR/server.js.rollback"
+      return 0
+    fi
+    sleep 2
+  done
+  log "Nova API falhou no health check; restaurando versao anterior"
+  if [ -f "$API_DIR/server.js.rollback" ]; then
+    cp "$API_DIR/server.js.rollback" "$API_DIR/server.js"
+    if [ -d "${WEB_DIR}.old" ]; then rm -rf "$WEB_DIR"; mv "${WEB_DIR}.old" "$WEB_DIR"; fi
+    systemctl restart kore-vpn-api
+  fi
+  fail "Atualizacao revertida porque a nova versao nao iniciou corretamente."
+}
+
 main() {
   log "Iniciando atualizacao ${SCRIPT_VERSION}"
   load_install_config
@@ -461,6 +484,7 @@ main() {
   configure_nginx_no_cache
   configure_api_environment
   restart_services
+  verify_or_rollback
   log "Atualizacao concluida"
 }
 

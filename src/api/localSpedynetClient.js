@@ -245,17 +245,9 @@ function entityApi(entityName) {
       const db = readDb();
       let items = db[entityName] || [];
       if (entityName === 'Prospect') {
-        const remote = await captiveProspects().catch(() => []);
-        const byId = new Map([...remote, ...items].map((item) => [item.id || item._id, item]));
-        items = [...byId.values()];
+        items = await captiveProspects();
       } else if (REMOTE_ENTITY_MAP[entityName]) {
-        const remote = await remoteEntityList(entityName).catch(() => []);
-        const remoteIds = new Set(remote.map((item) => item.id || item._id));
-        items
-          .filter((item) => !remoteIds.has(item.id || item._id))
-          .forEach((item) => remoteEntityCreate(entityName, item).catch(() => null));
-        const byId = new Map([...remote, ...items].map((item) => [item.id || item._id, item]));
-        items = [...byId.values()];
+        items = await remoteEntityList(entityName);
       }
       items = sortItems(items, order);
       return typeof limit === 'number' ? items.slice(0, limit) : items;
@@ -265,18 +257,20 @@ function entityApi(entityName) {
       const db = readDb();
       let items = db[entityName] || [];
       if (REMOTE_ENTITY_MAP[entityName]) {
-        const remote = await remoteEntityList(entityName).catch(() => []);
-        const remoteIds = new Set(remote.map((item) => item.id || item._id));
-        items
-          .filter((item) => !remoteIds.has(item.id || item._id))
-          .forEach((item) => remoteEntityCreate(entityName, item).catch(() => null));
-        const byId = new Map([...remote, ...items].map((item) => [item.id || item._id, item]));
-        items = [...byId.values()];
+        items = await remoteEntityList(entityName);
+      } else if (entityName === 'Prospect') {
+        items = await captiveProspects();
       }
       return items.filter((item) => matches(item, criteria));
     },
 
     async get(id) {
+      if (REMOTE_ENTITY_MAP[entityName]) {
+        const items = await remoteEntityList(entityName);
+        const remoteItem = items.find((entry) => entry.id === id || entry._id === id);
+        if (!remoteItem) throw new Error(`${entityName} nao encontrado`);
+        return remoteItem;
+      }
       const db = readDb();
       const item = (db[entityName] || []).find((entry) => entry.id === id || entry._id === id);
       if (!item) throw new Error(`${entityName} nao encontrado`);
@@ -284,7 +278,6 @@ function entityApi(entityName) {
     },
 
     async create(data) {
-      const db = readDb();
       const id = data.id || data._id || newId(entityName);
       const item = {
         id,
@@ -293,29 +286,34 @@ function entityApi(entityName) {
         created_date: data.created_date || now(),
         updated_date: now()
       };
+      if (REMOTE_ENTITY_MAP[entityName]) {
+        return await remoteEntityCreate(entityName, item);
+      }
+      const db = readDb();
       db[entityName] = [...(db[entityName] || []), item];
       writeDb(db);
-      await remoteEntityCreate(entityName, item).catch(() => null);
       return item;
     },
 
     async update(id, data) {
+      if (REMOTE_ENTITY_MAP[entityName]) {
+        return await remoteEntityUpdate(entityName, id, data);
+      }
       const db = readDb();
       db[entityName] = (db[entityName] || []).map((item) => (
         item.id === id || item._id === id ? { ...item, ...data, updated_date: now() } : item
       ));
       writeDb(db);
       const item = (db[entityName] || []).find((entry) => entry.id === id || entry._id === id);
-      await remoteEntityUpdate(entityName, id, item || data).catch(() => null);
       return item;
     },
 
     async delete(id) {
+      if (entityName === 'Prospect') return await remoteProspectDelete(id);
+      if (REMOTE_ENTITY_MAP[entityName]) return await remoteEntityDelete(entityName, id);
       const db = readDb();
       db[entityName] = (db[entityName] || []).filter((item) => item.id !== id && item._id !== id);
       writeDb(db);
-      if (entityName === 'Prospect') await remoteProspectDelete(id).catch(() => null);
-      await remoteEntityDelete(entityName, id).catch(() => null);
       return { success: true };
     }
   };
@@ -591,6 +589,28 @@ async function captivePlans() {
   return data.plans || [];
 }
 
+async function captiveConfig(payload = {}) {
+  const response = await fetch(`${VPN_API_URL}/api/captive/config`, {
+    method: 'POST',
+    headers: jsonHeaders(),
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || 'Erro ao carregar configuracao do captive');
+  return data;
+}
+
+async function captivePlanClient(payload = {}) {
+  const response = await fetch(`${VPN_API_URL}/api/captive/plan-client`, {
+    method: 'POST',
+    headers: jsonHeaders(),
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || 'Erro ao identificar cliente para o plano');
+  return data;
+}
+
 async function captiveClientLogin(payload = {}) {
   const response = await fetch(`${VPN_API_URL}/api/captive/client-login`, {
     method: 'POST',
@@ -711,10 +731,7 @@ async function licenseStatus() {
 
 async function invoke(functionName, payload) {
   const handlers = {
-    adminAuth: async (body) => remoteAdminAuth(body).catch(async (error) => {
-      if (error.response?.status) throw error;
-      return adminAuth(body);
-    }),
+    adminAuth: remoteAdminAuth,
     clientAuth,
     vpnCreateUser,
     vpnStatus,
@@ -726,6 +743,8 @@ async function invoke(functionName, payload) {
     captiveRegister,
     captiveProspects,
     captivePlans,
+    captiveConfig,
+    captivePlanClient,
     captiveClientLogin,
     captiveVoucherLogin,
     ixcConsultaCliente,

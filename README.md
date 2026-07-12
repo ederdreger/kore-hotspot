@@ -56,8 +56,8 @@ Variáveis úteis:
 - `DOMAIN`: domínio apontado para a VPS, usado para HTTPS grátis.
 - `CERTBOT_EMAIL`: e-mail usado no Let's Encrypt.
 - `ENABLE_SSL`: `auto`, `true` ou `false`. Em `auto`, tenta emitir certificado quando `DOMAIN` estiver definido.
-- `API_TOKEN`: token usado pelo painel para falar com a API.
-- `ADMIN_PASSWORD`: senha inicial dos administradores padrão.
+- `API_TOKEN`: token legado para integrações de serviço; não substitui a sessão administrativa.
+- `ADMIN_PASSWORD`: senha inicial dos administradores. Quando omitida, o instalador gera uma senha forte e a exibe no resumo.
 - `TENANT_ID`: identificador interno do provedor, exemplo `provedor-a`.
 - `MULTI_TENANT`: `true` ou `false`. Em `true`, os dados ficam isolados por tenant/domínio.
 - `KORE_SAAS_MP_ACCESS_TOKEN`: Access Token do Mercado Pago usado para cobrar mensalidade dos provedores via Pix.
@@ -156,8 +156,8 @@ Se instalado com `DOMAIN`, use:
 
 Usuário inicial:
 
-- E-mail: `demo@spedynet.com.br`
-- Senha: `Admin12345`
+- E-mail: `spedynet@spedynet.com.br`
+- Senha: valor informado em `ADMIN_PASSWORD` ou senha gerada no final da instalação.
 
 Altere a senha após o primeiro acesso.
 
@@ -190,7 +190,27 @@ O atualizador:
 - usa a branch configurada como fallback;
 - recompila o painel;
 - atualiza backend e frontend;
-- reinicia os serviços.
+- reinicia os serviços;
+- executa health check e diagnóstico;
+- restaura automaticamente a versão anterior se a nova API não iniciar.
+
+## Diagnóstico da instalação
+
+Após instalar ou atualizar, execute:
+
+```bash
+sudo kore-hotspot-doctor
+```
+
+O diagnóstico valida API, Nginx, sintaxe do backend, frontend, banco JSON e serviços VPN. A instalação somente informa sucesso quando as verificações críticas passam.
+
+## Fonte de verdade dos dados
+
+- Cadastros, planos, configurações, vouchers e pagamentos são persistidos na VPS.
+- O navegador não recria registros locais quando a API falha.
+- Clientes online são confirmados por `/ip hotspot active` no MikroTik.
+- O `radacct` do FreeRADIUS enriquece as sessões confirmadas, mas não determina sozinho quem está online.
+- Falhas de coleta são exibidas no painel e não são convertidas em métricas simuladas.
 
 ## Atualização automática por releases
 

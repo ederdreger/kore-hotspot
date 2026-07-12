@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
-import { Megaphone, Plus, Trash2, Edit, RefreshCw, Play, Pause, Send, Users, Target, BarChart2 } from 'lucide-react';
+import { Megaphone, Plus, Trash2, Edit, RefreshCw, Play, Pause, Target } from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -63,7 +63,7 @@ export default function Campaigns() {
   };
 
   const handleLaunch = async (c) => {
-    await spedynet.entities.Campaign.update(c.id, { status: 'running', sent_count: Math.floor(Math.random() * 50) + 10 });
+    await spedynet.entities.Campaign.update(c.id, { status: 'running', sent_count: Number(c.sent_count || 0) });
     await spedynet.entities.AuditLog.create({ action: 'launch_campaign', entity_type: 'campaign', entity_id: c.id, entity_name: c.name, status: 'success', message: `Campanha "${c.name}" iniciada` });
     toast.success(`Campanha "${c.name}" iniciada!`);
     load();

@@ -40,15 +40,8 @@ export default function APMonitor() {
         throw new Error('Resposta vazia da função de polling');
       }
     } catch (err) {
-      // Fallback: simulate small variations to keep UI alive
       setPollError(err.message || 'Falha ao conectar aos equipamentos');
       setUsingSimulation(true);
-      setAPs(prev => prev.map(ap => ({
-        ...ap,
-        signalAvg: Math.max(-95, Math.min(-45, ap.signalAvg + Math.round((Math.random() - 0.5) * 4))),
-        utilization: Math.min(100, Math.max(0, ap.utilization + Math.round((Math.random() - 0.5) * 8))),
-        clients: Math.max(0, ap.clients + Math.round((Math.random() - 0.5) * 2)),
-      })));
     }
     setLastRefresh(new Date());
     setLoading(false);

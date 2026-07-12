@@ -1,0 +1,28 @@
+name: Validacao
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  aplicacao:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - name: Validar scripts Linux
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          bash -n scripts/install.sh
+          bash -n scripts/update.sh
+          bash -n scripts/doctor.sh
+          shellcheck -x scripts/install.sh scripts/update.sh scripts/doctor.sh scripts/provider-upsert.sh

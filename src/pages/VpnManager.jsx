@@ -4,7 +4,7 @@ import { useAuth } from '@/lib/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Network, Plus, Trash2, Shield, Settings, Copy, Check, TerminalSquare, AlertTriangle } from 'lucide-react';
+import { Network, Plus, Trash2, Shield, Copy, Check, TerminalSquare, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import VpnRealtimeMonitor from '@/components/dashboard/VpnRealtimeMonitor';
 

@@ -3,7 +3,7 @@ import { spedynet } from '@/api/spedynetClient';
 import { useAuth } from '@/lib/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Activity, Network, UserX, Loader2, RefreshCw } from 'lucide-react';
+import { Activity, Network, UserX, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function VpnRealtimeMonitor({ mikrotik }) {

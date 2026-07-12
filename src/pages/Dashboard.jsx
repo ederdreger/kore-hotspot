@@ -23,14 +23,16 @@ export default function Dashboard() {
   const [logs, setLogs] = useState([]);
   const [primaryMikrotik, setPrimaryMikrotik] = useState(null);
   const [onlineUsers, setOnlineUsers] = useState([]);
+  const [sessionsError, setSessionsError] = useState('');
   const [trafficData, setTrafficData] = useState([]);
   const [networkTotals, setNetworkTotals] = useState({ download: 0, upload: 0 });
   const [onlinePage, setOnlinePage] = useState(1);
   const onlinePageSize = 20;
 
   const loadRadiusData = useCallback(async () => {
-    const res = await spedynet.functions.invoke('radiusSessions', {}).catch(() => ({ data: { sessions: [] } }));
+    const res = await spedynet.functions.invoke('radiusSessions', {}).catch((error) => ({ data: { sessions: [], collection: { errors: [error.message] } } }));
     const sessions = res.data?.sessions || [];
+    setSessionsError((res.data?.collection?.errors || []).join(' | '));
     setOnlineUsers(sessions.map((s) => ({
       name: s.fullName && s.fullName !== '-' ? s.fullName : s.username,
       ip: s.framedIp,
@@ -110,9 +112,9 @@ export default function Dashboard() {
     <div className="space-y-6">
       {/* Stats Row */}
       <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
-        <StatCard title="Clientes Ativos" value={activeClients} subtitle={`${trialClients} em trial`} icon={Users} color="primary" onClick={() => navigate('/clients')} />
+        <StatCard title="Clientes Cadastrados" value={activeClients} subtitle={`${trialClients} em trial · status administrativo`} icon={Users} color="primary" onClick={() => navigate('/clients')} />
         <StatCard title="Prospectos" value={newProspects} subtitle="Cadastros recentes" icon={UserSearch} color="info" onClick={() => navigate('/prospects')} />
-        <StatCard title="Clientes Online" value={onlineUsers.length} subtitle="Sessões ativas no MikroTik" icon={Wifi} color="success" onClick={() => navigate('/radius')} />
+        <StatCard title="Clientes Online" value={onlineUsers.length} subtitle={sessionsError || 'Sessões confirmadas no MikroTik'} icon={Wifi} color={sessionsError ? 'warning' : 'success'} onClick={() => navigate('/radius')} />
         <StatCard title="Download" value={`${networkTotals.download.toFixed(2)}M`} subtitle="Taxa atual" icon={TrendingDown} color="primary" onClick={() => navigate('/radius')} />
         <StatCard title="Upload" value={`${networkTotals.upload.toFixed(2)}M`} subtitle="Taxa atual" icon={TrendingUp} color="success" onClick={() => navigate('/radius')} />
         <StatCard title="Vouchers" value={availableVouchers} subtitle="Disponíveis" icon={Ticket} color="warning" onClick={() => navigate('/vouchers')} />
@@ -192,7 +194,7 @@ export default function Dashboard() {
       {/* Advanced Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <ConversionFunnelChart prospects={prospects} clients={clients} />
-        <BandwidthByPlanChart plans={plans} clients={clients} />
+        <BandwidthByPlanChart plans={plans} sessions={onlineUsers} />
       </div>
 
       {/* Financial Summary Row */}

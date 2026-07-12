@@ -1,5 +1,4 @@
-import { AlertTriangle, Users, Radio, Signal, ChevronRight } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Users, Radio, Signal } from 'lucide-react';
 
 export default function APAlertPanel({ overloaded, interference, weakSignal, aps, onChangeChannel }) {
   const allAlerts = [

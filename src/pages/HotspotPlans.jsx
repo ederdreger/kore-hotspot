@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   Plus, Zap, Trash2, Edit, RefreshCw, ArrowDown, ArrowUp,
-  Clock, Wifi, Users, DollarSign, ChevronRight, CheckCircle, AlertCircle
+  Clock, Wifi, Users, DollarSign, CheckCircle
 } from 'lucide-react';
 
 const emptyForm = {
