@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 APP_NAME="Kore-HotSpot"
-SCRIPT_VERSION="v0.2.27"
+SCRIPT_VERSION="v0.2.28"
 REPO_URL="${REPO_URL:-https://github.com/ederdreger/kore-hotspot.git}"
 REPO_SLUG="${REPO_SLUG:-ederdreger/kore-hotspot}"
 BRANCH="${BRANCH:-main}"
@@ -115,7 +115,7 @@ conn %default
     keyingtries=1
     authby=secret
     ike=aes256-sha256-modp2048,aes256-sha1-modp2048,aes128-sha1-modp2048,aes256-sha256-modp1024,aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024,3des-md5-modp1024!
-    esp=aes256-sha256,aes256-sha1,aes192-sha1,aes128-sha256,aes128-sha1,3des-sha1!
+    esp=aes256-sha1-modp1024,aes192-sha1-modp1024,aes128-sha1-modp1024,aes256-sha1,aes192-sha1,aes128-sha1,3des-sha1-modp1024,3des-sha1!
     fragmentation=yes
     forceencaps=yes
     rekey=no
@@ -172,7 +172,6 @@ mtu 1400
 mru 1400
 nodefaultroute
 debug
-lock
 proxyarp
 connect-delay 5000
 lcp-echo-interval 30
