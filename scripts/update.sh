@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 APP_NAME="Kore-HotSpot"
-SCRIPT_VERSION="v0.2.24"
+SCRIPT_VERSION="v0.2.25"
 REPO_URL="${REPO_URL:-https://github.com/ederdreger/kore-hotspot.git}"
 REPO_SLUG="${REPO_SLUG:-ederdreger/kore-hotspot}"
 BRANCH="${BRANCH:-main}"
@@ -10,9 +10,10 @@ RELEASE_CHANNEL="${RELEASE_CHANNEL:-latest}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/kore-hotspot-src}"
 WEB_DIR="${WEB_DIR:-/opt/kore-hotspot}"
 API_DIR="${API_DIR:-/opt/kore-hotspot-vpn-api}"
+CONFIG_DIR="${CONFIG_DIR:-/etc/kore-hotspot}"
 PUBLIC_HOST="${PUBLIC_HOST:-}"
 DOMAIN="${DOMAIN:-}"
-CERTBOT_EMAIL="${CERTBOT_EMAIL:-admin@spedynet.com.br}"
+CERTBOT_EMAIL="${CERTBOT_EMAIL:-}"
 PUBLIC_URL="${PUBLIC_URL:-}"
 API_URL="${API_URL:-}"
 API_TOKEN="${API_TOKEN:-kore-vpn-api-2026}"
@@ -29,6 +30,18 @@ log() { printf '\033[1;36m[%s]\033[0m %s\n' "$APP_NAME" "$*"; }
 fail() { printf '\033[1;31m[ERRO]\033[0m %s\n' "$*" >&2; exit 1; }
 
 [ "$(id -u)" -eq 0 ] || fail "Execute como root."
+
+load_install_config() {
+  local config_file="${CONFIG_DIR}/install.env"
+  if [ -f "$config_file" ]; then
+    [ -n "$DOMAIN" ] || DOMAIN="$(sed -n 's/^DOMAIN=//p' "$config_file" | tail -n 1)"
+    [ -n "$CERTBOT_EMAIL" ] || CERTBOT_EMAIL="$(sed -n 's/^CERTBOT_EMAIL=//p' "$config_file" | tail -n 1)"
+  fi
+  if [ -z "$DOMAIN" ] && [ -d /etc/letsencrypt/live ]; then
+    DOMAIN="$(find /etc/letsencrypt/live -mindepth 1 -maxdepth 1 -type d ! -name README -printf '%f\n' 2>/dev/null | head -n 1)"
+  fi
+  CERTBOT_EMAIL="${CERTBOT_EMAIL:-admin@spedynet.com.br}"
+}
 
 detect_public_host() {
   if [ -z "$PUBLIC_HOST" ]; then
@@ -47,7 +60,7 @@ backup_data() {
 install_vpn_packages() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
-  apt-get install -y strongswan xl2tpd ppp iptables iptables-persistent net-tools
+  apt-get install -y strongswan xl2tpd ppp iptables iptables-persistent net-tools certbot python3-certbot-nginx
 }
 
 configure_l2tp_base() {
@@ -302,11 +315,15 @@ EOF
 
 configure_nginx_site() {
   if command -v nginx >/dev/null 2>&1; then
-    cat > /etc/nginx/sites-available/kore-hotspot <<EOF
+    local target=/etc/nginx/sites-available/kore-hotspot
+    local candidate
+    candidate="$(mktemp)"
+    cp -a "$target" "${target}.backup.$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
+    cat > "$candidate" <<EOF
 server {
     listen 80 default_server;
     listen 8080 default_server;
-    server_name _;
+    server_name ${DOMAIN:-_};
     root ${WEB_DIR};
     index index.html;
 
@@ -324,10 +341,68 @@ server {
     }
 }
 EOF
+    if [ -n "$DOMAIN" ] && [ -s "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" ] && [ -s "/etc/letsencrypt/live/${DOMAIN}/privkey.pem" ]; then
+      # Porta 80 sempre deve levar ao HTTPS; 8080 permanece disponivel para diagnostico.
+      sed -i 's/    listen 80 default_server;//' "$candidate"
+      cat >> "$candidate" <<EOF
+
+server {
+    listen 80 default_server;
+    server_name ${DOMAIN};
+    return 301 https://\$host\$request_uri;
+}
+EOF
+      cat >> "$candidate" <<EOF
+
+server {
+    listen 443 ssl http2;
+    server_name ${DOMAIN};
+    root ${WEB_DIR};
+    index index.html;
+
+    ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    location / {
+        try_files \$uri \$uri/ /index.html;
+    }
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:8081;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOF
+    fi
+    cp "$candidate" "$target"
+    rm -f "$candidate"
     rm -f /etc/nginx/sites-enabled/default
-    ln -sf /etc/nginx/sites-available/kore-hotspot /etc/nginx/sites-enabled/kore-hotspot
-    nginx -t
+    ln -sf "$target" /etc/nginx/sites-enabled/kore-hotspot
+    if ! nginx -t; then
+      latest_backup="$(find /etc/nginx/sites-available -maxdepth 1 -name 'kore-hotspot.backup.*' -type f -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n 1 | cut -d' ' -f2-)"
+      [ -n "$latest_backup" ] && cp "$latest_backup" "$target"
+      nginx -t
+      fail "Nova configuracao Nginx rejeitada; configuracao anterior restaurada."
+    fi
   fi
+}
+
+repair_ssl() {
+  [ -n "$DOMAIN" ] || return 0
+  if [ ! -s "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" ] || [ ! -s "/etc/letsencrypt/live/${DOMAIN}/privkey.pem" ]; then
+    log "Certificado de ${DOMAIN} ausente; solicitando novamente ao Let's Encrypt"
+    systemctl reload nginx || systemctl restart nginx
+    certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "$CERTBOT_EMAIL" --redirect
+  fi
+  systemctl enable --now certbot.timer >/dev/null 2>&1 || true
+  certbot renew --quiet || log "Aviso: renovacao SSL pendente; o certificado atual foi preservado."
+  configure_nginx_site
 }
 
 configure_api_environment() {
@@ -349,6 +424,7 @@ restart_services() {
 
 main() {
   log "Iniciando atualizacao ${SCRIPT_VERSION}"
+  load_install_config
   backup_data
   detect_public_host
   install_vpn_packages
@@ -358,6 +434,7 @@ main() {
   install_vpn_diagnostics
   configure_l2tp_base
   configure_nginx_site
+  repair_ssl
   configure_nginx_no_cache
   configure_api_environment
   restart_services
