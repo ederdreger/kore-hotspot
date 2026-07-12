@@ -154,6 +154,19 @@ function run(command, args, timeout = 15000) {
   });
 }
 
+async function runSshWithRetry(args, timeout = 15000, attempts = 3) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await run('ssh', args, timeout);
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) await new Promise(resolve => setTimeout(resolve, attempt * 1500));
+    }
+  }
+  throw lastError;
+}
+
 async function ensureSshKey() {
   fs.mkdirSync(KEY_DIR, { recursive: true, mode: 0o700 });
   if (!fs.existsSync(KEY_PATH) || !fs.existsSync(PUB_PATH)) {
@@ -1573,7 +1586,7 @@ async function ensureHotspotProfile({ host, port = '22', user = 'kore-api', plan
   if (!rate) return { profile, rate_limit: '' };
   const command = `:do { /ip hotspot user profile remove [find where name=${profile}] } on-error={}; /ip hotspot user profile add name=${profile} rate-limit=${rate} shared-users=1; /ip hotspot user profile print detail where name=${profile}`;
   await ensureSshKey();
-  const { stdout } = await run('ssh', ['-i', KEY_PATH, '-o', 'LogLevel=ERROR', '-o', 'IdentitiesOnly=yes', '-o', 'PreferredAuthentications=publickey', '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa', '-o', 'HostkeyAlgorithms=+ssh-rsa', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=8', '-p', String(port || '22'), `${user || 'kore-api'}@${host}`, command], 15000);
+  const { stdout } = await runSshWithRetry(['-i', KEY_PATH, '-o', 'LogLevel=ERROR', '-o', 'IdentitiesOnly=yes', '-o', 'PreferredAuthentications=publickey', '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa', '-o', 'HostkeyAlgorithms=+ssh-rsa', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=8', '-p', String(port || '22'), `${user || 'kore-api'}@${host}`, command], 15000);
   return { profile, rate_limit: rate, raw: stdout };
 }
 
@@ -1601,7 +1614,7 @@ async function createHotspotUser({ host, port = '22', user = 'kore-api', usernam
   ].filter(Boolean).join('; ');
 
   await ensureSshKey();
-  const { stdout } = await run('ssh', ['-i', KEY_PATH, '-o', 'LogLevel=ERROR', '-o', 'IdentitiesOnly=yes', '-o', 'PreferredAuthentications=publickey', '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa', '-o', 'HostkeyAlgorithms=+ssh-rsa', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=8', '-p', String(port || '22'), `${user || 'kore-api'}@${host}`, command], 15000);
+  const { stdout } = await runSshWithRetry(['-i', KEY_PATH, '-o', 'LogLevel=ERROR', '-o', 'IdentitiesOnly=yes', '-o', 'PreferredAuthentications=publickey', '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa', '-o', 'HostkeyAlgorithms=+ssh-rsa', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=8', '-p', String(port || '22'), `${user || 'kore-api'}@${host}`, command], 15000);
   return { authorized: true, mode: 'hotspot_user', host, username: login, password: pass, profile, mac: cleanMac, ip: cleanIp, minutes: ttlMinutes, expires: !permanent, scheduler: permanent ? null : schedulerName, ...profileResult, raw: stdout };
 }
 
