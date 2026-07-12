@@ -164,13 +164,17 @@ EOF
   fi
 
   systemctl daemon-reload
-  systemctl enable --now xl2tpd
-  if systemctl list-unit-files | grep -q '^strongswan-starter\.service'; then
-    systemctl enable --now strongswan-starter
-    systemctl restart strongswan-starter
+  systemctl enable --now xl2tpd || systemctl restart xl2tpd || true
+  if systemctl cat strongswan-starter >/dev/null 2>&1; then
+    systemctl enable --now strongswan-starter || true
+    systemctl restart strongswan-starter || true
+  elif systemctl cat strongswan >/dev/null 2>&1; then
+    systemctl enable --now strongswan || true
+    systemctl restart strongswan || true
+  elif command -v ipsec >/dev/null 2>&1; then
+    ipsec restart || true
   else
-    systemctl enable --now strongswan
-    systemctl restart strongswan
+    log "Aviso: strongSwan instalado sem servico systemd detectado; verifique pacote strongswan-starter."
   fi
   systemctl restart xl2tpd
 }
@@ -186,6 +190,7 @@ echo
 echo "--- Serviços ---"
 systemctl --no-pager --full status xl2tpd || true
 systemctl --no-pager --full status strongswan-starter || systemctl --no-pager --full status strongswan || true
+command -v ipsec >/dev/null 2>&1 && ipsec statusall || true
 echo "--- Portas UDP locais ---"
 ss -lunp | grep -E ':(500|4500|1701)\b' || true
 echo "--- IPsec status ---"
@@ -349,8 +354,8 @@ main() {
   prepare_source
   install_updater_binary
   build_and_install
-  configure_l2tp_base
   install_vpn_diagnostics
+  configure_l2tp_base
   configure_nginx_site
   configure_nginx_no_cache
   configure_api_environment
