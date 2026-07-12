@@ -74,22 +74,32 @@ config setup
     uniqueids=no
     charondebug="ike 1, knl 1, cfg 0"
 
-conn kore-l2tp-psk
+conn %default
     keyexchange=ikev1
+    ikelifetime=60m
+    keylife=20m
+    rekeymargin=3m
+    keyingtries=1
     authby=secret
-    type=transport
+    ike=aes256-sha256-modp2048,aes256-sha1-modp2048,aes128-sha1-modp2048,aes256-sha256-modp1024,aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024,3des-md5-modp1024!
+    esp=aes256-sha256,aes256-sha1,aes192-sha1,aes128-sha256,aes128-sha1,3des-sha1!
     fragmentation=yes
     forceencaps=yes
     rekey=no
+    dpddelay=15
+    dpdtimeout=60
+    dpdaction=clear
+
+conn L2TP-PSK-NAT
+    rightsubnet=vhost:%priv
+    also=L2TP-PSK-noNAT
+
+conn L2TP-PSK-noNAT
+    type=transport
     left=%any
     leftprotoport=17/1701
     right=%any
     rightprotoport=17/%any
-    ike=aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024!
-    esp=aes256-sha1,aes128-sha1,3des-sha1!
-    dpddelay=30
-    dpdtimeout=120
-    dpdaction=clear
     auto=add
 EOF
 
