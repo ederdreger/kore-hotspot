@@ -15,6 +15,9 @@ CERTBOT_EMAIL="${CERTBOT_EMAIL:-admin@spedynet.com.br}"
 ENABLE_SSL="${ENABLE_SSL:-auto}"
 API_TOKEN="${API_TOKEN:-}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-Admin12345}"
+VPN_LOCAL_IP="${VPN_LOCAL_IP:-10.255.255.1}"
+VPN_IP_RANGE="${VPN_IP_RANGE:-10.255.255.2-10.255.255.254}"
+VPN_IPSEC_SECRET="${VPN_IPSEC_SECRET:-korevpn123}"
 TENANT_ID="${TENANT_ID:-default}"
 MULTI_TENANT="${MULTI_TENANT:-true}"
 KORE_SAAS_MP_ACCESS_TOKEN="${KORE_SAAS_MP_ACCESS_TOKEN:-}"
@@ -209,7 +212,7 @@ EOF
 }
 
 configure_l2tp_base() {
-  log "Preparando pacotes VPN L2TP/IPsec"
+  log "Configurando servidor VPN L2TP/IPsec"
   sysctl -w net.ipv4.ip_forward=1 >/dev/null
   cat > /etc/sysctl.d/99-kore-hotspot.conf <<EOF
 net.ipv4.ip_forward = 1
@@ -217,7 +220,106 @@ net.ipv4.conf.all.accept_redirects = 0
 net.ipv4.conf.all.send_redirects = 0
 net.ipv4.conf.default.accept_redirects = 0
 net.ipv4.conf.default.send_redirects = 0
+net.ipv4.conf.all.rp_filter = 0
+net.ipv4.conf.default.rp_filter = 0
 EOF
+  sysctl --system >/dev/null || true
+
+  mkdir -p /etc/ipsec.d /etc/xl2tpd /etc/ppp
+  cp -a /etc/ipsec.conf "/etc/ipsec.conf.kore-backup.$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
+  cp -a /etc/ipsec.secrets "/etc/ipsec.secrets.kore-backup.$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
+  cp -a /etc/xl2tpd/xl2tpd.conf "/etc/xl2tpd/xl2tpd.conf.kore-backup.$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
+  cp -a /etc/ppp/options.xl2tpd "/etc/ppp/options.xl2tpd.kore-backup.$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
+
+  cat > /etc/ipsec.conf <<EOF
+config setup
+    uniqueids=no
+
+conn kore-l2tp-psk
+    keyexchange=ikev1
+    authby=secret
+    type=transport
+    left=%any
+    leftprotoport=17/1701
+    right=%any
+    rightprotoport=17/%any
+    ike=aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024!
+    esp=aes256-sha1,aes128-sha1,3des-sha1!
+    dpddelay=30
+    dpdtimeout=120
+    dpdaction=clear
+    auto=add
+EOF
+
+  cat > /etc/ipsec.secrets <<EOF
+%any %any : PSK "${VPN_IPSEC_SECRET}"
+EOF
+  chmod 600 /etc/ipsec.secrets
+
+  cat > /etc/xl2tpd/xl2tpd.conf <<EOF
+[global]
+port = 1701
+auth file = /etc/ppp/chap-secrets
+
+[lns default]
+ip range = ${VPN_IP_RANGE}
+local ip = ${VPN_LOCAL_IP}
+require authentication = yes
+name = kore-hotspot-vpn
+pppoptfile = /etc/ppp/options.xl2tpd
+length bit = yes
+EOF
+
+  cat > /etc/ppp/options.xl2tpd <<EOF
+ipcp-accept-local
+ipcp-accept-remote
+refuse-pap
+refuse-chap
+refuse-mschap
+require-mschap-v2
+ms-dns 1.1.1.1
+ms-dns 8.8.8.8
+noccp
+auth
+hide-password
+idle 1800
+mtu 1400
+mru 1400
+nodefaultroute
+debug
+lock
+proxyarp
+connect-delay 5000
+lcp-echo-interval 30
+lcp-echo-failure 4
+EOF
+
+  touch /etc/ppp/chap-secrets
+  chmod 600 /etc/ppp/chap-secrets
+
+  iptables -C INPUT -p udp --dport 500 -j ACCEPT 2>/dev/null || iptables -I INPUT -p udp --dport 500 -j ACCEPT
+  iptables -C INPUT -p udp --dport 4500 -j ACCEPT 2>/dev/null || iptables -I INPUT -p udp --dport 4500 -j ACCEPT
+  iptables -C INPUT -p udp --dport 1701 -j ACCEPT 2>/dev/null || iptables -I INPUT -p udp --dport 1701 -j ACCEPT
+  iptables -C INPUT -p esp -j ACCEPT 2>/dev/null || iptables -I INPUT -p esp -j ACCEPT
+  if command -v netfilter-persistent >/dev/null 2>&1; then
+    netfilter-persistent save >/dev/null || true
+  fi
+  if command -v ufw >/dev/null 2>&1 && ufw status | grep -qi active; then
+    ufw allow 500/udp >/dev/null || true
+    ufw allow 4500/udp >/dev/null || true
+    ufw allow 1701/udp >/dev/null || true
+  fi
+
+  systemctl daemon-reload
+  systemctl enable --now xl2tpd
+  if systemctl list-unit-files | grep -q '^strongswan-starter\.service'; then
+    systemctl enable --now strongswan-starter
+    systemctl restart strongswan-starter
+  else
+    systemctl enable --now strongswan
+    systemctl restart strongswan
+  fi
+  systemctl restart xl2tpd
 }
 
 install_updater() {
@@ -242,6 +344,9 @@ PUBLIC_URL=${PUBLIC_URL}
 API_URL=${API_URL}
 API_TOKEN=${API_TOKEN}
 ADMIN_PASSWORD=${ADMIN_PASSWORD}
+VPN_LOCAL_IP=${VPN_LOCAL_IP}
+VPN_IP_RANGE=${VPN_IP_RANGE}
+VPN_IPSEC_SECRET=${VPN_IPSEC_SECRET}
 TENANT_ID=${TENANT_ID}
 MULTI_TENANT=${MULTI_TENANT}
 KORE_SAAS_MP_ACCESS_TOKEN=${KORE_SAAS_MP_ACCESS_TOKEN}
