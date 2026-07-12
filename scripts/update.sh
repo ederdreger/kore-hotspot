@@ -271,6 +271,17 @@ EOF
   chown -R root:root "$WEB_DIR" "$API_DIR"
 }
 
+install_updater_binary() {
+  if [ -f "$INSTALL_DIR/scripts/update.sh" ]; then
+    cp "$INSTALL_DIR/scripts/update.sh" /usr/local/bin/kore-hotspot-update
+    chmod +x /usr/local/bin/kore-hotspot-update
+  fi
+  if [ -f "$INSTALL_DIR/scripts/provider-upsert.sh" ]; then
+    cp "$INSTALL_DIR/scripts/provider-upsert.sh" /usr/local/bin/kore-provider-upsert
+    chmod +x /usr/local/bin/kore-provider-upsert
+  fi
+}
+
 configure_nginx_no_cache() {
   if command -v nginx >/dev/null 2>&1; then
     cat > /etc/nginx/conf.d/kore-hotspot-no-cache.conf <<'EOF'
@@ -336,6 +347,7 @@ main() {
   detect_public_host
   install_vpn_packages
   prepare_source
+  install_updater_binary
   build_and_install
   configure_l2tp_base
   install_vpn_diagnostics
