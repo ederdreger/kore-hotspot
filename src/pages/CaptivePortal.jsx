@@ -46,6 +46,10 @@ function redirectToInternet(linkOrig) {
 
 function loginToMikrotik(login, fallbackUrl) {
   const params = getPortalParams();
+  if (login?.active_login) {
+    redirectToInternet(fallbackUrl || params.linkOrig);
+    return;
+  }
   if (!params.linkLogin || !login?.username || !login?.password) {
     redirectToInternet(fallbackUrl || params.linkOrig);
     return;

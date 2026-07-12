@@ -1590,10 +1590,30 @@ async function ensureHotspotProfile({ host, port = '22', user = 'kore-api', plan
   return { profile, rate_limit: rate, raw: stdout };
 }
 
+async function resolvePendingHotspotHost({ host, port = '22', user = 'kore-api', mac, ip }) {
+  const requestedMac = normalizeMac(mac);
+  const requestedIp = normalizeClientIp(ip);
+  if (requestedMac && requestedIp) return { mac: requestedMac, ip: requestedIp };
+  await ensureSshKey();
+  const args = ['-i', KEY_PATH, '-o', 'LogLevel=ERROR', '-o', 'IdentitiesOnly=yes', '-o', 'PreferredAuthentications=publickey', '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa', '-o', 'HostkeyAlgorithms=+ssh-rsa', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=8', '-p', String(port || '22'), `${user || 'kore-api'}@${host}`, '/ip hotspot host print detail without-paging'];
+  const { stdout } = await runSshWithRetry(args, 15000);
+  const hosts = parseKeyValueRows(stdout).filter(row => row.address || row['mac-address']);
+  const exact = hosts.find(row =>
+    (requestedIp && normalizeClientIp(row.address) === requestedIp) ||
+    (requestedMac && normalizeMac(row['mac-address']) === requestedMac)
+  );
+  const selected = exact || (hosts.length === 1 ? hosts[0] : null);
+  return {
+    mac: requestedMac || normalizeMac(selected?.['mac-address']),
+    ip: requestedIp || normalizeClientIp(selected?.address)
+  };
+}
+
 async function createHotspotUser({ host, port = '22', user = 'kore-api', username, password, mac, ip, minutes = 30, permanent = false, plan = {} }) {
   if (!host) throw new Error('MikroTik nao definido para criar o usuario');
-  const cleanMac = normalizeMac(mac);
-  const cleanIp = normalizeClientIp(ip);
+  const pendingHost = await resolvePendingHotspotHost({ host, port, user, mac, ip });
+  const cleanMac = pendingHost.mac;
+  const cleanIp = pendingHost.ip;
   const login = hotspotCredential(username, `kore-${Date.now()}`);
   const pass = String(password || randomPassword()).replace(/"/g, '');
   const profileResult = await ensureHotspotProfile({ host, port, user, plan });
@@ -1607,15 +1627,15 @@ async function createHotspotUser({ host, port = '22', user = 'kore-api', usernam
     cleanIp ? `:do { /ip hotspot ip-binding remove [find where address="${cleanIp}"] } on-error={}` : '',
     `:do { /ip hotspot user remove [find where name=${login}] } on-error={}`,
     `/ip hotspot user add name=${login} password="${pass}" profile=${profile} server=kore-hotspot comment="Kore-HotSpot captive ${cleanMac || cleanIp || login}" disabled=no`,
-    cleanMac ? `:do { /ip hotspot host remove [find where mac-address="${cleanMac}"] } on-error={}` : '',
     cleanMac ? `:do { /ip hotspot active remove [find where mac-address="${cleanMac}"] } on-error={}` : '',
+    cleanIp ? `:do { /ip hotspot active login user=${login} password="${pass}" ip=${cleanIp} } on-error={ :error "Falha ao ativar usuario Hotspot" }` : '',
     scheduler.replace(/^; /, ''),
     `/ip hotspot user print detail where name=${login}`
   ].filter(Boolean).join('; ');
 
   await ensureSshKey();
   const { stdout } = await runSshWithRetry(['-i', KEY_PATH, '-o', 'LogLevel=ERROR', '-o', 'IdentitiesOnly=yes', '-o', 'PreferredAuthentications=publickey', '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa', '-o', 'HostkeyAlgorithms=+ssh-rsa', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=8', '-p', String(port || '22'), `${user || 'kore-api'}@${host}`, command], 15000);
-  return { authorized: true, mode: 'hotspot_user', host, username: login, password: pass, profile, mac: cleanMac, ip: cleanIp, minutes: ttlMinutes, expires: !permanent, scheduler: permanent ? null : schedulerName, ...profileResult, raw: stdout };
+  return { authorized: true, active_login: !!cleanIp, mode: 'hotspot_user', host, username: login, password: pass, profile, mac: cleanMac, ip: cleanIp, minutes: ttlMinutes, expires: !permanent, scheduler: permanent ? null : schedulerName, ...profileResult, raw: stdout };
 }
 
 async function authorizeHotspot({ host, port = '22', user = 'kore-api', mac, ip, minutes = 30, permanent = false, plan = null }) {
@@ -1812,6 +1832,13 @@ async function captiveRegister(payload = {}) {
     plan: selectedPlan || item
   });
 
+  if (authorization.mac || authorization.ip) {
+    item.mac_address = authorization.mac || item.mac_address;
+    item.ip_address = authorization.ip || item.ip_address;
+    item.updated_date = new Date().toISOString();
+    writeCaptiveDb([item, ...filtered.filter(existing => existing.id !== item.id && existing._id !== item._id)].slice(0, 1000));
+  }
+
   return { success: true, prospect: item, authorization, login: { username: item.radius_username, password: item.radius_password } };
 }
 
@@ -1916,7 +1943,17 @@ async function captiveClientLogin(payload = {}) {
     plan: selectedPlan || client
   });
 
-  return { success: true, client, plan: selectedPlan || null, authorization, login: { username: loginUser, password: loginPass } };
+  if (authorization.mac || authorization.ip) {
+    client = {
+      ...client,
+      mac_address: authorization.mac || client.mac_address,
+      ip_address: authorization.ip || client.ip_address,
+      updated_date: new Date().toISOString()
+    };
+    upsertById(ENTITY_FILES.clients, client);
+  }
+
+  return { success: true, client, plan: selectedPlan || null, authorization, login: { username: loginUser, password: loginPass, active_login: authorization.active_login } };
 }
 
 async function captiveVoucherLogin(payload = {}) {
