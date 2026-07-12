@@ -180,7 +180,7 @@ export default function VpnManager() {
   }, []);
 
   const getClientScript = (account) => {
-    const serverIp = globalVpnIp || '190.8.174.155';
+    const serverIp = globalVpnIp || window.location.hostname;
     return `# Limpeza de configs antigas
 :do { /interface l2tp-client remove [find name="l2tp-matriz"] } on-error={}
 :do { /ppp profile remove [find name="kore-vpn-profile"] } on-error={}

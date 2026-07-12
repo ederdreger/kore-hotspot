@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 APP_NAME="Kore-HotSpot"
-SCRIPT_VERSION="v0.2.24"
+SCRIPT_VERSION="v0.2.26"
 REPO_URL="${REPO_URL:-https://github.com/ederdreger/kore-hotspot.git}"
 REPO_SLUG="${REPO_SLUG:-ederdreger/kore-hotspot}"
 BRANCH="${BRANCH:-main}"
@@ -186,6 +186,23 @@ add_header Pragma "no-cache" always;
 add_header Expires "0" always;
 EOF
   nginx -t
+}
+
+migrate_public_endpoints() {
+  local settings_file="${API_DIR}/data/settings.json"
+  [ -f "$settings_file" ] || return 0
+  local tmp_file
+  tmp_file="$(mktemp)"
+  jq --arg host "$PUBLIC_HOST" --arg base "$PUBLIC_URL" '
+    map(
+      if .key == "vpn_server_host" then .value = $host
+      elif .key == "public_base_url" and ((.value // "") | test("190\\.8\\.174\\.155")) then .value = $base
+      else . end
+    )
+  ' "$settings_file" > "$tmp_file"
+  chown --reference="$settings_file" "$tmp_file" 2>/dev/null || true
+  chmod --reference="$settings_file" "$tmp_file" 2>/dev/null || true
+  mv "$tmp_file" "$settings_file"
 }
 
 configure_ssl() {
@@ -477,6 +494,7 @@ main() {
   prepare_source
   build_frontend
   install_backend
+  migrate_public_endpoints
   configure_nginx
   configure_nginx_no_cache
   start_services

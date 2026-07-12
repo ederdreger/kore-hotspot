@@ -23,7 +23,7 @@ const defaultSettings = {
   ixc_sync_interval_minutes: '15',
   // Mercado Pago
   mp_access_token: '',
-  public_base_url: 'http://190.8.174.155:8081',
+  public_base_url: window.location.origin,
   // Hotspot / Trial
   trial_default_duration_minutes: '30',
   trial_max_duration_minutes: '120',

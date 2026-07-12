@@ -107,7 +107,8 @@ function migrateLegacyFile(source, target) {
 }
 
 function hotspotLoginHtml() {
-  const portal = `${process.env.KORE_PUBLIC_URL || 'http://190.8.174.155:8080'}/captive-portal`;
+  const fallbackHost = PUBLIC_HOST ? `http://${PUBLIC_HOST}:8080` : 'http://127.0.0.1:8080';
+  const portal = `${process.env.KORE_PUBLIC_URL || fallbackHost}/captive-portal`;
   return `<!doctype html>
 <html>
 <head>
@@ -901,7 +902,8 @@ function summarizeIxcClient(cliente, cpf) {
 }
 
 function getPublicBaseUrl() {
-  return String(getSetting('public_base_url') || 'http://190.8.174.155:8081').replace(/\/+$/, '');
+  const fallback = process.env.KORE_PUBLIC_URL || (PUBLIC_HOST ? `http://${PUBLIC_HOST}:8081` : 'http://127.0.0.1:8081');
+  return String(getSetting('public_base_url') || fallback).replace(/\/+$/, '');
 }
 
 function upsertById(file, item) {
@@ -2329,7 +2331,7 @@ async function handleRequest(req, res) {
     if (req.method === 'GET' && req.url === '/api/ssh-key') {
       await ensureSshKey();
       const pub = fs.readFileSync(PUB_PATH, 'utf8').trim();
-      return send(res, 200, { public_key: pub, public_key_url: 'http://190.8.174.155:8081/public/kore-api.pub' });
+      return send(res, 200, { public_key: pub, public_key_url: `${getPublicBaseUrl()}/public/kore-api.pub` });
     }
     if (req.method === 'GET' && req.url === '/api/radius/status') return send(res, 200, await radiusStatus());
     if (req.method === 'GET' && req.url === '/api/radius/sessions') return send(res, 200, await radiusSessions());

@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 APP_NAME="Kore-HotSpot"
-SCRIPT_VERSION="v0.2.25"
+SCRIPT_VERSION="v0.2.26"
 REPO_URL="${REPO_URL:-https://github.com/ederdreger/kore-hotspot.git}"
 REPO_SLUG="${REPO_SLUG:-ederdreger/kore-hotspot}"
 BRANCH="${BRANCH:-main}"
@@ -55,6 +55,24 @@ backup_data() {
   if [ -d "$API_DIR/data" ]; then
     tar -czf "$BACKUP_DIR/data-$(date +%Y%m%d-%H%M%S).tar.gz" -C "$API_DIR" data keys 2>/dev/null || true
   fi
+}
+
+migrate_public_endpoints() {
+  local settings_file="${API_DIR}/data/settings.json"
+  [ -f "$settings_file" ] || return 0
+  local tmp_file
+  tmp_file="$(mktemp)"
+  jq --arg host "$PUBLIC_HOST" --arg base "$PUBLIC_URL" '
+    map(
+      if .key == "vpn_server_host" then .value = $host
+      elif .key == "public_base_url" and ((.value // "") | test("190\\.8\\.174\\.155")) then .value = $base
+      else . end
+    )
+  ' "$settings_file" > "$tmp_file"
+  chown --reference="$settings_file" "$tmp_file" 2>/dev/null || true
+  chmod --reference="$settings_file" "$tmp_file" 2>/dev/null || true
+  mv "$tmp_file" "$settings_file"
+  log "Endereco publico sincronizado no banco: ${PUBLIC_HOST}"
 }
 
 install_vpn_packages() {
@@ -431,6 +449,7 @@ main() {
   prepare_source
   install_updater_binary
   build_and_install
+  migrate_public_endpoints
   install_vpn_diagnostics
   configure_l2tp_base
   configure_nginx_site

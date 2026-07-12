@@ -47,7 +47,7 @@ O instalador detecta o IP público automaticamente, instala os pacotes necessár
 ## Instalação com parâmetros
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ederdreger/kore-hotspot/main/scripts/install.sh | sudo env PUBLIC_HOST=190.8.174.155 API_TOKEN="troque-este-token" bash
+curl -fsSL https://raw.githubusercontent.com/ederdreger/kore-hotspot/main/scripts/install.sh | sudo env PUBLIC_HOST=SEU_IP_PUBLICO API_TOKEN="troque-este-token" bash
 ```
 
 Variáveis úteis:
@@ -73,7 +73,7 @@ Antes de instalar, aponte um registro DNS `A` para o IP público da VPS.
 Exemplo:
 
 ```bash
-hotspot.seudominio.com.br -> 190.8.174.155
+hotspot.seudominio.com.br -> SEU_IP_PUBLICO
 ```
 
 Depois execute:

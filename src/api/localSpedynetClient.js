@@ -40,7 +40,7 @@ const ENTITY_DEFAULTS = {
       id: 'setting_vpn_server_host',
       _id: 'setting_vpn_server_host',
       key: 'vpn_server_host',
-      value: '190.8.174.155',
+      value: window.location.hostname,
       category: 'system',
       label: 'VPN Server Host',
       created_date: new Date().toISOString(),
