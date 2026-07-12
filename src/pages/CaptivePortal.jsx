@@ -245,42 +245,23 @@ export default function CaptivePortal() {
     if (!String(clientIdentifier || '').trim()) return;
     setLoading(true);
     try {
-      const client = findClient(clientIdentifier);
       const params = getPortalParams();
-      if (client) {
-        setActiveClient(client);
-        const res = await spedynet.functions.invoke('captiveClientLogin', {
-          identifier: clientIdentifier,
-          mac: params.mac,
-          ip: params.ip,
-          link_orig: settings.captive_redirect_url || params.linkOrig
-        });
-        setHotspotLogin(res.data?.login || res.data?.authorization);
-        setStage('welcome');
-        return;
-      }
-
-      if (digits(clientIdentifier).length >= 11) {
-        const ixc = await spedynet.functions.invoke('ixcConsultaCliente', { cpf: clientIdentifier }).catch(() => ({ data: { found: false } }));
-        if (ixc.data?.found) {
-          const res = await spedynet.functions.invoke('captiveClientLogin', {
-            identifier: clientIdentifier,
-            plan_id: settings.captive_vip_plan_id || '',
-            mac: params.mac,
-            ip: params.ip,
-            link_orig: settings.captive_redirect_url || params.linkOrig
-          });
-          setHotspotLogin(res.data?.login || res.data?.authorization);
-          setActiveClient(res.data?.client || { name: ixc.data?.summary?.name || ixc.data?.name || 'Cliente' });
-          setStage('welcome');
-          return;
-        }
-      }
-
-      toast.error('Cliente nao encontrado. Continue em Nao sou cliente para fazer o primeiro acesso.');
-      setStage('phone');
+      const res = await spedynet.functions.invoke('captiveClientLogin', {
+        identifier: clientIdentifier,
+        plan_id: settings.captive_vip_plan_id || '',
+        mac: params.mac,
+        ip: params.ip,
+        link_orig: settings.captive_redirect_url || params.linkOrig
+      });
+      setHotspotLogin(res.data?.login || res.data?.authorization);
+      setActiveClient(res.data?.client || findClient(clientIdentifier) || { name: 'Cliente' });
+      setStage('welcome');
     } catch (error) {
-      toast.error(error.message || 'Nao foi possivel liberar cliente.');
+      const message = error.message || 'Nao foi possivel liberar cliente.';
+      toast.error(message);
+      if (/nao encontrado no sistema nem no IXC/i.test(message)) {
+        setNotice('CPF nao localizado no IXC. Use Nao sou cliente para realizar o cadastro.');
+      }
     } finally {
       setLoading(false);
     }

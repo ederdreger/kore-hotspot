@@ -409,6 +409,18 @@ function getMikrotikDevices() {
     .filter(item => item?.host);
 }
 
+function resolveMikrotikTarget(payload = {}, item = {}) {
+  const devices = getMikrotikDevices();
+  const preferred = devices.find(device => device.id === payload.mikrotik_id || device.id === item.mikrotik_id) || devices[0];
+  const host = payload.mikrotik_host || item.mikrotik_host || preferred?.host || preferred?.vpn_remote_ip || preferred?.remote_ip;
+  if (!host) throw new Error('Nenhum MikroTik cadastrado para liberar o acesso');
+  return {
+    host,
+    port: payload.mikrotik_port || item.mikrotik_port || preferred?.port || '22',
+    user: payload.mikrotik_user || item.mikrotik_user || preferred?.user || 'kore-api'
+  };
+}
+
 async function mikrotikHotspotSessions() {
   const devices = getMikrotikDevices();
   if (!devices.length) return [];
@@ -1554,7 +1566,8 @@ function randomPassword() {
   return `Kore${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-4)}`;
 }
 
-async function ensureHotspotProfile({ host = '10.255.255.3', port = '22', user = 'kore-api', plan = {} }) {
+async function ensureHotspotProfile({ host, port = '22', user = 'kore-api', plan = {} }) {
+  if (!host) throw new Error('MikroTik nao definido para criar o perfil');
   const profile = hotspotProfileName(plan);
   const rate = planRateLimit(plan);
   if (!rate) return { profile, rate_limit: '' };
@@ -1564,7 +1577,8 @@ async function ensureHotspotProfile({ host = '10.255.255.3', port = '22', user =
   return { profile, rate_limit: rate, raw: stdout };
 }
 
-async function createHotspotUser({ host = '10.255.255.3', port = '22', user = 'kore-api', username, password, mac, ip, minutes = 30, permanent = false, plan = {} }) {
+async function createHotspotUser({ host, port = '22', user = 'kore-api', username, password, mac, ip, minutes = 30, permanent = false, plan = {} }) {
+  if (!host) throw new Error('MikroTik nao definido para criar o usuario');
   const cleanMac = normalizeMac(mac);
   const cleanIp = normalizeClientIp(ip);
   const login = hotspotCredential(username, `kore-${Date.now()}`);
@@ -1591,7 +1605,8 @@ async function createHotspotUser({ host = '10.255.255.3', port = '22', user = 'k
   return { authorized: true, mode: 'hotspot_user', host, username: login, password: pass, profile, mac: cleanMac, ip: cleanIp, minutes: ttlMinutes, expires: !permanent, scheduler: permanent ? null : schedulerName, ...profileResult, raw: stdout };
 }
 
-async function authorizeHotspot({ host = '10.255.255.3', port = '22', user = 'kore-api', mac, ip, minutes = 30, permanent = false, plan = null }) {
+async function authorizeHotspot({ host, port = '22', user = 'kore-api', mac, ip, minutes = 30, permanent = false, plan = null }) {
+  if (!host) throw new Error('MikroTik nao definido para autorizar o acesso');
   const cleanMac = normalizeMac(mac);
   const cleanIp = normalizeClientIp(ip);
   if (!cleanMac && !cleanIp) return { authorized: false, reason: 'mac/ip ausentes' };
@@ -1619,7 +1634,8 @@ async function authorizeHotspot({ host = '10.255.255.3', port = '22', user = 'ko
   return { authorized: true, host, mac: cleanMac, ip: cleanIp, minutes: ttlMinutes, expires: !permanent, scheduler: permanent ? null : schedulerName, queue: rateLimit ? queueName : null, rate_limit: rateLimit, raw: stdout };
 }
 
-async function removeHotspotAuthorization({ host = '10.255.255.3', port = '22', user = 'kore-api', mac, ip }) {
+async function removeHotspotAuthorization({ host, port = '22', user = 'kore-api', mac, ip }) {
+  if (!host) throw new Error('MikroTik nao definido para remover o acesso');
   const cleanMac = normalizeMac(mac);
   const cleanIp = normalizeClientIp(ip);
   if (!cleanMac && !cleanIp) return { removed: false, reason: 'mac/ip ausentes' };
@@ -1644,7 +1660,7 @@ async function removeHotspotAuthorization({ host = '10.255.255.3', port = '22', 
 
 async function cleanupMikrotikAccess(item = {}) {
   const devices = getMikrotikDevices();
-  const targets = devices.length ? devices : [{ host: item.mikrotik_host || '10.255.255.3', port: item.mikrotik_port || '22', user: item.mikrotik_user || 'kore-api' }];
+  const targets = devices.length ? devices : (item.mikrotik_host ? [{ host: item.mikrotik_host, port: item.mikrotik_port || '22', user: item.mikrotik_user || 'kore-api' }] : []);
   const cleanMac = normalizeMac(item.mac_address || item.mac);
   const cleanIp = normalizeClientIp(item.ip_address || item.ip);
   const login = hotspotCredential(item.radius_username || item.username || item.email || item.cpf || '', '');
@@ -1696,10 +1712,9 @@ async function setVipAccess(payload = {}) {
   const mac = payload.mac || payload.mac_address || item.mac_address;
   const ip = payload.ip || payload.ip_address || item.ip_address;
   const nowIso = new Date().toISOString();
+  const target = resolveMikrotikTarget(payload, item);
   const mikrotik = {
-    host: payload.mikrotik_host || item.mikrotik_host || '10.255.255.3',
-    port: payload.mikrotik_port || item.mikrotik_port || '22',
-    user: payload.mikrotik_user || item.mikrotik_user || 'kore-api',
+    ...target,
     mac,
     ip
   };
@@ -1773,17 +1788,16 @@ async function captiveRegister(payload = {}) {
   filtered.unshift(item);
   writeCaptiveDb(filtered.slice(0, 1000));
 
+  const mikrotik = resolveMikrotikTarget(payload, item);
   const authorization = await createHotspotUser({
-    host: payload.mikrotik_host || '10.255.255.3',
-    port: payload.mikrotik_port || '22',
-    user: payload.mikrotik_user || 'kore-api',
+    ...mikrotik,
     username: item.radius_username,
     password: item.radius_password,
     mac: item.mac_address,
     ip: item.ip_address,
     minutes: item.trial_duration_minutes,
     plan: selectedPlan || item
-  }).catch(error => ({ authorized: false, error: error.message }));
+  });
 
   return { success: true, prospect: item, authorization, login: { username: item.radius_username, password: item.radius_password } };
 }
@@ -1877,10 +1891,9 @@ async function captiveClientLogin(payload = {}) {
   client = { ...client, radius_username: loginUser, radius_password: loginPass, mac_address: normalizeMac(payload.mac) || client.mac_address || '', ip_address: normalizeClientIp(payload.ip) || client.ip_address || '', updated_date: new Date().toISOString() };
   upsertById(ENTITY_FILES.clients, client);
 
+  const mikrotik = resolveMikrotikTarget(payload, client);
   const authorization = await createHotspotUser({
-    host: payload.mikrotik_host || '10.255.255.3',
-    port: payload.mikrotik_port || '22',
-    user: payload.mikrotik_user || 'kore-api',
+    ...mikrotik,
     username: loginUser,
     password: loginPass,
     mac: payload.mac,
@@ -1888,7 +1901,7 @@ async function captiveClientLogin(payload = {}) {
     minutes: Number(payload.minutes || 1440),
     permanent: true,
     plan: selectedPlan || client
-  }).catch(error => ({ authorized: false, error: error.message }));
+  });
 
   return { success: true, client, plan: selectedPlan || null, authorization, login: { username: loginUser, password: loginPass } };
 }
@@ -1917,10 +1930,9 @@ async function captiveVoucherLogin(payload = {}) {
   ));
   writeJson(ENTITY_FILES.vouchers, updated);
 
+  const mikrotik = resolveMikrotikTarget(payload, voucher);
   const authorization = await createHotspotUser({
-    host: payload.mikrotik_host || '10.255.255.3',
-    port: payload.mikrotik_port || '22',
-    user: payload.mikrotik_user || 'kore-api',
+    ...mikrotik,
     username: hotspotCredential(`voucher-${code}`),
     password: randomPassword(),
     mac: payload.mac,
@@ -1959,10 +1971,9 @@ async function activateFreePlan(payload = {}) {
   client = { ...client, radius_username: loginUser, radius_password: loginPass };
   upsertById(ENTITY_FILES.clients, client);
 
+  const mikrotik = resolveMikrotikTarget(payload, client);
   const authorization = await createHotspotUser({
-    host: payload.mikrotik_host || '10.255.255.3',
-    port: payload.mikrotik_port || '22',
-    user: payload.mikrotik_user || 'kore-api',
+    ...mikrotik,
     username: loginUser,
     password: loginPass,
     mac: payload.mac || payload.mac_address || client.mac_address,
@@ -2116,10 +2127,9 @@ async function provisionPaidPlan({ payment, mpPayment = null }) {
   client = { ...client, radius_username: loginUser, radius_password: loginPass };
   upsertById(ENTITY_FILES.clients, client);
 
+  const mikrotik = resolveMikrotikTarget(payment, client);
   const authorization = await createHotspotUser({
-    host: payment.mikrotik_host || '10.255.255.3',
-    port: payment.mikrotik_port || '22',
-    user: payment.mikrotik_user || 'kore-api',
+    ...mikrotik,
     username: loginUser,
     password: loginPass,
     mac: payment.mac_address || client.mac_address,
