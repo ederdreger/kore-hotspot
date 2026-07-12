@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 APP_NAME="Kore-HotSpot"
-SCRIPT_VERSION="v0.2.26"
+SCRIPT_VERSION="v0.2.27"
 REPO_URL="${REPO_URL:-https://github.com/ederdreger/kore-hotspot.git}"
 REPO_SLUG="${REPO_SLUG:-ederdreger/kore-hotspot}"
 BRANCH="${BRANCH:-main}"
@@ -58,21 +58,22 @@ backup_data() {
 }
 
 migrate_public_endpoints() {
-  local settings_file="${API_DIR}/data/settings.json"
-  [ -f "$settings_file" ] || return 0
-  local tmp_file
-  tmp_file="$(mktemp)"
-  jq --arg host "$PUBLIC_HOST" --arg base "$PUBLIC_URL" '
-    map(
-      if .key == "vpn_server_host" then .value = $host
-      elif .key == "public_base_url" and ((.value // "") | test("190\\.8\\.174\\.155")) then .value = $base
-      else . end
-    )
-  ' "$settings_file" > "$tmp_file"
-  chown --reference="$settings_file" "$tmp_file" 2>/dev/null || true
-  chmod --reference="$settings_file" "$tmp_file" 2>/dev/null || true
-  mv "$tmp_file" "$settings_file"
-  log "Endereco publico sincronizado no banco: ${PUBLIC_HOST}"
+  local settings_file tmp_file migrated=0
+  while IFS= read -r -d '' settings_file; do
+    tmp_file="$(mktemp)"
+    jq --arg host "$PUBLIC_HOST" --arg base "$PUBLIC_URL" '
+      map(
+        if .key == "vpn_server_host" then .value = $host
+        elif .key == "public_base_url" and ((.value // "") | test("190\\.8\\.174\\.155")) then .value = $base
+        else . end
+      )
+    ' "$settings_file" > "$tmp_file"
+    chown --reference="$settings_file" "$tmp_file" 2>/dev/null || true
+    chmod --reference="$settings_file" "$tmp_file" 2>/dev/null || true
+    mv "$tmp_file" "$settings_file"
+    migrated=$((migrated + 1))
+  done < <(find "${API_DIR}/data" -type f -name settings.json -print0 2>/dev/null)
+  log "Endereco publico ${PUBLIC_HOST} sincronizado em ${migrated} banco(s)"
 }
 
 install_vpn_packages() {
