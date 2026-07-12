@@ -222,8 +222,10 @@ export default function CaptivePortal() {
           ip: params.ip,
           link_orig: settings.captive_redirect_url || params.linkOrig
         });
-        setHotspotLogin(res.data?.login || res.data?.authorization);
+        const login = res.data?.login || res.data?.authorization;
+        setHotspotLogin(login);
         setStage('welcome');
+        loginToMikrotik(login, settings.captive_redirect_url || params.linkOrig);
         return;
       }
 
@@ -257,9 +259,11 @@ export default function CaptivePortal() {
         ip: params.ip,
         link_orig: settings.captive_redirect_url || params.linkOrig
       });
-      setHotspotLogin(res.data?.login || res.data?.authorization);
+      const login = res.data?.login || res.data?.authorization;
+      setHotspotLogin(login);
       setActiveClient(res.data?.client || findClient(clientIdentifier) || { name: 'Cliente' });
       setStage('welcome');
+      loginToMikrotik(login, settings.captive_redirect_url || params.linkOrig);
     } catch (error) {
       const message = error.message || 'Nao foi possivel liberar cliente.';
       toast.error(message);

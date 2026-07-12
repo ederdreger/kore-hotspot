@@ -1614,6 +1614,9 @@ async function createHotspotUser({ host, port = '22', user = 'kore-api', usernam
   const pendingHost = await resolvePendingHotspotHost({ host, port, user, mac, ip });
   const cleanMac = pendingHost.mac;
   const cleanIp = pendingHost.ip;
+  if (!cleanMac && !cleanIp) {
+    throw new Error('Dispositivo nao identificado pelo Hotspot. Reconecte ao Wi-Fi e abra novamente a pagina de login');
+  }
   const login = hotspotCredential(username, `kore-${Date.now()}`);
   const pass = String(password || randomPassword()).replace(/"/g, '');
   const profileResult = await ensureHotspotProfile({ host, port, user, plan });
@@ -1629,6 +1632,7 @@ async function createHotspotUser({ host, port = '22', user = 'kore-api', usernam
     `/ip hotspot user add name=${login} password="${pass}" profile=${profile} server=kore-hotspot comment="Kore-HotSpot captive ${cleanMac || cleanIp || login}" disabled=no`,
     cleanMac ? `:do { /ip hotspot active remove [find where mac-address="${cleanMac}"] } on-error={}` : '',
     cleanIp ? `:do { /ip hotspot active login user=${login} password="${pass}" ip=${cleanIp} } on-error={ :error "Falha ao ativar usuario Hotspot" }` : '',
+    cleanIp ? `:delay 1s; :if ([:len [/ip hotspot active find where user=${login}]] = 0) do={ :error "Usuario criado, mas a sessao Hotspot nao foi ativada" }` : '',
     scheduler.replace(/^; /, ''),
     `/ip hotspot user print detail where name=${login}`
   ].filter(Boolean).join('; ');
@@ -1936,8 +1940,8 @@ async function captiveClientLogin(payload = {}) {
     ...mikrotik,
     username: loginUser,
     password: loginPass,
-    mac: payload.mac,
-    ip: payload.ip,
+    mac: payload.mac || client.mac_address,
+    ip: payload.ip || client.ip_address,
     minutes: Number(payload.minutes || 1440),
     permanent: true,
     plan: selectedPlan || client
