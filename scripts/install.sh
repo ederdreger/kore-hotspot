@@ -15,6 +15,7 @@ CERTBOT_EMAIL="${CERTBOT_EMAIL:-admin@spedynet.com.br}"
 ENABLE_SSL="${ENABLE_SSL:-auto}"
 API_TOKEN="${API_TOKEN:-}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-Admin12345}"
+SSH_PORT="${SSH_PORT:-}"
 VPN_LOCAL_IP="${VPN_LOCAL_IP:-10.255.255.1}"
 VPN_IP_RANGE="${VPN_IP_RANGE:-10.255.255.2-10.255.255.254}"
 VPN_IPSEC_SECRET="${VPN_IPSEC_SECRET:-korevpn123}"
@@ -234,11 +235,15 @@ EOF
   cat > /etc/ipsec.conf <<EOF
 config setup
     uniqueids=no
+    charondebug="ike 1, knl 1, cfg 0"
 
 conn kore-l2tp-psk
     keyexchange=ikev1
     authby=secret
     type=transport
+    fragmentation=yes
+    forceencaps=yes
+    rekey=no
     left=%any
     leftprotoport=17/1701
     right=%any
@@ -305,6 +310,7 @@ EOF
     netfilter-persistent save >/dev/null || true
   fi
   if command -v ufw >/dev/null 2>&1 && ufw status | grep -qi active; then
+    if [ -n "$SSH_PORT" ]; then ufw allow "${SSH_PORT}/tcp" >/dev/null || true; fi
     ufw allow 500/udp >/dev/null || true
     ufw allow 4500/udp >/dev/null || true
     ufw allow 1701/udp >/dev/null || true
@@ -320,6 +326,35 @@ EOF
     systemctl restart strongswan
   fi
   systemctl restart xl2tpd
+}
+
+install_vpn_diagnostics() {
+  cat > /usr/local/bin/kore-vpn-diagnose <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "=== Kore-HotSpot VPN Diagnose ==="
+echo "--- IP público detectado ---"
+curl -fsS --max-time 5 https://api.ipify.org || true
+echo
+echo "--- Serviços ---"
+systemctl --no-pager --full status xl2tpd || true
+systemctl --no-pager --full status strongswan-starter || systemctl --no-pager --full status strongswan || true
+echo "--- Portas UDP locais ---"
+ss -lunp | grep -E ':(500|4500|1701)\b' || true
+echo "--- IPsec status ---"
+ipsec statusall || true
+echo "--- Arquivos principais ---"
+sed -n '1,220p' /etc/ipsec.conf || true
+sed -n '1,220p' /etc/xl2tpd/xl2tpd.conf || true
+sed -n '1,220p' /etc/ppp/options.xl2tpd || true
+echo "--- Usuarios L2TP cadastrados ---"
+awk 'NF && $1 !~ /^#/ {print $1, $2, "***", $4}' /etc/ppp/chap-secrets 2>/dev/null || true
+echo "--- Logs recentes ---"
+journalctl --no-pager -n 180 -u xl2tpd || true
+journalctl --no-pager -n 180 -u strongswan-starter || journalctl --no-pager -n 180 -u strongswan || true
+journalctl --no-pager -n 240 | grep -iE 'charon|ipsec|xl2tpd|pppd|l2tp' || true
+EOF
+  chmod +x /usr/local/bin/kore-vpn-diagnose
 }
 
 install_updater() {
@@ -344,6 +379,7 @@ PUBLIC_URL=${PUBLIC_URL}
 API_URL=${API_URL}
 API_TOKEN=${API_TOKEN}
 ADMIN_PASSWORD=${ADMIN_PASSWORD}
+SSH_PORT=${SSH_PORT}
 VPN_LOCAL_IP=${VPN_LOCAL_IP}
 VPN_IP_RANGE=${VPN_IP_RANGE}
 VPN_IPSEC_SECRET=${VPN_IPSEC_SECRET}
@@ -430,6 +466,7 @@ main() {
   start_services
   configure_ssl
   configure_l2tp_base
+  install_vpn_diagnostics
   install_updater
   start_services
   print_summary
