@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 APP_NAME="Kore-HotSpot"
+SCRIPT_VERSION="v0.2.24"
 REPO_URL="${REPO_URL:-https://github.com/ederdreger/kore-hotspot.git}"
 REPO_SLUG="${REPO_SLUG:-ederdreger/kore-hotspot}"
 BRANCH="${BRANCH:-main}"
@@ -61,7 +62,7 @@ net.ipv4.conf.default.send_redirects = 0
 net.ipv4.conf.all.rp_filter = 0
 net.ipv4.conf.default.rp_filter = 0
 EOF
-  sysctl --system >/dev/null || true
+  sysctl -p /etc/sysctl.d/99-kore-hotspot.conf >/dev/null || true
 
   mkdir -p /etc/ipsec.d /etc/xl2tpd /etc/ppp
   cp -a /etc/ipsec.conf "/etc/ipsec.conf.kore-backup.$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
@@ -347,7 +348,7 @@ restart_services() {
 }
 
 main() {
-  log "Iniciando atualizacao"
+  log "Iniciando atualizacao ${SCRIPT_VERSION}"
   backup_data
   detect_public_host
   install_vpn_packages
