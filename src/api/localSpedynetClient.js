@@ -59,6 +59,7 @@ const ENTITY_DEFAULTS = {
   ],
   Voucher: [],
   Payment: [],
+  AccessPoint: [],
   VpnAccount: []
 };
 
@@ -67,7 +68,8 @@ const REMOTE_ENTITY_MAP = {
   Plan: 'plans',
   Voucher: 'vouchers',
   Setting: 'settings',
-  Payment: 'payments'
+  Payment: 'payments',
+  AccessPoint: 'access_points'
 };
 
 function apiHeaders(extra = {}) {
@@ -560,6 +562,28 @@ async function mikrotikPerformance(payload = {}) {
   };
 }
 
+async function accessPointDiscover(payload = {}) {
+  const response = await fetch(`${VPN_API_URL}/api/access-points/discover`, {
+    method: 'POST',
+    headers: jsonHeaders(),
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || 'Erro ao descobrir Access Points no CAPsMAN');
+  return data;
+}
+
+async function accessPointPoll(payload = {}) {
+  const response = await fetch(`${VPN_API_URL}/api/access-points/poll`, {
+    method: 'POST',
+    headers: jsonHeaders(),
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || 'Erro ao coletar Access Points');
+  return data;
+}
+
 async function captiveRegister(payload = {}) {
   const response = await fetch(`${VPN_API_URL}/api/captive/register`, {
     method: 'POST',
@@ -738,6 +762,8 @@ async function invoke(functionName, payload) {
     mikrotikStatus,
     mikrotikSyncPlans,
     mikrotikPerformance,
+    accessPointDiscover,
+    accessPointPoll,
     radiusStatus,
     radiusSessions,
     captiveRegister,

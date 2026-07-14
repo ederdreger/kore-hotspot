@@ -126,7 +126,7 @@ export default function APChannelAnalyzer({ aps, onChangeChannel }) {
                     {ap.suggestedChannel === ap.channel ? ' (já ótimo)' : ` (←  CH${ap.channel})`}
                   </p>
                 </div>
-                {ap.suggestedChannel !== ap.channel && (
+                {onChangeChannel && ap.suggestedChannel !== ap.channel && (
                   <Button
                     size="sm"
                     variant="outline"

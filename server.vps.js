@@ -36,6 +36,7 @@ const ENTITY_FILES = {
   clients: path.join(DATA_DIR, 'clients.json'),
   plans: path.join(DATA_DIR, 'plans.json'),
   vouchers: path.join(DATA_DIR, 'vouchers.json'),
+  access_points: path.join(DATA_DIR, 'access-points.json'),
   settings: path.join(DATA_DIR, 'settings.json'),
   payments: path.join(DATA_DIR, 'payments.json')
 };
@@ -445,6 +446,199 @@ function resolveMikrotikTarget(payload = {}, item = {}) {
     port: payload.mikrotik_port || item.mikrotik_port || preferred?.port || '22',
     user: payload.mikrotik_user || item.mikrotik_user || preferred?.user || 'kore-api'
   };
+}
+
+function mikrotikDeviceById(id = '') {
+  const devices = getMikrotikDevices();
+  return devices.find(device => device.id === id) || devices[0] || null;
+}
+
+async function runMikrotikKeyCommand(device, command, timeout = 15000) {
+  if (!device?.host) throw Object.assign(new Error('Nenhum MikroTik cadastrado para atuar como controladora CAPsMAN'), { status: 400 });
+  await ensureSshKey();
+  return run('ssh', [
+    '-i', KEY_PATH,
+    '-o', 'LogLevel=ERROR',
+    '-o', 'IdentitiesOnly=yes',
+    '-o', 'PreferredAuthentications=publickey',
+    '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa',
+    '-o', 'HostkeyAlgorithms=+ssh-rsa',
+    '-o', 'StrictHostKeyChecking=no',
+    '-o', 'UserKnownHostsFile=/dev/null',
+    '-o', 'ConnectTimeout=8',
+    '-p', String(device.port || '22'),
+    `${device.user || 'kore-api'}@${device.host}`,
+    command
+  ], timeout);
+}
+
+function routerAddress(value) {
+  const text = String(value || '').trim();
+  return text.replace(/^\[/, '').replace(/\](:\d+)?$/, '').replace(/:\d+$/, '');
+}
+
+function routerBoolean(value, fallback = false) {
+  if (value === undefined || value === null || value === '') return fallback;
+  return ['true', 'yes', 'running', 'bound', 'enabled'].includes(String(value).toLowerCase());
+}
+
+function routerSignal(value) {
+  const match = String(value || '').match(/-?\d+/);
+  return match ? Number(match[0]) : null;
+}
+
+function wifiChannel(frequency) {
+  const mhz = Number(String(frequency || '').match(/\d{4}/)?.[0] || 0);
+  if (mhz === 2484) return 14;
+  if (mhz >= 2412 && mhz <= 2472) return Math.round((mhz - 2407) / 5);
+  if (mhz >= 5000 && mhz <= 5900) return Math.round((mhz - 5000) / 5);
+  if (mhz >= 5955 && mhz <= 7115) return Math.round((mhz - 5950) / 5);
+  return 0;
+}
+
+function wifiBand(frequency, fallback = '') {
+  const mhz = Number(String(frequency || '').match(/\d{4}/)?.[0] || 0);
+  if (mhz >= 5955) return '6GHz';
+  if (mhz >= 4900) return '5GHz';
+  if (mhz >= 2300) return '2.4GHz';
+  const text = String(fallback || '').toLowerCase();
+  if (text.includes('6ghz') || text.includes('6g')) return '6GHz';
+  if (text.includes('5ghz') || text.includes('5g')) return '5GHz';
+  return '2.4GHz';
+}
+
+function average(values, fallback = 0) {
+  const valid = values.filter(value => Number.isFinite(value));
+  return valid.length ? Math.round(valid.reduce((sum, value) => sum + value, 0) / valid.length) : fallback;
+}
+
+function capsmanApId(controllerId, identity) {
+  const stable = String(identity || 'ap').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  return `capsman-${String(controllerId || 'mikrotik').replace(/[^a-zA-Z0-9_-]/g, '-')}-${stable || 'ap'}`;
+}
+
+async function collectCapsman(device) {
+  let type;
+  let remoteOutput = '';
+  try {
+    ({ stdout: remoteOutput } = await runMikrotikKeyCommand(device, '/interface wifi capsman remote-cap print detail without-paging'));
+    type = 'wifi';
+  } catch {
+    try {
+      ({ stdout: remoteOutput } = await runMikrotikKeyCommand(device, '/caps-man remote-cap print detail without-paging'));
+      type = 'legacy';
+    } catch {
+      throw Object.assign(new Error('CAPsMAN nao encontrado. Habilite o WiFi CAPsMAN ou o CAPsMAN legado neste MikroTik'), { status: 400 });
+    }
+  }
+
+  const interfaceCommand = type === 'wifi'
+    ? '/interface wifi print detail without-paging'
+    : '/caps-man interface print detail without-paging';
+  const registrationCommand = type === 'wifi'
+    ? '/interface wifi registration-table print detail without-paging'
+    : '/caps-man registration-table print detail without-paging';
+  const [interfaceResult, registrationResult] = await Promise.all([
+    runMikrotikKeyCommand(device, interfaceCommand).catch(() => ({ stdout: '' })),
+    runMikrotikKeyCommand(device, registrationCommand).catch(() => ({ stdout: '' }))
+  ]);
+
+  const remoteCaps = parseKeyValueRows(remoteOutput);
+  const interfaces = parseKeyValueRows(interfaceResult.stdout);
+  const registrations = parseKeyValueRows(registrationResult.stdout);
+  const existing = readJson(ENTITY_FILES.access_points, []);
+  const now = new Date().toISOString();
+
+  const apSources = remoteCaps.length ? remoteCaps : interfaces.map(row => ({
+    identity: row['radio-name'] || row.name || row['radio-mac'],
+    'base-mac': row['radio-mac'],
+    address: device.host,
+    state: row.running === 'true' ? 'Run' : 'Down'
+  }));
+
+  const accessPoints = apSources.map((cap, index) => {
+    const identity = cap.identity || cap.ident || cap.name || cap['base-mac'] || cap['radio-mac'] || `AP-${index + 1}`;
+    const baseMac = normalizeMac(cap['base-mac'] || cap['radio-mac']);
+    const matchingInterfaces = interfaces.filter(row => {
+      const radioName = String(row['radio-name'] || row.name || '').toLowerCase();
+      if (radioName.includes(String(identity).toLowerCase())) return true;
+      const radioMac = normalizeMac(row['radio-mac']);
+      return !!(baseMac && radioMac && radioMac.slice(0, 14) === baseMac.slice(0, 14));
+    });
+    const radios = matchingInterfaces.length ? matchingInterfaces : (apSources.length === 1 ? interfaces : []);
+    const interfaceNames = new Set(radios.map(row => row.name).filter(Boolean));
+    const clients = registrations.filter(row => interfaceNames.has(row.interface) || interfaceNames.has(row['ap-name']));
+    const frequency = radios.map(row => row['current-channel'] || row.frequency || row['channel.frequency']).find(Boolean) || '';
+    const signals = clients.map(row => routerSignal(row.signal || row['signal-strength'])).filter(value => value !== null);
+    const noises = radios.map(row => routerSignal(row.noise || row['noise-floor'])).filter(value => value !== null);
+    const id = capsmanApId(device.id, baseMac || identity);
+    const previous = existing.find(item => item.id === id || item._id === id || (baseMac && normalizeMac(item.mac) === baseMac)) || {};
+    const maxClients = Number(previous.maxClients || previous.max_clients || 50);
+    const running = !['down', 'disconnected'].includes(String(cap.state || '').toLowerCase()) &&
+      (radios.length ? radios.some(row => routerBoolean(row.running, !routerBoolean(row.disabled))) : true);
+    const utilization = Number(cap.utilization || 0) || Math.min(100, Math.round((clients.length / Math.max(maxClients, 1)) * 100));
+    return {
+      ...previous,
+      id,
+      _id: id,
+      name: previous.custom_name || previous.name || String(identity),
+      controller_id: device.id,
+      controller_name: device.name || device.host,
+      capsman_type: type,
+      managed: true,
+      ip: routerAddress(cap.address) || previous.ip || device.host,
+      mac: baseMac || previous.mac || '',
+      model: cap.board || cap.model || previous.model || '',
+      version: cap.version || previous.version || '',
+      band: wifiBand(frequency, radios.map(row => row.bands || row.band).join(',')),
+      channel: wifiChannel(frequency) || Number(previous.channel || 0),
+      ssid: radios.map(row => row.ssid || row['configuration.ssid']).find(Boolean) || previous.ssid || '',
+      radios: radios.length || Number(cap.radios || 0),
+      clients: clients.length,
+      maxClients,
+      signalAvg: average(signals, clients.length ? -100 : 0),
+      noise: average(noises, 0),
+      utilization,
+      txPower: Number(previous.txPower || 0),
+      uptime: cap.uptime || previous.uptime || '--',
+      status: running ? (utilization >= 90 ? 'overloaded' : signals.length && average(signals) < -75 ? 'weak_signal' : 'ok') : 'offline',
+      pollError: '',
+      last_seen: now,
+      created_date: previous.created_date || now,
+      updated_date: now
+    };
+  });
+
+  return { type, access_points: accessPoints, remote_caps: remoteCaps.length, radios: interfaces.length, clients: registrations.length };
+}
+
+async function discoverAccessPoints(payload = {}) {
+  const device = mikrotikDeviceById(payload.mikrotik_id || payload.controller_id);
+  const result = await collectCapsman(device);
+  const current = readJson(ENTITY_FILES.access_points, []);
+  const discoveredIds = new Set(result.access_points.map(item => item.id));
+  const otherControllers = current.filter(item => item.controller_id !== device.id);
+  const missing = current
+    .filter(item => item.controller_id === device.id && !discoveredIds.has(item.id))
+    .map(item => ({ ...item, status: 'offline', pollError: 'Nao encontrado na ultima coleta', updated_date: new Date().toISOString() }));
+  const merged = [...result.access_points, ...missing, ...otherControllers].slice(0, 5000);
+  writeJson(ENTITY_FILES.access_points, merged);
+  return { success: true, controller: { id: device.id, name: device.name || device.host, host: device.host }, ...result, access_points: merged };
+}
+
+async function pollAccessPoints(payload = {}) {
+  const devices = getMikrotikDevices();
+  const requested = payload.mikrotik_id || payload.controller_id;
+  const targets = requested ? devices.filter(device => device.id === requested) : devices;
+  if (!targets.length) throw Object.assign(new Error('Nenhum MikroTik cadastrado para coletar Access Points'), { status: 400 });
+  const errors = [];
+  for (const device of targets) {
+    try { await discoverAccessPoints({ controller_id: device.id }); }
+    catch (error) { errors.push(`${device.name || device.host}: ${error.message}`); }
+  }
+  const accessPoints = readJson(ENTITY_FILES.access_points, []);
+  if (errors.length === targets.length) throw Object.assign(new Error(errors.join(' | ')), { status: 502 });
+  return { success: errors.length === 0, access_points: accessPoints, errors, controllers_checked: targets.length };
 }
 
 async function mikrotikHotspotSessions() {
@@ -2543,6 +2737,8 @@ async function handleRequest(req, res) {
     }
     if (req.method === 'GET' && req.url === '/api/radius/status') return send(res, 200, await radiusStatus());
     if (req.method === 'GET' && req.url === '/api/radius/sessions') return send(res, 200, await radiusSessions());
+    if (req.method === 'POST' && req.url === '/api/access-points/discover') { assertTenantLicense({ action: 'write', resource: 'access_point' }); return send(res, 200, await discoverAccessPoints(await readBody(req))); }
+    if (req.method === 'POST' && req.url === '/api/access-points/poll') return send(res, 200, await pollAccessPoints(await readBody(req)));
     if (req.method === 'GET' && req.url === '/api/captive/prospects') return send(res, 200, { prospects: readCaptiveDb() });
     if (req.method === 'DELETE' && req.url.startsWith('/api/captive/prospects/')) return send(res, 200, await deleteCaptiveProspect(decodeURIComponent(req.url.split('/').pop())));
     if (req.method === 'POST' && req.url === '/api/ixc/cliente') return send(res, 200, await ixcConsultaCliente(await readBody(req)));

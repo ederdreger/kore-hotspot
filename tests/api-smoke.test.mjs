@@ -114,6 +114,31 @@ test('voucher nao e consumido quando o MikroTik nao pode autorizar', async () =>
   assert.equal(voucher.status, 'available');
 });
 
+test('Access Points sao persistidos na API por tenant', async () => {
+  const token = await loginAdmin();
+  const created = await request('/api/entities/access_points', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Kore-Session': token },
+    body: JSON.stringify({ name: 'AP Teste', ip: '10.0.0.10', status: 'offline' })
+  });
+  assert.equal(created.response.status, 200);
+  assert.ok(created.data.item.id);
+
+  const listed = await request('/api/entities/access_points', { headers: { 'X-Kore-Session': token } });
+  assert.equal(listed.response.status, 200);
+  assert.equal(listed.data.items.length, 1);
+  assert.equal(listed.data.items[0].name, 'AP Teste');
+});
+
+test('coleta de AP informa quando nao existe controladora MikroTik', async () => {
+  const token = await loginAdmin();
+  const result = await request('/api/access-points/poll', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Kore-Session': token }, body: '{}'
+  });
+  assert.equal(result.response.status, 400);
+  assert.match(result.data.error, /Nenhum MikroTik cadastrado/i);
+});
+
 test('configuracao minima do captive permanece publica', async () => {
   const { response, data } = await request('/api/captive/config', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'

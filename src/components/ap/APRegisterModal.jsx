@@ -27,6 +27,7 @@ const DEFAULT = {
 export default function APRegisterModal({ ap, onSave, onClose }) {
   const [form, setForm] = useState(ap ? { ...DEFAULT, ...ap } : DEFAULT);
   const [errors, setErrors] = useState({});
+  const managed = !!form.managed;
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -82,6 +83,7 @@ export default function APRegisterModal({ ap, onSave, onClose }) {
                   placeholder="10.0.1.X"
                   value={form.ip}
                   onChange={e => set('ip', e.target.value)}
+                  disabled={managed}
                   className={`h-8 text-xs font-mono ${errors.ip ? 'border-destructive' : ''}`}
                 />
                 {errors.ip && <p className="text-[10px] text-destructive mt-1">{errors.ip}</p>}
@@ -92,6 +94,7 @@ export default function APRegisterModal({ ap, onSave, onClose }) {
                   placeholder="KoreHotspot"
                   value={form.ssid}
                   onChange={e => set('ssid', e.target.value)}
+                  disabled={managed}
                   className="h-8 text-xs"
                 />
               </div>
@@ -162,6 +165,7 @@ export default function APRegisterModal({ ap, onSave, onClose }) {
                 <select
                   value={form.band}
                   onChange={e => { set('band', e.target.value); set('channel', e.target.value === '5GHz' ? 36 : 6); }}
+                  disabled={managed}
                   className="w-full h-8 rounded-md border border-input bg-transparent px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                 >
                   {BANDS.map(b => <option key={b} value={b}>{b}</option>)}
@@ -172,6 +176,7 @@ export default function APRegisterModal({ ap, onSave, onClose }) {
                 <select
                   value={form.channel}
                   onChange={e => set('channel', e.target.value)}
+                  disabled={managed}
                   className="w-full h-8 rounded-md border border-input bg-transparent px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                 >
                   {channels.map(c => <option key={c} value={c}>CH {c}</option>)}
@@ -183,6 +188,7 @@ export default function APRegisterModal({ ap, onSave, onClose }) {
                   type="number" min={10} max={30}
                   value={form.txPower}
                   onChange={e => set('txPower', e.target.value)}
+                  disabled={managed}
                   className="h-8 text-xs"
                 />
               </div>

@@ -12,6 +12,7 @@ Criador e mantenedor: **Spedynet Telecom**.
 - Integração com MikroTik via SSH Key.
 - Criação de usuários hotspot diretamente no MikroTik.
 - Monitoramento de sessões hotspot/RADIUS.
+- Descoberta e monitoramento persistente de Access Points via WiFi CAPsMAN ou CAPsMAN legado.
 - VPN L2TP/IPsec para filiais sem IP público.
 - Integração IXC para consulta de clientes existentes.
 - Integração PIX/Mercado Pago preparada para liberação automática.

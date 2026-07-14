@@ -1,106 +1,115 @@
 import { useState, useEffect, useCallback } from 'react';
 import { spedynet } from '@/api/spedynetClient';
-import { useAuth } from '@/lib/AuthContext';
 import APHeatmapGrid from '@/components/ap/APHeatmapGrid';
 import APChannelAnalyzer from '@/components/ap/APChannelAnalyzer';
 import APAlertPanel from '@/components/ap/APAlertPanel';
-import APLoadBalancer from '@/components/ap/APLoadBalancer';
 import APStatsBar from '@/components/ap/APStatsBar';
 import APRegisterModal from '@/components/ap/APRegisterModal';
-import { Wifi, RefreshCw, Plus, MapPin, Trash2, Edit2, AlertTriangle } from 'lucide-react';
+import { Wifi, RefreshCw, Plus, MapPin, Trash2, Edit2, AlertTriangle, ScanSearch } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { toast } from 'sonner';
 
 // No demo data — start empty for real cadastros
 const DEFAULT_APS = [];
 
 export default function APMonitor() {
-  const { getToken } = useAuth();
   const [aps, setAPs] = useState(DEFAULT_APS);
   const [loading, setLoading] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(new Date());
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [selectedAP, setSelectedAP] = useState(null);
-  const [actionLog, setActionLog] = useState([]);
   const [showRegister, setShowRegister] = useState(false);
   const [editingAP, setEditingAP] = useState(null);
   const [view, setView] = useState('map'); // 'map' | 'list'
   const [pollError, setPollError] = useState(null);
-  const [usingSimulation, setUsingSimulation] = useState(false);
+  const [discovering, setDiscovering] = useState(false);
+
+  const loadSaved = useCallback(async () => {
+    try {
+      setAPs(await spedynet.entities.AccessPoint.list('-updated_date'));
+    } catch (error) {
+      setPollError(error.message || 'Falha ao carregar Access Points');
+    }
+  }, []);
 
   const refreshMetrics = useCallback(async () => {
     setLoading(true);
     setPollError(null);
     try {
-      const response = await spedynet.functions.invoke('mikrotikPoller', { aps, token: getToken() });
-      const polled = response.data?.aps;
-      if (polled && polled.length > 0) {
-        setAPs(polled);
-        setUsingSimulation(false);
-      } else {
-        throw new Error('Resposta vazia da função de polling');
-      }
+      const response = await spedynet.functions.invoke('accessPointPoll', {});
+      setAPs(response.data?.access_points || []);
     } catch (err) {
       setPollError(err.message || 'Falha ao conectar aos equipamentos');
-      setUsingSimulation(true);
     }
     setLastRefresh(new Date());
     setLoading(false);
-  }, [aps]);
+  }, []);
+
+  useEffect(() => { loadSaved(); }, [loadSaved]);
 
   useEffect(() => {
     if (!autoRefresh) return;
-    const t = setInterval(refreshMetrics, 10000);
+    const t = setInterval(refreshMetrics, 60000);
     return () => clearInterval(t);
   }, [autoRefresh, refreshMetrics]);
 
-  const handleRegister = (formData) => {
-    if (editingAP) {
-      setAPs(prev => prev.map(a => a.id === editingAP.id ? { ...a, ...formData } : a));
-      setEditingAP(null);
-    } else {
-      const newAP = {
-        ...formData,
-        id: `ap_${Date.now()}`,
-        clients: 0,
-        signalAvg: -65,
-        noise: -92,
-        utilization: 0,
-        uptime: '0m',
-        status: 'ok',
-      };
-      setAPs(prev => [...prev, newAP]);
-      spedynet.entities.AuditLog.create({ action: 'ap_registered', entity_type: 'mikrotik', entity_name: formData.name, status: 'success', message: `AP cadastrado: ${formData.name} — ${formData.street}${formData.number ? ', ' + formData.number : ''}, ${formData.neighborhood}` }).catch(() => {});
+  const handleDiscover = async () => {
+    setDiscovering(true);
+    setPollError(null);
+    try {
+      const response = await spedynet.functions.invoke('accessPointDiscover', {});
+      setAPs(response.data?.access_points || []);
+      setLastRefresh(new Date());
+      toast.success(`${response.data?.remote_caps || 0} AP(s) encontrado(s) via ${response.data?.type === 'wifi' ? 'WiFi CAPsMAN' : 'CAPsMAN legado'}.`);
+    } catch (error) {
+      setPollError(error.message || 'Falha ao descobrir APs no CAPsMAN');
+      toast.error(error.message || 'Falha ao descobrir APs no CAPsMAN');
+    } finally {
+      setDiscovering(false);
     }
-    setShowRegister(false);
   };
 
-  const handleDelete = (ap) => {
-    setAPs(prev => prev.filter(a => a.id !== ap.id));
-    if (selectedAP?.id === ap.id) setSelectedAP(null);
-    spedynet.entities.AuditLog.create({ action: 'ap_removed', entity_type: 'mikrotik', entity_name: ap.name, status: 'info', message: `AP removido: ${ap.name}` }).catch(() => {});
+  const handleRegister = async (formData) => {
+    try {
+      if (editingAP) {
+        const updated = await spedynet.entities.AccessPoint.update(editingAP.id, { ...formData, custom_name: formData.name });
+        setAPs(prev => prev.map(ap => ap.id === editingAP.id ? updated : ap));
+        setEditingAP(null);
+      } else {
+        const created = await spedynet.entities.AccessPoint.create({
+          ...formData,
+          clients: 0,
+          signalAvg: 0,
+          noise: 0,
+          utilization: 0,
+          uptime: '--',
+          status: 'offline',
+          managed: false
+        });
+        setAPs(prev => [created, ...prev]);
+      }
+      setShowRegister(false);
+      toast.success(editingAP ? 'Access Point atualizado.' : 'Access Point cadastrado.');
+    } catch (error) {
+      toast.error(error.message || 'Erro ao salvar Access Point');
+    }
+  };
+
+  const handleDelete = async (ap) => {
+    if (!window.confirm(`Excluir o Access Point ${ap.name}?`)) return;
+    try {
+      await spedynet.entities.AccessPoint.delete(ap.id);
+      setAPs(prev => prev.filter(item => item.id !== ap.id));
+      if (selectedAP?.id === ap.id) setSelectedAP(null);
+      toast.success('Access Point excluido.');
+    } catch (error) {
+      toast.error(error.message || 'Erro ao excluir Access Point');
+    }
   };
 
   const handleEdit = (ap) => {
     setEditingAP(ap);
     setShowRegister(true);
-  };
-
-  const handleBalanceAP = async (apFrom, apTo, suggestion) => {
-    setAPs(prev => prev.map(ap => {
-      if (ap.id === apFrom.id) return { ...ap, clients: Math.max(0, ap.clients - suggestion.clientsToMove), utilization: Math.max(0, ap.utilization - suggestion.utilizationDrop) };
-      if (ap.id === apTo.id) return { ...ap, clients: ap.clients + suggestion.clientsToMove, utilization: Math.min(100, ap.utilization + suggestion.utilizationGain) };
-      return ap;
-    }));
-    const entry = { time: new Date(), action: 'balance', detail: `${suggestion.clientsToMove} clientes: ${apFrom.name} → ${apTo.name}` };
-    setActionLog(prev => [entry, ...prev].slice(0, 15));
-    await spedynet.entities.AuditLog.create({ action: 'ap_load_balance', entity_type: 'mikrotik', entity_name: apFrom.name, status: 'success', message: `Balanceamento: ${apFrom.name} → ${apTo.name} (${suggestion.clientsToMove} clientes)` }).catch(() => {});
-  };
-
-  const handleChangeChannel = async (ap, newChannel) => {
-    setAPs(prev => prev.map(a => a.id === ap.id ? { ...a, channel: newChannel, status: 'ok' } : a));
-    const entry = { time: new Date(), action: 'channel', detail: `${ap.name}: CH${ap.channel} → CH${newChannel}` };
-    setActionLog(prev => [entry, ...prev].slice(0, 15));
-    await spedynet.entities.AuditLog.create({ action: 'ap_channel_change', entity_type: 'mikrotik', entity_name: ap.name, status: 'success', message: `Canal alterado: ${ap.name} CH${ap.channel} → CH${newChannel}` }).catch(() => {});
   };
 
   const overloaded  = aps.filter(a => a.status === 'overloaded');
@@ -147,8 +156,12 @@ export default function APMonitor() {
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${autoRefresh ? 'bg-success/10 border-success/30 text-success' : 'bg-secondary border-border text-muted-foreground'}`}
           >
             <span className={`w-1.5 h-1.5 rounded-full ${autoRefresh ? 'bg-success animate-pulse' : 'bg-muted-foreground'}`} />
-            {autoRefresh ? 'Auto 10s' : 'Pausado'}
+            {autoRefresh ? 'Auto 60s' : 'Pausado'}
           </button>
+          <Button size="sm" variant="outline" onClick={handleDiscover} disabled={discovering} className="gap-1.5">
+            <ScanSearch className={`w-3.5 h-3.5 ${discovering ? 'animate-pulse' : ''}`} />
+            Descobrir CAPs
+          </Button>
           <Button size="sm" variant="outline" onClick={refreshMetrics} disabled={loading} className="gap-1.5">
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
             Atualizar
@@ -161,18 +174,17 @@ export default function APMonitor() {
       </div>
 
       {/* Connection status banner */}
-      {usingSimulation && (
+      {pollError && (
         <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-warning/30 bg-warning/10 text-warning text-xs">
           <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-          <span className="font-medium">Modo simulação:</span>
+          <span className="font-medium">Falha na coleta:</span>
           <span className="text-warning/80 truncate">{pollError}</span>
-          <span className="ml-auto flex-shrink-0 text-warning/60">Verifique IP, usuário e senha nos secrets</span>
         </div>
       )}
-      {!usingSimulation && lastRefresh && aps.some(a => a.pollError) && (
+      {!pollError && lastRefresh && aps.some(a => a.pollError) && (
         <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-destructive/30 bg-destructive/10 text-destructive text-xs">
           <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-          {aps.filter(a => a.pollError).length} AP(s) offline ou inacessíveis via API REST
+          {aps.filter(a => a.pollError).length} AP(s) não encontrado(s) na última coleta CAPsMAN
         </div>
       )}
 
@@ -181,7 +193,7 @@ export default function APMonitor() {
 
       {/* Alerts */}
       {(overloaded.length > 0 || interference.length > 0 || weakSignal.length > 0) && (
-        <APAlertPanel overloaded={overloaded} interference={interference} weakSignal={weakSignal} aps={aps} onChangeChannel={handleChangeChannel} />
+        <APAlertPanel overloaded={overloaded} interference={interference} weakSignal={weakSignal} aps={aps} />
       )}
 
       {/* Empty state */}
@@ -190,12 +202,12 @@ export default function APMonitor() {
           <Wifi className="w-12 h-12 text-muted-foreground/30" />
           <div className="text-center">
             <p className="text-sm font-semibold text-foreground">Nenhum AP cadastrado</p>
-            <p className="text-xs text-muted-foreground mt-1">Clique em "Cadastrar AP" para adicionar o primeiro equipamento.</p>
+            <p className="text-xs text-muted-foreground mt-1">Descubra os equipamentos da controladora CAPsMAN ou cadastre um AP manual.</p>
           </div>
-          <Button size="sm" onClick={() => { setEditingAP(null); setShowRegister(true); }} className="gap-1.5">
-            <Plus className="w-3.5 h-3.5" />
-            Cadastrar primeiro AP
-          </Button>
+          <div className="flex gap-2">
+            <Button size="sm" onClick={handleDiscover} disabled={discovering} className="gap-1.5"><ScanSearch className="w-3.5 h-3.5" />Descobrir CAPs</Button>
+            <Button size="sm" variant="outline" onClick={() => { setEditingAP(null); setShowRegister(true); }} className="gap-1.5"><Plus className="w-3.5 h-3.5" />Cadastrar manualmente</Button>
+          </div>
         </div>
       )}
 
@@ -206,7 +218,7 @@ export default function APMonitor() {
             <APHeatmapGrid aps={aps} loading={loading} selectedAP={selectedAP} onSelectAP={setSelectedAP} onEditAP={handleEdit} />
           </div>
           <div className="xl:col-span-2">
-            <APChannelAnalyzer aps={aps} onChangeChannel={handleChangeChannel} />
+            <APChannelAnalyzer aps={aps} />
           </div>
         </div>
       )}
@@ -270,25 +282,6 @@ export default function APMonitor() {
               </div>
             </div>
           ))}
-        </div>
-      )}
-
-      {/* Load Balancer */}
-      {aps.length > 0 && <APLoadBalancer aps={aps} onBalance={handleBalanceAP} />}
-
-      {/* Action log */}
-      {actionLog.length > 0 && (
-        <div className="bg-card border border-border rounded-xl p-5">
-          <h3 className="text-sm font-semibold text-foreground mb-3">Log de Ações</h3>
-          <div className="space-y-1.5 max-h-40 overflow-y-auto scrollbar-thin">
-            {actionLog.map((entry, i) => (
-              <div key={i} className="flex items-center gap-3 text-xs px-3 py-2 rounded-lg bg-secondary/40">
-                <span className="font-mono text-muted-foreground flex-shrink-0">{entry.time.toLocaleTimeString('pt-BR')}</span>
-                <span className="font-semibold uppercase text-[10px] text-primary flex-shrink-0">{entry.action}</span>
-                <span className="text-muted-foreground truncate">{entry.detail}</span>
-              </div>
-            ))}
-          </div>
         </div>
       )}
 
