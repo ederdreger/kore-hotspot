@@ -16,6 +16,8 @@ Criador e mantenedor: **Spedynet Telecom**.
 - Perfis Wi-Fi para CAPsMAN legado e WiFi CAPsMAN, com previa mascarada, backup e aplicacao confirmada.
 - Integracao somente leitura com UniFi Site Manager para descobrir e monitorar Access Points por tenant.
 - Descoberta de UniFi resetado ou ainda nao adotado pela tabela de vizinhos LLDP/MNDP do MikroTik.
+- Instalacao opcional da controladora UniFi Network no Ubuntu 22.04, com portas isoladas e status no painel.
+- Atualizacao silenciosa do monitoramento de APs, sem substituir cards por esqueletos a cada coleta.
 - VPN L2TP/IPsec para filiais sem IP público.
 - Integração IXC para consulta de clientes existentes.
 - Integração PIX/Mercado Pago preparada para liberação automática.

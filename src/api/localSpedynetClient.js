@@ -606,6 +606,17 @@ async function unifiIntegrations(payload = {}) {
   return data;
 }
 
+async function unifiController(payload = {}) {
+  const response = await fetch(`${VPN_API_URL}/api/unifi/controller`, {
+    method: 'POST',
+    headers: jsonHeaders(),
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || 'Erro ao gerenciar controladora UniFi');
+  return data;
+}
+
 async function captiveRegister(payload = {}) {
   const response = await fetch(`${VPN_API_URL}/api/captive/register`, {
     method: 'POST',
@@ -788,6 +799,7 @@ async function invoke(functionName, payload) {
     accessPointPoll,
     accessPointProfiles,
     unifiIntegrations,
+    unifiController,
     radiusStatus,
     radiusSessions,
     captiveRegister,

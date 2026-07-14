@@ -212,6 +212,20 @@ test('integracao UniFi armazena a chave criptografada e devolve apenas metadados
   assert.equal(removed.response.status, 200);
 });
 
+test('status da controladora UniFi funciona mesmo antes da instalacao', async () => {
+  const token = await loginAdmin();
+  const { response, data } = await request('/api/unifi/controller', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Kore-Session': token },
+    body: JSON.stringify({ action: 'status' })
+  });
+  assert.equal(response.status, 200);
+  assert.equal(typeof data.installed, 'boolean');
+  assert.equal(typeof data.active, 'boolean');
+  assert.match(data.inform_url, /:18080\/inform$/);
+  assert.match(data.ui_url, /:8443$/);
+});
+
 test('configuracao minima do captive permanece publica', async () => {
   const { response, data } = await request('/api/captive/config', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'

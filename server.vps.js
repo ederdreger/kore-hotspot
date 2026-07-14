@@ -1,5 +1,5 @@
 const http = require('http');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -150,7 +150,7 @@ function readBody(req) {
 
 function run(command, args, timeout = 15000) {
   return new Promise((resolve, reject) => {
-    execFile(command, args, { timeout }, (error, stdout, stderr) => {
+    execFile(command, args, { timeout, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
       if (error) {
         const message = stderr || stdout || error.message;
         reject(new Error(message.includes('Permission denied') ? 'SSH negado pelo MikroTik: chave, usuario, senha ou permissoes invalidas' : message));
@@ -896,6 +896,55 @@ async function unifiIntegrations(payload = {}) {
   }
   if (action === 'sync') return { success: true, ...(await syncUnifiAccessPoints(integration)) };
   throw Object.assign(new Error('Acao UniFi invalida'), { status: 400 });
+}
+
+function unifiControllerHost() {
+  if (PUBLIC_HOST && /^[A-Za-z0-9.-]+$/.test(PUBLIC_HOST)) return PUBLIC_HOST;
+  try { return new URL(getPublicBaseUrl()).hostname; } catch { return ''; }
+}
+
+async function unifiControllerStatus(host) {
+  const installing = await run('pgrep', ['-f', 'kore-unifi-install'], 5000).then(result => !!result.stdout.trim()).catch(() => false);
+  const active = await run('systemctl', ['is-active', 'unifi'], 5000).then(result => result.stdout.trim() === 'active').catch(() => false);
+  const enabled = await run('systemctl', ['is-enabled', 'unifi'], 5000).then(result => result.stdout.trim() === 'enabled').catch(() => false);
+  const version = await run('dpkg-query', ['-W', '-f=${Version}', 'unifi'], 5000).then(result => result.stdout.trim()).catch(() => '');
+  const ports = await run('ss', ['-ltnH'], 5000).then(result => result.stdout).catch(() => '');
+  return {
+    installed: !!version,
+    installing,
+    active,
+    enabled,
+    version,
+    inform_port: 18080,
+    ui_port: 8443,
+    inform_ready: ports.includes(':18080 '),
+    ui_ready: ports.includes(':8443 '),
+    inform_url: `http://${host}:18080/inform`,
+    ui_url: `https://${host}:8443`
+  };
+}
+
+async function unifiController(payload = {}) {
+  const action = String(payload.action || 'status');
+  const host = unifiControllerHost();
+  if (!host) throw Object.assign(new Error('IP ou dominio publico da VPS nao identificado'), { status: 400 });
+  if (action === 'install') {
+    const installer = process.env.KORE_UNIFI_INSTALLER || '/usr/local/bin/kore-unifi-install';
+    if (!fs.existsSync(installer)) throw Object.assign(new Error('Instalador UniFi nao encontrado; atualize o Kore-HotSpot'), { status: 404 });
+    const current = await unifiControllerStatus(host);
+    if (current.active) return current;
+    if (!current.active && !current.installing) {
+      const logPath = '/var/log/kore-unifi-install.log';
+      const output = fs.openSync(logPath, 'a', 0o600);
+      const child = spawn('bash', [installer, '--public-host', host], { detached: true, stdio: ['ignore', output, output] });
+      child.unref();
+      fs.closeSync(output);
+    }
+    return { ...(await unifiControllerStatus(host)), installing: true };
+  } else if (action !== 'status') {
+    throw Object.assign(new Error('Acao da controladora UniFi invalida'), { status: 400 });
+  }
+  return unifiControllerStatus(host);
 }
 
 function publicApProfile(profile) {
@@ -3172,6 +3221,15 @@ async function handleRequest(req, res) {
       const body = await readBody(req);
       if (body.action !== 'list' && body.action !== 'test') assertTenantLicense({ action: 'write', resource: 'access_point' });
       return send(res, 200, await unifiIntegrations(body));
+    }
+    if (req.method === 'POST' && req.url === '/api/unifi/controller') {
+      const body = await readBody(req);
+      if (body.action === 'install') {
+        requireSystemAdmin(req);
+        assertSystemTenant();
+        assertTenantLicense({ action: 'write', resource: 'access_point' });
+      }
+      return send(res, 200, await unifiController(body));
     }
     if (req.method === 'GET' && req.url === '/api/captive/prospects') return send(res, 200, { prospects: readCaptiveDb() });
     if (req.method === 'DELETE' && req.url.startsWith('/api/captive/prospects/')) return send(res, 200, await deleteCaptiveProspect(decodeURIComponent(req.url.split('/').pop())));

@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 APP_NAME="Kore-HotSpot"
-SCRIPT_VERSION="v0.2.40"
+SCRIPT_VERSION="v0.2.41"
 REPO_URL="${REPO_URL:-https://github.com/ederdreger/kore-hotspot.git}"
 REPO_SLUG="${REPO_SLUG:-ederdreger/kore-hotspot}"
 BRANCH="${BRANCH:-main}"
@@ -312,6 +312,10 @@ EOF
   if [ -f "$INSTALL_DIR/scripts/provider-upsert.sh" ]; then
     cp "$INSTALL_DIR/scripts/provider-upsert.sh" /usr/local/bin/kore-provider-upsert
     chmod +x /usr/local/bin/kore-provider-upsert
+  fi
+  if [ -f "$INSTALL_DIR/scripts/install-unifi.sh" ]; then
+    cp "$INSTALL_DIR/scripts/install-unifi.sh" /usr/local/bin/kore-unifi-install
+    chmod +x /usr/local/bin/kore-unifi-install
   fi
   chown -R root:root "$WEB_DIR" "$API_DIR"
 }

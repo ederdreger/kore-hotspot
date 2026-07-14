@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 APP_NAME="Kore-HotSpot"
-SCRIPT_VERSION="v0.2.40"
+SCRIPT_VERSION="v0.2.41"
 REPO_URL="${REPO_URL:-https://github.com/ederdreger/kore-hotspot.git}"
 REPO_SLUG="${REPO_SLUG:-ederdreger/kore-hotspot}"
 BRANCH="${BRANCH:-main}"
@@ -407,6 +407,8 @@ install_updater() {
   chmod +x /usr/local/bin/kore-hotspot-update
   cp "$INSTALL_DIR/scripts/provider-upsert.sh" /usr/local/bin/kore-provider-upsert
   chmod +x /usr/local/bin/kore-provider-upsert
+  cp "$INSTALL_DIR/scripts/install-unifi.sh" /usr/local/bin/kore-unifi-install
+  chmod +x /usr/local/bin/kore-unifi-install
   cat > "$CONFIG_DIR/update.env" <<EOF
 REPO_URL=${REPO_URL}
 REPO_SLUG=${REPO_SLUG}

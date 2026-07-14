@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Cloud, ExternalLink, Loader2, Pencil, Plus, RefreshCw, ScanSearch, Trash2, X } from 'lucide-react';
+import { Cloud, ExternalLink, HardDrive, Loader2, Pencil, Plus, RefreshCw, ScanSearch, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { spedynet } from '@/api/spedynetClient';
 import { Button } from '@/components/ui/button';
@@ -15,17 +15,45 @@ export default function UniFiIntegrationPanel({ onSynced }) {
   const [showForm, setShowForm] = useState(false);
   const [busy, setBusy] = useState('');
   const [results, setResults] = useState({});
+  const [controller, setController] = useState(null);
 
   const load = async () => {
     try {
-      const response = await spedynet.functions.invoke('unifiIntegrations', { action: 'list' });
+      const [response, controllerResponse] = await Promise.all([
+        spedynet.functions.invoke('unifiIntegrations', { action: 'list' }),
+        spedynet.functions.invoke('unifiController', { action: 'status' }).catch(() => null)
+      ]);
       setIntegrations(response.data?.integrations || []);
+      if (controllerResponse) setController(controllerResponse.data || null);
     } catch (error) {
       toast.error(error.message || 'Erro ao carregar integracoes UniFi');
     }
   };
 
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    if (!controller?.installing) return undefined;
+    const timer = setInterval(async () => {
+      const response = await spedynet.functions.invoke('unifiController', { action: 'status' }).catch(() => null);
+      if (response) setController(response.data || null);
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [controller?.installing]);
+
+  const installController = async () => {
+    if (!window.confirm('Instalar a controladora UniFi Network na VPS? A instalacao adicionara MongoDB, UniFi e abrira as portas 8443, 18080, 3478/UDP e 10001/UDP.')) return;
+    setBusy('install-controller');
+    try {
+      const response = await spedynet.functions.invoke('unifiController', { action: 'install' });
+      setController(response.data || null);
+      toast.success('Instalacao da controladora iniciada em segundo plano.');
+    } catch (error) {
+      toast.error(error.message || 'Erro ao instalar controladora UniFi');
+    } finally {
+      setBusy('');
+    }
+  };
 
   const openCreate = () => {
     setEditing(null);
@@ -123,8 +151,22 @@ export default function UniFiIntegrationPanel({ onSynced }) {
           <h2 className="text-sm font-semibold text-foreground">Ubiquiti UniFi</h2>
           <a href="https://unifi.ui.com/settings/api-keys" target="_blank" rel="noreferrer" className="text-muted-foreground hover:text-info" title="Abrir chaves da API UniFi"><ExternalLink className="w-3.5 h-3.5" /></a>
         </div>
-        <Button size="sm" variant="outline" onClick={openCreate} className="gap-1.5"><Plus className="w-3.5 h-3.5" />Integrar</Button>
+        <div className="flex items-center gap-2">
+          {controller?.active && controller?.ui_ready ? (
+            <a href={controller.ui_url} target="_blank" rel="noreferrer"><Button size="sm" variant="outline" className="gap-1.5"><ExternalLink className="w-3.5 h-3.5" />Controladora</Button></a>
+          ) : (
+            <Button size="sm" variant="outline" onClick={installController} disabled={controller?.installing || busy === 'install-controller'} className="gap-1.5">{controller?.installing || busy === 'install-controller' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <HardDrive className="w-3.5 h-3.5" />}{controller?.installing ? 'Instalando' : 'Instalar controladora'}</Button>
+          )}
+          <Button size="sm" variant="outline" onClick={openCreate} className="gap-1.5"><Plus className="w-3.5 h-3.5" />Integrar</Button>
+        </div>
       </div>
+
+      {controller && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border bg-secondary/20 px-5 py-2.5 text-xs">
+          <span className={controller.active ? 'text-success' : controller.installing ? 'text-warning' : 'text-muted-foreground'}>{controller.active ? `Controladora ativa ${controller.version || ''}` : controller.installing ? 'Instalacao em andamento' : 'Controladora nao instalada'}</span>
+          {controller.active && <span className="font-mono text-muted-foreground">Inform: {controller.inform_url}</span>}
+        </div>
+      )}
 
       {integrations.length === 0 ? (
         <div className="px-5 py-8 text-center text-xs text-muted-foreground">Nenhuma conta UniFi integrada.</div>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { spedynet } from '@/api/spedynetClient';
 import APHeatmapGrid from '@/components/ap/APHeatmapGrid';
 import APChannelAnalyzer from '@/components/ap/APChannelAnalyzer';
@@ -16,7 +16,8 @@ const DEFAULT_APS = [];
 
 export default function APMonitor() {
   const [aps, setAPs] = useState(DEFAULT_APS);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(new Date());
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [selectedAP, setSelectedAP] = useState(null);
@@ -25,26 +26,33 @@ export default function APMonitor() {
   const [view, setView] = useState('map'); // 'map' | 'list'
   const [pollError, setPollError] = useState(null);
   const [discovering, setDiscovering] = useState(false);
+  const refreshInFlight = useRef(false);
 
   const loadSaved = useCallback(async () => {
     try {
       setAPs(await spedynet.entities.AccessPoint.list('-updated_date'));
     } catch (error) {
       setPollError(error.message || 'Falha ao carregar Access Points');
+    } finally {
+      setLoading(false);
     }
   }, []);
 
   const refreshMetrics = useCallback(async () => {
-    setLoading(true);
+    if (refreshInFlight.current) return;
+    refreshInFlight.current = true;
+    setRefreshing(true);
     setPollError(null);
     try {
       const response = await spedynet.functions.invoke('accessPointPoll', {});
       setAPs(response.data?.access_points || []);
     } catch (err) {
       setPollError(err.message || 'Falha ao conectar aos equipamentos');
+    } finally {
+      setLastRefresh(new Date());
+      setRefreshing(false);
+      refreshInFlight.current = false;
     }
-    setLastRefresh(new Date());
-    setLoading(false);
   }, []);
 
   useEffect(() => { loadSaved(); }, [loadSaved]);
@@ -166,8 +174,8 @@ export default function APMonitor() {
             <ScanSearch className={`w-3.5 h-3.5 ${discovering ? 'animate-pulse' : ''}`} />
             Descobrir APs
           </Button>
-          <Button size="sm" variant="outline" onClick={refreshMetrics} disabled={loading} className="gap-1.5">
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+          <Button size="sm" variant="outline" onClick={refreshMetrics} disabled={loading || refreshing} className="gap-1.5">
+            <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
             Atualizar
           </Button>
           <Button size="sm" onClick={() => { setEditingAP(null); setShowRegister(true); }} className="gap-1.5">
