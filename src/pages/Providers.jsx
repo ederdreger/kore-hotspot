@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
 const commercialPlans = [
+  { id: 'free', label: 'Free', price: 0 },
   { id: 'starter', label: 'Starter', price: 100 },
   { id: 'professional', label: 'Professional', price: 200 },
   { id: 'enterprise', label: 'Enterprise', price: 300 }
@@ -332,15 +333,15 @@ export default function Providers() {
         </div>
         <div>
           <Label className="text-xs text-muted-foreground mb-1.5 block">Vencimento do contrato</Label>
-          <Input type="date" value={form.contract_due_date} onChange={e => setForm({ ...form, contract_due_date: e.target.value })} className="bg-input border-border h-9" />
+          <Input type="date" value={form.contract_due_date} onChange={e => setForm({ ...form, contract_due_date: e.target.value })} disabled={form.commercial_plan === 'free'} className="bg-input border-border h-9" />
         </div>
         <div>
           <Label className="text-xs text-muted-foreground mb-1.5 block">Dias de tolerancia</Label>
-          <Input type="number" value={form.grace_days} onChange={e => setForm({ ...form, grace_days: e.target.value })} className="bg-input border-border h-9" />
+          <Input type="number" value={form.grace_days} onChange={e => setForm({ ...form, grace_days: e.target.value })} disabled={form.commercial_plan === 'free'} className="bg-input border-border h-9" />
         </div>
         <div>
           <Label className="text-xs text-muted-foreground mb-1.5 block">Ultimo pagamento</Label>
-          <Input type="date" value={form.last_payment_date} onChange={e => setForm({ ...form, last_payment_date: e.target.value })} className="bg-input border-border h-9" />
+          <Input type="date" value={form.last_payment_date} onChange={e => setForm({ ...form, last_payment_date: e.target.value })} disabled={form.commercial_plan === 'free'} className="bg-input border-border h-9" />
         </div>
         <div>
           <Label className="text-xs text-muted-foreground mb-1.5 block">Limite de clientes</Label>
@@ -351,10 +352,12 @@ export default function Providers() {
           <Input type="number" value={form.max_mikrotiks} onChange={e => setForm({ ...form, max_mikrotiks: e.target.value })} placeholder="0 = ilimitado" className="bg-input border-border h-9" />
         </div>
       </div>
-      <label className="flex items-center gap-2 text-xs text-muted-foreground">
-        <input type="checkbox" checked={form.block_on_overdue !== false} onChange={e => setForm({ ...form, block_on_overdue: e.target.checked })} className="accent-primary" />
-        Bloquear automaticamente apos vencer o periodo de tolerancia
-      </label>
+      {form.commercial_plan !== 'free' && (
+        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          <input type="checkbox" checked={form.block_on_overdue !== false} onChange={e => setForm({ ...form, block_on_overdue: e.target.checked })} className="accent-primary" />
+          Bloquear automaticamente apos vencer o periodo de tolerancia
+        </label>
+      )}
       <div>
         <Label className="text-xs text-muted-foreground mb-1.5 block">Observacoes</Label>
         <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} className="w-full min-h-20 rounded-md border border-border bg-input px-3 py-2 text-sm text-foreground" />
@@ -395,7 +398,7 @@ export default function Providers() {
         ) : providers.length === 0 ? (
           <div className="p-12 text-center text-muted-foreground">Nenhum provedor cadastrado</div>
         ) : providers.map((provider) => (
-          <div key={provider.id || provider.tenant_id} className={`grid grid-cols-12 gap-3 items-center px-4 py-4 border-b border-border last:border-0 ${['suspended', 'canceled'].includes(provider.status) || isOverdue(provider) ? 'bg-destructive/5' : ''}`}>
+          <div key={provider.id || provider.tenant_id} className={`grid grid-cols-12 gap-3 items-center px-4 py-4 border-b border-border last:border-0 ${['suspended', 'canceled'].includes(provider.status) || (provider.commercial_plan !== 'free' && isOverdue(provider)) ? 'bg-destructive/5' : ''}`}>
             <div className="col-span-12 md:col-span-4 min-w-0">
               <p className="text-sm font-semibold text-foreground truncate">{provider.name}</p>
               <p className="text-xs text-muted-foreground font-mono truncate">{provider.tenant_id}</p>
@@ -403,7 +406,7 @@ export default function Providers() {
             <div className="col-span-12 md:col-span-3 text-xs text-muted-foreground min-w-0">
               <p className="flex items-center gap-1 truncate"><Globe2 className="w-3 h-3" /> {provider.domain || '-'}</p>
               <p className="truncate">{provider.contact_email || provider.contact_phone || '-'}</p>
-              <p className={isOverdue(provider) ? 'text-destructive font-medium' : ''}>Vence: {provider.contract_due_date || '-'}</p>
+              <p className={provider.commercial_plan !== 'free' && isOverdue(provider) ? 'text-destructive font-medium' : ''}>Vence: {provider.commercial_plan === 'free' ? 'Plano gratuito' : provider.contract_due_date || '-'}</p>
               <p className={provider.ssl_status === 'active' ? 'text-success' : provider.ssl_status === 'error' ? 'text-destructive' : 'text-warning'}>
                 SSL: {provider.ssl_status === 'active' ? 'ativo' : provider.ssl_status === 'error' ? 'erro' : 'pendente'}
               </p>
@@ -419,8 +422,8 @@ export default function Providers() {
             <div className="col-span-2 md:col-span-1 flex justify-end gap-1">
               <button onClick={() => issueCertificate(provider)} disabled={issuingSsl === (provider.id || provider.tenant_id)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-info disabled:opacity-50" title="Emitir certificado SSL">{issuingSsl === (provider.id || provider.tenant_id) ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}</button>
               <button onClick={() => resetProviderAdmin(provider)} disabled={resettingAdmin === (provider.id || provider.tenant_id)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-info disabled:opacity-50" title="Resetar acesso do provedor">{resettingAdmin === (provider.id || provider.tenant_id) ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <KeyRound className="w-3.5 h-3.5" />}</button>
-              <button onClick={() => createPix(provider)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-primary" title="Gerar Pix"><QrCode className="w-3.5 h-3.5" /></button>
-              <button onClick={() => markPaid(provider)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-success" title="Registrar pagamento"><CreditCard className="w-3.5 h-3.5" /></button>
+              {provider.commercial_plan !== 'free' && <button onClick={() => createPix(provider)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-primary" title="Gerar Pix"><QrCode className="w-3.5 h-3.5" /></button>}
+              {provider.commercial_plan !== 'free' && <button onClick={() => markPaid(provider)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-success" title="Registrar pagamento"><CreditCard className="w-3.5 h-3.5" /></button>}
               <button onClick={() => openEdit(provider)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-primary" title="Editar"><Edit2 className="w-3.5 h-3.5" /></button>
               <button onClick={() => remove(provider)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-destructive" title="Excluir"><Trash2 className="w-3.5 h-3.5" /></button>
             </div>

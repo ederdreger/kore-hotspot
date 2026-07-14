@@ -3,7 +3,7 @@ import { spedynet } from '@/api/spedynetClient';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ArrowRight, Check, CheckCircle2, Copy, Loader2, QrCode, User, Users } from 'lucide-react';
+import { ArrowRight, Check, CheckCircle2, Copy, Loader2, QrCode, Ticket, User, Users } from 'lucide-react';
 import { toast } from 'sonner';
 
 function getPortalParams() {
@@ -135,6 +135,7 @@ export default function CaptivePortal() {
   const [settings, setSettings] = useState({});
   const [phone, setPhone] = useState('');
   const [clientIdentifier, setClientIdentifier] = useState('');
+  const [voucherCode, setVoucherCode] = useState('');
   const [form, setForm] = useState({ name: '', phone: '', cpf: '', cep: '' });
   const [selectedPlanId, setSelectedPlanId] = useState('');
   const [activeClient, setActiveClient] = useState(null);
@@ -298,6 +299,28 @@ export default function CaptivePortal() {
     }
   };
 
+  const startWithVoucher = async (event) => {
+    event.preventDefault();
+    if (!String(voucherCode || '').trim()) return;
+    setLoading(true);
+    try {
+      const params = getPortalParams();
+      const res = await spedynet.functions.invoke('captiveVoucherLogin', {
+        code: voucherCode.trim(),
+        mac: params.mac,
+        ip: params.ip
+      });
+      const login = res.data?.login || res.data?.authorization;
+      setHotspotLogin(login);
+      setStage('welcome');
+      loginToMikrotik(login, settings.captive_redirect_url || params.linkOrig);
+    } catch (error) {
+      toast.error(error.message || 'Voucher invalido ou indisponivel.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const ensureClientForPlan = async () => {
     if (activeClient) return activeClient;
     const existing = findClient(form.phone || phone);
@@ -404,8 +427,38 @@ export default function CaptivePortal() {
                 </div>
               </div>
             </button>
+            <button
+              type="button"
+              onClick={() => setStage('voucher')}
+              className="w-full rounded-lg bg-white p-4 text-left shadow-sm border-2 border-white hover:border-[#7c3aed]"
+            >
+              <div className="flex items-center gap-3">
+                <Ticket className="w-5 h-5 text-[#7c3aed]" />
+                <div>
+                  <p className="font-black">Acessar com voucher</p>
+                  <p className="text-xs text-slate-600">Informe o codigo para liberar a conexao</p>
+                </div>
+              </div>
+            </button>
           </div>
         </div>
+      )}
+
+      {stage === 'voucher' && (
+        <form onSubmit={startWithVoucher} className="space-y-5">
+          <div className="text-center">
+            <h1 className="font-black text-base">Acesso com voucher</h1>
+            <p className="mt-4 text-sm leading-6 text-slate-600 text-left">Digite o codigo recebido para conectar este dispositivo.</p>
+          </div>
+          <div className="rounded-lg bg-white p-4 shadow-sm">
+            <Label className="text-sm font-semibold">Codigo do voucher</Label>
+            <Input value={voucherCode} onChange={(event) => setVoucherCode(event.target.value.toUpperCase())} autoComplete="one-time-code" className="mt-2 h-10 border-slate-900 bg-white uppercase tracking-wider" placeholder="EXEMPLO1" />
+            <Button disabled={loading || !voucherCode.trim()} className="mt-4 h-10 w-full bg-[#7c3aed] text-white hover:bg-[#6d28d9]">
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Conectar com voucher'}
+            </Button>
+            <button type="button" onClick={() => setStage('choice')} className="mt-3 w-full text-xs text-slate-500">Voltar</button>
+          </div>
+        </form>
       )}
 
       {stage === 'client' && (

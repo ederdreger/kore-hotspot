@@ -21,6 +21,7 @@ const PUBLIC_HOST = process.env.KORE_PUBLIC_HOST || '';
 const PROVIDERS_FILE = path.join(DATA_DIR, 'providers.json');
 const PROVIDER_BILLING_FILE = path.join(DATA_DIR, 'provider-billing.json');
 const PROVIDER_COMMERCIAL_PLANS = {
+  free: { label: 'Free', price: 0 },
   starter: { label: 'Starter', price: 100 },
   professional: { label: 'Professional', price: 200 },
   enterprise: { label: 'Enterprise', price: 300 }
@@ -1113,12 +1114,13 @@ function licenseState(tenantId = currentTenant().id) {
   const now = new Date();
   const overdue = !!(dueDate && now > dueDate);
   const graceExpired = !!(graceLimit && now > graceLimit);
+  const isFreePlan = String(provider.commercial_plan || '').toLowerCase() === 'free';
   if (maxClients > 0 && stats.clients >= maxClients) warnings.push('Limite de clientes atingido');
   if (maxMikrotiks > 0 && stats.mikrotiks >= maxMikrotiks) warnings.push('Limite de MikroTiks atingido');
-  if (overdue && !graceExpired) warnings.push('Mensalidade vencida em periodo de tolerancia');
-  if (graceExpired) warnings.push('Mensalidade vencida');
+  if (!isFreePlan && overdue && !graceExpired) warnings.push('Mensalidade vencida em periodo de tolerancia');
+  if (!isFreePlan && graceExpired) warnings.push('Mensalidade vencida');
   const blocked = ['suspended', 'canceled'].includes(String(provider.status || '').toLowerCase());
-  const financialBlocked = graceExpired && provider.block_on_overdue !== false;
+  const financialBlocked = !isFreePlan && graceExpired && provider.block_on_overdue !== false;
   return {
     ok: !blocked && !financialBlocked,
     tenant_id: provider.tenant_id || provider.id,
@@ -1132,9 +1134,9 @@ function licenseState(tenantId = currentTenant().id) {
       due_date: provider.contract_due_date || '',
       grace_days: graceDays,
       last_payment_date: provider.last_payment_date || '',
-      overdue,
-      grace_expired: graceExpired,
-      block_on_overdue: provider.block_on_overdue !== false
+      overdue: !isFreePlan && overdue,
+      grace_expired: !isFreePlan && graceExpired,
+      block_on_overdue: !isFreePlan && provider.block_on_overdue !== false
     }
   };
 }
@@ -1190,7 +1192,8 @@ function providerCommercialPrice(planId, fallback = 0) {
 }
 
 function providerPayload(body = {}, tenantId = '') {
-  const commercialPlan = String(body.commercial_plan || 'starter').toLowerCase();
+  const requestedCommercialPlan = String(body.commercial_plan || 'starter').toLowerCase();
+  const commercialPlan = Object.hasOwn(PROVIDER_COMMERCIAL_PLANS, requestedCommercialPlan) ? requestedCommercialPlan : 'starter';
   return {
     name: String(body.name || tenantId).trim(),
     legal_name: String(body.legal_name || '').trim(),
@@ -1205,7 +1208,7 @@ function providerPayload(body = {}, tenantId = '') {
     contract_due_date: String(body.contract_due_date || '').slice(0, 10),
     grace_days: Number(body.grace_days ?? 5),
     last_payment_date: String(body.last_payment_date || '').slice(0, 10),
-    block_on_overdue: body.block_on_overdue !== false,
+    block_on_overdue: commercialPlan === 'free' ? false : body.block_on_overdue !== false,
     max_clients: Number(body.max_clients || 0),
     max_mikrotiks: Number(body.max_mikrotiks || 0),
     notes: String(body.notes || '')
@@ -2062,36 +2065,46 @@ async function captiveVoucherLogin(payload = {}) {
 
   const vouchers = readJson(ENTITY_FILES.vouchers, []);
   const voucher = vouchers.find(item => normalizeText(item.code).toUpperCase() === code);
-  if (!voucher || voucher.status !== 'available') throw new Error('Voucher invalido ou indisponivel');
+  const reservationExpired = voucher?.status === 'reserved' && Date.now() - new Date(voucher.reserved_at || 0).getTime() > 5 * 60 * 1000;
+  if (!voucher || (voucher.status !== 'available' && !reservationExpired)) throw Object.assign(new Error('Voucher invalido ou indisponivel'), { status: 400 });
 
   const minutes = Number(voucher.duration_minutes || payload.minutes || 30);
   const expires = new Date(Date.now() + minutes * 60000).toISOString();
-  const updated = vouchers.map(item => (
-    item.id === voucher.id || item._id === voucher._id ? {
-      ...item,
-      status: 'used',
-      used_at: new Date().toISOString(),
-      expires_at: expires,
-      used_by_name: payload.name || 'Visitante',
-      used_by_email: payload.email || '',
-      mac_address: normalizeMac(payload.mac),
-      ip_address: normalizeClientIp(payload.ip)
-    } : item
-  ));
-  writeJson(ENTITY_FILES.vouchers, updated);
+  const matchesVoucher = item => item.id === voucher.id || item._id === voucher._id;
+  writeJson(ENTITY_FILES.vouchers, vouchers.map(item => matchesVoucher(item) ? { ...item, status: 'reserved', reserved_at: new Date().toISOString() } : item));
 
-  const mikrotik = resolveMikrotikTarget(payload, voucher);
-  const authorization = await createHotspotUser({
-    ...mikrotik,
-    username: hotspotCredential(`voucher-${code}`),
-    password: randomPassword(),
-    mac: payload.mac,
-    ip: payload.ip,
-    minutes,
-    plan: voucher
-  }).catch(error => ({ authorized: false, error: error.message }));
+  let authorization;
+  try {
+    const mikrotik = resolveMikrotikTarget(payload, voucher);
+    authorization = await createHotspotUser({
+      ...mikrotik,
+      username: hotspotCredential(`voucher-${code}`),
+      password: randomPassword(),
+      mac: payload.mac,
+      ip: payload.ip,
+      minutes,
+      plan: voucher
+    });
+  } catch (error) {
+    const current = readJson(ENTITY_FILES.vouchers, []);
+    writeJson(ENTITY_FILES.vouchers, current.map(item => matchesVoucher(item) ? { ...item, status: 'available', reserved_at: '' } : item));
+    throw error;
+  }
 
-  return { success: true, voucher: { ...voucher, status: 'used', expires_at: expires }, minutes, authorization, login: { username: authorization.username, password: authorization.password } };
+  const usedVoucher = {
+    ...voucher,
+    status: 'used',
+    reserved_at: '',
+    used_at: new Date().toISOString(),
+    expires_at: expires,
+    used_by_name: payload.name || 'Visitante',
+    used_by_email: payload.email || '',
+    mac_address: authorization.mac || normalizeMac(payload.mac),
+    ip_address: authorization.ip || normalizeClientIp(payload.ip)
+  };
+  const current = readJson(ENTITY_FILES.vouchers, []);
+  writeJson(ENTITY_FILES.vouchers, current.map(item => matchesVoucher(item) ? usedVoucher : item));
+  return { success: true, voucher: usedVoucher, minutes, authorization, login: { username: authorization.username, password: authorization.password, active_login: authorization.active_login } };
 }
 
 async function activateFreePlan(payload = {}) {

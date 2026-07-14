@@ -8,7 +8,7 @@ Criador e mantenedor: **Spedynet Telecom**.
 
 - Painel administrativo web em português.
 - Captive portal responsivo para celular, tablet e computador.
-- Cadastro de clientes, prospectos, vouchers e planos.
+- Cadastro de clientes, prospectos, vouchers e planos, com acesso por voucher no captive portal.
 - Integração com MikroTik via SSH Key.
 - Criação de usuários hotspot diretamente no MikroTik.
 - Monitoramento de sessões hotspot/RADIUS.
@@ -119,6 +119,8 @@ Em operação com múltiplos domínios apontando para a mesma VPS, o backend tam
 ## Cobrança SaaS dos provedores
 
 No menu **Provedores**, cada provedor pode ter mensalidade, vencimento, tolerância e bloqueio por inadimplência. O botão **Gerar Pix** cria uma cobrança Mercado Pago para a mensalidade do provedor.
+
+O plano comercial **Free** tem mensalidade zero e não aplica vencimento, tolerância ou bloqueio financeiro. Os demais planos continuam seguindo o ciclo normal de cobrança.
 
 Quando o pagamento é aprovado pelo webhook ou pela consulta manual no painel, o sistema registra o pagamento, renova o vencimento por mais um mês e reativa o provedor caso ele estivesse suspenso.
 

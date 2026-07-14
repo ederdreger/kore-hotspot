@@ -10,6 +10,15 @@ const password = 'TesteSeguro123';
 let directory;
 let api;
 
+async function loginAdmin() {
+  const login = await request('/api/admin/auth', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'login', email: 'spedynet@spedynet.com.br', password })
+  });
+  assert.equal(login.response.status, 200);
+  assert.ok(login.data.token);
+  return login.data.token;
+}
+
 async function request(route, options = {}) {
   const response = await fetch(`http://127.0.0.1:${port}${route}`, options);
   const data = await response.json();
@@ -73,14 +82,36 @@ test('reset de administradores rejeita requisicao sem sessao', async () => {
 });
 
 test('login cria sessao que autoriza entidades', async () => {
-  const login = await request('/api/admin/auth', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'login', email: 'spedynet@spedynet.com.br', password })
-  });
-  assert.equal(login.response.status, 200);
-  assert.ok(login.data.token);
-  const clients = await request('/api/entities/clients', { headers: { 'X-Kore-Session': login.data.token } });
+  const token = await loginAdmin();
+  const clients = await request('/api/entities/clients', { headers: { 'X-Kore-Session': token } });
   assert.equal(clients.response.status, 200);
   assert.deepEqual(clients.data.items, []);
+});
+
+test('planos comerciais incluem modalidade gratuita', async () => {
+  const token = await loginAdmin();
+  const { response, data } = await request('/api/providers', { headers: { 'X-Kore-Session': token } });
+  assert.equal(response.status, 200);
+  assert.deepEqual(data.commercial_plans.free, { label: 'Free', price: 0 });
+});
+
+test('voucher nao e consumido quando o MikroTik nao pode autorizar', async () => {
+  const token = await loginAdmin();
+  const created = await request('/api/entities/vouchers', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Kore-Session': token },
+    body: JSON.stringify({ code: 'TESTE-VOUCHER', status: 'available', duration_minutes: 30 })
+  });
+  assert.equal(created.response.status, 200);
+
+  const attempt = await request('/api/captive/voucher-login', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: 'TESTE-VOUCHER' })
+  });
+  assert.notEqual(attempt.response.status, 200);
+
+  const vouchers = await request('/api/entities/vouchers', { headers: { 'X-Kore-Session': token } });
+  const voucher = vouchers.data.items.find(item => item.code === 'TESTE-VOUCHER');
+  assert.equal(voucher.status, 'available');
 });
 
 test('configuracao minima do captive permanece publica', async () => {
