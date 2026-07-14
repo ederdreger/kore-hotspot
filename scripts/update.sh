@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 APP_NAME="Kore-HotSpot"
-SCRIPT_VERSION="v0.2.41"
+SCRIPT_VERSION="v0.2.42"
 REPO_URL="${REPO_URL:-https://github.com/ederdreger/kore-hotspot.git}"
 REPO_SLUG="${REPO_SLUG:-ederdreger/kore-hotspot}"
 BRANCH="${BRANCH:-main}"
@@ -322,8 +322,10 @@ EOF
 
 install_updater_binary() {
   if [ -f "$INSTALL_DIR/scripts/update.sh" ]; then
-    cp "$INSTALL_DIR/scripts/update.sh" /usr/local/bin/kore-hotspot-update
-    chmod +x /usr/local/bin/kore-hotspot-update
+    # Replacing the running script through cp truncates its current inode and
+    # can make Bash skip or corrupt the remaining commands. Rename atomically.
+    install -m 0755 "$INSTALL_DIR/scripts/update.sh" /usr/local/bin/kore-hotspot-update.new
+    mv -f /usr/local/bin/kore-hotspot-update.new /usr/local/bin/kore-hotspot-update
   fi
   if [ -f "$INSTALL_DIR/scripts/provider-upsert.sh" ]; then
     cp "$INSTALL_DIR/scripts/provider-upsert.sh" /usr/local/bin/kore-provider-upsert

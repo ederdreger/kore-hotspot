@@ -41,15 +41,38 @@ if ss -ltnH "sport = :${INFORM_PORT}" | grep -q . && ! systemctl is-active --qui
 fi
 
 export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
 log "Instalando dependencias oficiais"
 apt-get update -y
 apt-get install -y ca-certificates curl gnupg jq
 
 install -d -m 0755 /usr/share/keyrings
-curl -fsSL https://pgp.mongodb.com/server-8.0.asc | gpg --dearmor --yes -o /usr/share/keyrings/mongodb-server-8.0.gpg
-cat > /etc/apt/sources.list.d/mongodb-org-8.0.list <<EOF
+rm -f /etc/apt/sources.list.d/mongodb-org-8.0.list /etc/apt/sources.list.d/kore-mongodb-4.4.list
+
+if grep -qw avx /proc/cpuinfo; then
+  mongo_series="8.0"
+  curl -fsSL https://pgp.mongodb.com/server-8.0.asc | gpg --dearmor --yes -o /usr/share/keyrings/mongodb-server-8.0.gpg
+  cat > /etc/apt/sources.list.d/mongodb-org-8.0.list <<EOF
 deb [arch=amd64 signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/8.0 multiverse
 EOF
+else
+  mongo_series="4.4"
+  log "CPU sem AVX detectada; usando MongoDB 4.4 compativel"
+  curl -fsSL https://pgp.mongodb.com/server-4.4.asc | gpg --dearmor --yes -o /usr/share/keyrings/mongodb-server-4.4.gpg
+  cat > /etc/apt/sources.list.d/kore-mongodb-4.4.list <<EOF
+deb [arch=amd64 signed-by=/usr/share/keyrings/mongodb-server-4.4.gpg] https://repo.mongodb.org/apt/ubuntu focal/mongodb-org/4.4 multiverse
+EOF
+
+  # MongoDB 4.4 needs libssl1.1, which is no longer shipped by Jammy.
+  # Install only that signed Ubuntu package and immediately remove the Focal source.
+  echo 'deb http://security.ubuntu.com/ubuntu focal-security main' > /etc/apt/sources.list.d/kore-focal-libssl.list
+  apt-get update -y
+  if ! apt-get install -y libssl1.1; then
+    rm -f /etc/apt/sources.list.d/kore-focal-libssl.list
+    fail "Nao foi possivel instalar a biblioteca compativel com MongoDB 4.4."
+  fi
+  rm -f /etc/apt/sources.list.d/kore-focal-libssl.list
+fi
 
 curl -fsSL https://dl.ui.com/unifi/unifi-repo.gpg -o /usr/share/keyrings/unifi-repo.gpg
 cat > /etc/apt/sources.list.d/100-ubnt-unifi.list <<EOF
@@ -57,8 +80,11 @@ deb [arch=amd64 signed-by=/usr/share/keyrings/unifi-repo.gpg] https://www.ui.com
 EOF
 
 apt-get update -y
-apt-get install -y mongodb-org unifi
-systemctl enable --now mongod
+apt-mark unhold mongodb-org mongodb-org-server mongodb-org-mongos mongodb-org-shell mongodb-org-tools >/dev/null 2>&1 || true
+apt-get install -y --allow-downgrades mongodb-org unifi
+if [ "$mongo_series" = "4.4" ]; then
+  apt-mark hold mongodb-org mongodb-org-server mongodb-org-mongos mongodb-org-shell mongodb-org-tools >/dev/null
+fi
 systemctl stop unifi || true
 
 properties="/var/lib/unifi/system.properties"
@@ -93,7 +119,9 @@ for rule in \
 done
 command -v netfilter-persistent >/dev/null 2>&1 && netfilter-persistent save >/dev/null
 
-systemctl enable --now unifi
+systemctl disable --now mongod >/dev/null 2>&1 || true
+systemctl enable unifi
+systemctl restart unifi
 for _ in $(seq 1 60); do
   if ss -ltnH "sport = :${UI_PORT}" | grep -q . && ss -ltnH "sport = :${INFORM_PORT}" | grep -q .; then
     version="$(dpkg-query -W -f='${Version}' unifi 2>/dev/null || true)"
