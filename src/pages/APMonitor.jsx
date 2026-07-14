@@ -6,6 +6,7 @@ import APAlertPanel from '@/components/ap/APAlertPanel';
 import APStatsBar from '@/components/ap/APStatsBar';
 import APRegisterModal from '@/components/ap/APRegisterModal';
 import APProfileManager from '@/components/ap/APProfileManager';
+import UniFiIntegrationPanel from '@/components/ap/UniFiIntegrationPanel';
 import { Wifi, RefreshCw, Plus, MapPin, Trash2, Edit2, AlertTriangle, ScanSearch } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
@@ -191,6 +192,8 @@ export default function APMonitor() {
 
       {/* Stats bar */}
       <APStatsBar aps={aps} loading={loading} />
+
+      <UniFiIntegrationPanel onSynced={items => items ? setAPs(items) : loadSaved()} />
 
       <APProfileManager />
 

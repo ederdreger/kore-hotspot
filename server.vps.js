@@ -32,6 +32,7 @@ const MULTI_TENANT = String(process.env.KORE_MULTI_TENANT || 'true') !== 'false'
 const tenantStore = new AsyncLocalStorage();
 const CAPTIVE_DB = path.join(DATA_DIR, 'captive-prospects.json');
 const AP_PROFILES_FILE = path.join(DATA_DIR, 'ap-profiles.json');
+const UNIFI_INTEGRATIONS_FILE = path.join(DATA_DIR, 'unifi-integrations.json');
 const ENTITY_FILES = {
   admins: path.join(DATA_DIR, 'admin-users.json'),
   admin_sessions: path.join(DATA_DIR, 'admin-sessions.json'),
@@ -656,17 +657,181 @@ async function discoverAccessPoints(payload = {}) {
 
 async function pollAccessPoints(payload = {}) {
   const devices = getMikrotikDevices();
+  const unifiIntegrations = readJson(UNIFI_INTEGRATIONS_FILE, []).filter(item => item.status !== 'inactive');
   const requested = payload.mikrotik_id || payload.controller_id;
   const targets = requested ? devices.filter(device => device.id === requested) : devices;
-  if (!targets.length) throw Object.assign(new Error('Nenhum MikroTik cadastrado para coletar Access Points'), { status: 400 });
+  const unifiTargets = requested ? unifiIntegrations.filter(item => `unifi:${item.id}` === requested || item.id === requested) : unifiIntegrations;
+  if (!targets.length && !unifiTargets.length) throw Object.assign(new Error('Nenhuma controladora de Access Points cadastrada'), { status: 400 });
   const errors = [];
   for (const device of targets) {
     try { await discoverAccessPoints({ controller_id: device.id }); }
     catch (error) { errors.push(`${device.name || device.host}: ${error.message}`); }
   }
+  for (const integration of unifiTargets) {
+    try { await syncUnifiAccessPoints(integration); }
+    catch (error) { errors.push(`${integration.name || 'UniFi'}: ${error.message}`); }
+  }
   const accessPoints = readJson(ENTITY_FILES.access_points, []);
-  if (errors.length === targets.length) throw Object.assign(new Error(errors.join(' | ')), { status: 502 });
-  return { success: errors.length === 0, access_points: accessPoints, errors, controllers_checked: targets.length };
+  if (errors.length === targets.length + unifiTargets.length) throw Object.assign(new Error(errors.join(' | ')), { status: 502 });
+  return { success: errors.length === 0, access_points: accessPoints, errors, controllers_checked: targets.length + unifiTargets.length };
+}
+
+function publicUnifiIntegration(integration) {
+  const { api_key_encrypted, ...safe } = integration;
+  return { ...safe, api_key_configured: !!api_key_encrypted };
+}
+
+async function unifiApiRequest(integration, endpoint, attempt = 0) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch(`https://api.ui.com${endpoint}`, {
+      headers: { Accept: 'application/json', 'X-API-Key': decryptSecret(integration.api_key_encrypted) },
+      signal: controller.signal
+    });
+    const data = await response.json().catch(() => ({}));
+    if ((response.status === 429 || response.status >= 500) && attempt < 2) {
+      const retryAfter = Math.min(Number(response.headers.get('retry-after') || 1), 5);
+      await new Promise(resolve => setTimeout(resolve, retryAfter * 1000 * (attempt + 1)));
+      return unifiApiRequest(integration, endpoint, attempt + 1);
+    }
+    if (!response.ok) {
+      const message = response.status === 401 || response.status === 403
+        ? 'Chave da API UniFi invalida ou sem permissao'
+        : data.message || data.code || `UniFi HTTP ${response.status}`;
+      throw Object.assign(new Error(message), { status: response.status === 401 || response.status === 403 ? 401 : 502 });
+    }
+    return data;
+  } catch (error) {
+    if (error.name === 'AbortError') throw Object.assign(new Error('Tempo limite ao consultar a API UniFi'), { status: 504 });
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function unifiPagedRequest(integration, endpoint) {
+  const items = [];
+  let nextToken = '';
+  for (let page = 0; page < 10; page += 1) {
+    const separator = endpoint.includes('?') ? '&' : '?';
+    const token = nextToken ? `&nextToken=${encodeURIComponent(nextToken)}` : '';
+    const response = await unifiApiRequest(integration, `${endpoint}${separator}pageSize=200${token}`);
+    if (Array.isArray(response.data)) items.push(...response.data);
+    nextToken = String(response.nextToken || '');
+    if (!nextToken) return items;
+  }
+  return items;
+}
+
+function unifiDeviceRows(groups = []) {
+  const rows = [];
+  for (const group of groups) {
+    if (Array.isArray(group?.devices)) {
+      for (const device of group.devices) rows.push({ ...device, hostId: device.hostId || group.hostId || group.id, hostName: group.hostName || group.name });
+    } else if (group && typeof group === 'object') rows.push(group);
+  }
+  return rows;
+}
+
+function isUnifiAccessPoint(device = {}) {
+  const uidb = device.uidb || {};
+  const text = [device.type, device.productLine, device.model, device.shortname, uidb.productLine, uidb.shortname, uidb.name]
+    .filter(Boolean).join(' ').toLowerCase();
+  const features = Array.isArray(device.features) ? device.features.join(' ').toLowerCase() : '';
+  return /(^|\s)uap(\s|$)|access point|unifi wifi|\bu[67][+-]?\b|\buap-|\bap\b/.test(text) || /wifi|wireless/.test(features);
+}
+
+function unifiAccessPoint(integration, device, sitesById) {
+  const uidb = device.uidb || {};
+  const mac = normalizeMac(device.macAddress || device.mac || device.id || '');
+  const siteId = device.siteId || device.site_id || '';
+  const site = sitesById.get(siteId) || {};
+  const state = String(device.state || device.status || device.connectionState || '').toLowerCase();
+  const online = ['online', 'connected', 'active', '1'].includes(state) || device.online === true;
+  const id = `unifi-${integration.id}-${(mac || device.id || crypto.randomUUID()).replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}`;
+  return {
+    id, _id: id,
+    name: device.name || device.displayName || uidb.name || device.shortname || device.model || 'UniFi AP',
+    custom_name: device.name || '',
+    ip: device.ipAddress || device.ip || device.ipv4 || '',
+    mac_address: mac,
+    model: device.model || uidb.name || uidb.shortname || device.shortname || '',
+    firmware: device.firmwareVersion || device.version || '',
+    status: online ? 'ok' : 'offline',
+    clients: Number(device.clientCount ?? device.num_sta ?? device.clients ?? 0),
+    signalAvg: Number(device.signalAvg ?? 0),
+    utilization: Number(device.utilization ?? 0),
+    uptime: device.uptime || '--',
+    managed: true,
+    source: 'unifi',
+    controller_type: 'unifi-site-manager',
+    controller_id: `unifi:${integration.id}`,
+    controller_name: integration.name,
+    site_id: siteId,
+    site_name: site.meta?.name || site.name || device.siteName || '',
+    host_id: device.hostId || '',
+    host_name: device.hostName || '',
+    last_seen: device.lastSeen || device.lastConnectionStateChange || '',
+    pollError: '',
+    updated_date: new Date().toISOString()
+  };
+}
+
+async function collectUnifi(integration) {
+  const [sites, deviceGroups] = await Promise.all([
+    unifiPagedRequest(integration, '/v1/sites'),
+    unifiPagedRequest(integration, '/v1/devices')
+  ]);
+  const sitesById = new Map(sites.map(site => [site.siteId || site.id, site]));
+  const devices = unifiDeviceRows(deviceGroups);
+  const accessPoints = devices.filter(isUnifiAccessPoint).map(device => unifiAccessPoint(integration, device, sitesById));
+  return { sites, devices, access_points: accessPoints };
+}
+
+async function syncUnifiAccessPoints(integration) {
+  const result = await collectUnifi(integration);
+  const controllerId = `unifi:${integration.id}`;
+  const current = readJson(ENTITY_FILES.access_points, []);
+  const discoveredIds = new Set(result.access_points.map(item => item.id));
+  const missing = current.filter(item => item.controller_id === controllerId && !discoveredIds.has(item.id))
+    .map(item => ({ ...item, status: 'offline', pollError: 'Nao encontrado na ultima coleta UniFi', updated_date: new Date().toISOString() }));
+  const merged = [...result.access_points, ...missing, ...current.filter(item => item.controller_id !== controllerId)].slice(0, 5000);
+  writeJson(ENTITY_FILES.access_points, merged);
+  const integrations = readJson(UNIFI_INTEGRATIONS_FILE, []);
+  const updated = { ...integration, last_sync_at: new Date().toISOString(), last_sync_status: 'success', sites_count: result.sites.length, devices_count: result.devices.length, access_points_count: result.access_points.length, updated_date: new Date().toISOString() };
+  writeJson(UNIFI_INTEGRATIONS_FILE, integrations.map(item => item.id === integration.id ? updated : item));
+  return { ...result, access_points: merged, integration: publicUnifiIntegration(updated) };
+}
+
+async function unifiIntegrations(payload = {}) {
+  const action = String(payload.action || 'list');
+  const integrations = readJson(UNIFI_INTEGRATIONS_FILE, []);
+  if (action === 'list') return { integrations: integrations.map(publicUnifiIntegration) };
+  if (action === 'save') {
+    const existing = integrations.find(item => item.id === payload.id) || {};
+    const apiKey = String(payload.api_key || '').trim();
+    if (!String(payload.name || existing.name || '').trim()) throw Object.assign(new Error('Informe o nome da integracao UniFi'), { status: 400 });
+    if (!apiKey && !existing.api_key_encrypted) throw Object.assign(new Error('Informe a chave da API UniFi'), { status: 400 });
+    const now = new Date().toISOString();
+    const id = existing.id || `unifi_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const integration = { ...existing, id, name: String(payload.name || existing.name).trim(), api_key_encrypted: apiKey ? encryptSecret(apiKey) : existing.api_key_encrypted, status: payload.status === 'inactive' ? 'inactive' : 'active', created_date: existing.created_date || now, updated_date: now };
+    writeJson(UNIFI_INTEGRATIONS_FILE, [integration, ...integrations.filter(item => item.id !== id)].slice(0, 50));
+    return { integration: publicUnifiIntegration(integration) };
+  }
+  const integration = integrations.find(item => item.id === payload.id);
+  if (!integration) throw Object.assign(new Error('Integracao UniFi nao encontrada'), { status: 404 });
+  if (action === 'delete') {
+    writeJson(UNIFI_INTEGRATIONS_FILE, integrations.filter(item => item.id !== integration.id));
+    writeJson(ENTITY_FILES.access_points, readJson(ENTITY_FILES.access_points, []).filter(item => item.controller_id !== `unifi:${integration.id}`));
+    return { success: true };
+  }
+  if (action === 'test') {
+    const result = await collectUnifi(integration);
+    return { success: true, sites_count: result.sites.length, devices_count: result.devices.length, access_points_count: result.access_points.length };
+  }
+  if (action === 'sync') return { success: true, ...(await syncUnifiAccessPoints(integration)) };
+  throw Object.assign(new Error('Acao UniFi invalida'), { status: 400 });
 }
 
 function publicApProfile(profile) {
@@ -2938,6 +3103,11 @@ async function handleRequest(req, res) {
       const body = await readBody(req);
       if (body.action !== 'list' && body.action !== 'preview') assertTenantLicense({ action: 'write', resource: 'access_point_profile' });
       return send(res, 200, await accessPointProfiles(body));
+    }
+    if (req.method === 'POST' && req.url === '/api/unifi/integrations') {
+      const body = await readBody(req);
+      if (body.action !== 'list' && body.action !== 'test') assertTenantLicense({ action: 'write', resource: 'access_point' });
+      return send(res, 200, await unifiIntegrations(body));
     }
     if (req.method === 'GET' && req.url === '/api/captive/prospects') return send(res, 200, { prospects: readCaptiveDb() });
     if (req.method === 'DELETE' && req.url.startsWith('/api/captive/prospects/')) return send(res, 200, await deleteCaptiveProspect(decodeURIComponent(req.url.split('/').pop())));

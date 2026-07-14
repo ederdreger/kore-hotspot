@@ -1,0 +1,152 @@
+import { useEffect, useState } from 'react';
+import { Cloud, ExternalLink, Loader2, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react';
+import { toast } from 'sonner';
+import { spedynet } from '@/api/spedynetClient';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+
+const EMPTY = { name: 'UniFi Site Manager', api_key: '', status: 'active' };
+
+export default function UniFiIntegrationPanel({ onSynced }) {
+  const [integrations, setIntegrations] = useState([]);
+  const [form, setForm] = useState(EMPTY);
+  const [editing, setEditing] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [busy, setBusy] = useState('');
+
+  const load = async () => {
+    try {
+      const response = await spedynet.functions.invoke('unifiIntegrations', { action: 'list' });
+      setIntegrations(response.data?.integrations || []);
+    } catch (error) {
+      toast.error(error.message || 'Erro ao carregar integracoes UniFi');
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const openCreate = () => {
+    setEditing(null);
+    setForm(EMPTY);
+    setShowForm(true);
+  };
+
+  const openEdit = (integration) => {
+    setEditing(integration);
+    setForm({ name: integration.name, api_key: '', status: integration.status || 'active' });
+    setShowForm(true);
+  };
+
+  const save = async (event) => {
+    event.preventDefault();
+    setBusy('save');
+    try {
+      await spedynet.functions.invoke('unifiIntegrations', { action: 'save', id: editing?.id, ...form });
+      toast.success('Integracao UniFi salva.');
+      setShowForm(false);
+      await load();
+    } catch (error) {
+      toast.error(error.message || 'Erro ao salvar integracao UniFi');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const test = async (integration) => {
+    setBusy(`test-${integration.id}`);
+    try {
+      const response = await spedynet.functions.invoke('unifiIntegrations', { action: 'test', id: integration.id });
+      const data = response.data || {};
+      toast.success(`UniFi conectado: ${data.sites_count || 0} site(s), ${data.access_points_count || 0} AP(s).`);
+    } catch (error) {
+      toast.error(error.message || 'Falha ao conectar ao UniFi');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const sync = async (integration) => {
+    setBusy(`sync-${integration.id}`);
+    try {
+      const response = await spedynet.functions.invoke('unifiIntegrations', { action: 'sync', id: integration.id });
+      onSynced?.(response.data?.access_points || []);
+      toast.success(`${response.data?.integration?.access_points_count || 0} AP(s) UniFi sincronizado(s).`);
+      await load();
+    } catch (error) {
+      toast.error(error.message || 'Falha ao sincronizar UniFi');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const remove = async (integration) => {
+    if (!window.confirm(`Excluir a integracao ${integration.name} e seus APs sincronizados?`)) return;
+    setBusy(`delete-${integration.id}`);
+    try {
+      await spedynet.functions.invoke('unifiIntegrations', { action: 'delete', id: integration.id });
+      toast.success('Integracao UniFi excluida.');
+      await load();
+      onSynced?.(null);
+    } catch (error) {
+      toast.error(error.message || 'Erro ao excluir integracao UniFi');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  return (
+    <section className="border border-border bg-card rounded-lg overflow-hidden">
+      <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-border">
+        <div className="flex items-center gap-2">
+          <Cloud className="w-4 h-4 text-info" />
+          <h2 className="text-sm font-semibold text-foreground">Ubiquiti UniFi</h2>
+          <a href="https://unifi.ui.com/settings/api-keys" target="_blank" rel="noreferrer" className="text-muted-foreground hover:text-info" title="Abrir chaves da API UniFi"><ExternalLink className="w-3.5 h-3.5" /></a>
+        </div>
+        <Button size="sm" variant="outline" onClick={openCreate} className="gap-1.5"><Plus className="w-3.5 h-3.5" />Integrar</Button>
+      </div>
+
+      {integrations.length === 0 ? (
+        <div className="px-5 py-8 text-center text-xs text-muted-foreground">Nenhuma conta UniFi integrada.</div>
+      ) : (
+        <div className="divide-y divide-border">
+          {integrations.map(integration => (
+            <div key={integration.id} className="grid grid-cols-1 md:grid-cols-[1fr_auto] items-center gap-3 px-5 py-4">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <p className="truncate text-sm font-semibold text-foreground">{integration.name}</p>
+                  <span className={`rounded border px-1.5 py-0.5 text-[10px] ${integration.status === 'active' ? 'border-success/30 bg-success/10 text-success' : 'border-border text-muted-foreground'}`}>{integration.status === 'active' ? 'Ativa' : 'Inativa'}</span>
+                </div>
+                <p className="mt-0.5 text-xs text-muted-foreground">{integration.sites_count || 0} site(s) | {integration.devices_count || 0} equipamento(s) | {integration.access_points_count || 0} AP(s)</p>
+                {integration.last_sync_at && <p className="mt-1 text-[10px] text-muted-foreground">Sincronizado em {new Date(integration.last_sync_at).toLocaleString('pt-BR')}</p>}
+              </div>
+              <div className="flex items-center justify-end gap-1">
+                <Button size="sm" variant="outline" onClick={() => test(integration)} disabled={!!busy}>{busy === `test-${integration.id}` ? <Loader2 className="mr-1.5 w-3.5 h-3.5 animate-spin" /> : <Cloud className="mr-1.5 w-3.5 h-3.5" />}Testar</Button>
+                <Button size="sm" onClick={() => sync(integration)} disabled={!!busy}>{busy === `sync-${integration.id}` ? <Loader2 className="mr-1.5 w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 w-3.5 h-3.5" />}Sincronizar</Button>
+                <button onClick={() => openEdit(integration)} disabled={!!busy} className="p-2 text-muted-foreground hover:text-primary disabled:opacity-50" title="Editar"><Pencil className="w-4 h-4" /></button>
+                <button onClick={() => remove(integration)} disabled={!!busy} className="p-2 text-muted-foreground hover:text-destructive disabled:opacity-50" title="Excluir"><Trash2 className="w-4 h-4" /></button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setShowForm(false)}>
+          <form onSubmit={save} onClick={event => event.stopPropagation()} className="w-full max-w-md rounded-lg border border-border bg-card shadow-2xl">
+            <div className="flex items-center justify-between border-b border-border px-5 py-4">
+              <h3 className="text-sm font-semibold">{editing ? 'Editar integracao UniFi' : 'Integrar UniFi'}</h3>
+              <button type="button" onClick={() => setShowForm(false)} className="text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="space-y-4 p-5">
+              <div><Label className="text-xs">Nome</Label><Input className="mt-1" value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} required /></div>
+              <div><Label className="text-xs">Chave da API</Label><Input type="password" className="mt-1 font-mono" value={form.api_key} onChange={event => setForm({ ...form, api_key: event.target.value })} placeholder={editing?.api_key_configured ? 'Manter chave atual' : 'X-API-Key'} required={!editing?.api_key_configured} /></div>
+              <div><Label className="text-xs">Status</Label><select className="mt-1 h-9 w-full rounded-md border border-border bg-input px-3 text-sm" value={form.status} onChange={event => setForm({ ...form, status: event.target.value })}><option value="active">Ativa</option><option value="inactive">Inativa</option></select></div>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-border px-5 py-4"><Button type="button" variant="outline" onClick={() => setShowForm(false)}>Cancelar</Button><Button type="submit" disabled={busy === 'save'}>{busy === 'save' && <Loader2 className="mr-2 w-4 h-4 animate-spin" />}Salvar</Button></div>
+          </form>
+        </div>
+      )}
+    </section>
+  );
+}

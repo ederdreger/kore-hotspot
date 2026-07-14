@@ -130,13 +130,13 @@ test('Access Points sao persistidos na API por tenant', async () => {
   assert.equal(listed.data.items[0].name, 'AP Teste');
 });
 
-test('coleta de AP informa quando nao existe controladora MikroTik', async () => {
+test('coleta de AP informa quando nao existe controladora cadastrada', async () => {
   const token = await loginAdmin();
   const result = await request('/api/access-points/poll', {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Kore-Session': token }, body: '{}'
   });
   assert.equal(result.response.status, 400);
-  assert.match(result.data.error, /Nenhum MikroTik cadastrado/i);
+  assert.match(result.data.error, /Nenhuma controladora/i);
 });
 
 test('perfil Wi-Fi protege a senha e gera previa CAPsMAN sem segredo', async () => {
@@ -181,6 +181,35 @@ test('arquivo de perfis Wi-Fi nao fica exposto pela API generica', async () => {
   const token = await loginAdmin();
   const { response } = await request('/api/entities/ap_profiles', { headers: { 'X-Kore-Session': token } });
   assert.equal(response.status, 404);
+});
+
+test('integracao UniFi armazena a chave criptografada e devolve apenas metadados', async () => {
+  const token = await loginAdmin();
+  const headers = { 'Content-Type': 'application/json', 'X-Kore-Session': token };
+  const apiKey = 'unifi-api-key-super-secreta';
+  const saved = await request('/api/unifi/integrations', {
+    method: 'POST', headers,
+    body: JSON.stringify({ action: 'save', name: 'UniFi Teste', api_key: apiKey, status: 'active' })
+  });
+  assert.equal(saved.response.status, 200);
+  assert.equal(saved.data.integration.api_key_configured, true);
+  assert.equal(JSON.stringify(saved.data).includes(apiKey), false);
+
+  const stored = await readFile(path.join(directory, 'data', 'unifi-integrations.json'), 'utf8');
+  assert.equal(stored.includes(apiKey), false);
+
+  const listed = await request('/api/unifi/integrations', {
+    method: 'POST', headers, body: JSON.stringify({ action: 'list' })
+  });
+  assert.equal(listed.response.status, 200);
+  assert.equal(listed.data.integrations.length, 1);
+  assert.equal(listed.data.integrations[0].name, 'UniFi Teste');
+  assert.equal(JSON.stringify(listed.data).includes(apiKey), false);
+
+  const removed = await request('/api/unifi/integrations', {
+    method: 'POST', headers, body: JSON.stringify({ action: 'delete', id: saved.data.integration.id })
+  });
+  assert.equal(removed.response.status, 200);
 });
 
 test('configuracao minima do captive permanece publica', async () => {
