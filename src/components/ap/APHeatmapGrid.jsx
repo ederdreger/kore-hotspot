@@ -6,6 +6,7 @@ const STATUS_CONFIG = {
   overloaded:   { color: '#FF4444', label: 'Sobrecarregado', bg: 'border-red-500/30 bg-red-500/5' },
   interference: { color: '#FFB800', label: 'Interferência',  bg: 'border-yellow-500/30 bg-yellow-500/5' },
   weak_signal:  { color: '#A855F7', label: 'Sinal Fraco',    bg: 'border-purple-500/30 bg-purple-500/5' },
+  pending:      { color: '#00B8D9', label: 'Aguardando adoção', bg: 'border-cyan-500/30 bg-cyan-500/5' },
   offline:      { color: '#555555', label: 'Offline',        bg: 'border-border bg-secondary/20' },
 };
 

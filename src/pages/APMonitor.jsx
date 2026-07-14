@@ -62,7 +62,9 @@ export default function APMonitor() {
       const response = await spedynet.functions.invoke('accessPointDiscover', {});
       setAPs(response.data?.access_points || []);
       setLastRefresh(new Date());
-      toast.success(`${response.data?.remote_caps || 0} AP(s) encontrado(s) via ${response.data?.type === 'wifi' ? 'WiFi CAPsMAN' : 'CAPsMAN legado'}.`);
+      const caps = response.data?.remote_caps || 0;
+      const unifi = response.data?.unifi_neighbors || 0;
+      toast.success(`${caps + unifi} AP(s) encontrado(s): ${caps} CAPsMAN e ${unifi} UniFi na rede.`);
     } catch (error) {
       setPollError(error.message || 'Falha ao descobrir APs no CAPsMAN');
       toast.error(error.message || 'Falha ao descobrir APs no CAPsMAN');
@@ -128,7 +130,7 @@ export default function APMonitor() {
 
   const statusColors = {
     ok: 'text-success', overloaded: 'text-destructive',
-    interference: 'text-warning', weak_signal: 'text-info', offline: 'text-muted-foreground',
+    interference: 'text-warning', weak_signal: 'text-info', pending: 'text-info', offline: 'text-muted-foreground',
   };
 
   return (
@@ -162,7 +164,7 @@ export default function APMonitor() {
           </button>
           <Button size="sm" variant="outline" onClick={handleDiscover} disabled={discovering} className="gap-1.5">
             <ScanSearch className={`w-3.5 h-3.5 ${discovering ? 'animate-pulse' : ''}`} />
-            Descobrir CAPs
+            Descobrir APs
           </Button>
           <Button size="sm" variant="outline" onClick={refreshMetrics} disabled={loading} className="gap-1.5">
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
@@ -189,6 +191,12 @@ export default function APMonitor() {
           {aps.filter(a => a.pollError).length} AP(s) não encontrado(s) na última coleta CAPsMAN
         </div>
       )}
+      {aps.some(ap => ap.adoption_status === 'pending' && ap.status !== 'offline') && (
+        <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-info/30 bg-info/10 text-info text-xs">
+          <ScanSearch className="w-3.5 h-3.5 flex-shrink-0" />
+          {aps.filter(ap => ap.adoption_status === 'pending' && ap.status !== 'offline').length} UniFi aguardando adocao por uma controladora.
+        </div>
+      )}
 
       {/* Stats bar */}
       <APStatsBar aps={aps} loading={loading} />
@@ -211,7 +219,7 @@ export default function APMonitor() {
             <p className="text-xs text-muted-foreground mt-1">Descubra os equipamentos da controladora CAPsMAN ou cadastre um AP manual.</p>
           </div>
           <div className="flex gap-2">
-            <Button size="sm" onClick={handleDiscover} disabled={discovering} className="gap-1.5"><ScanSearch className="w-3.5 h-3.5" />Descobrir CAPs</Button>
+            <Button size="sm" onClick={handleDiscover} disabled={discovering} className="gap-1.5"><ScanSearch className="w-3.5 h-3.5" />Descobrir APs</Button>
             <Button size="sm" variant="outline" onClick={() => { setEditingAP(null); setShowRegister(true); }} className="gap-1.5"><Plus className="w-3.5 h-3.5" />Cadastrar manualmente</Button>
           </div>
         </div>

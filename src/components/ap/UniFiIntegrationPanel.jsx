@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Cloud, ExternalLink, Loader2, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react';
+import { Cloud, ExternalLink, Loader2, Pencil, Plus, RefreshCw, ScanSearch, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { spedynet } from '@/api/spedynetClient';
 import { Button } from '@/components/ui/button';
@@ -14,6 +14,7 @@ export default function UniFiIntegrationPanel({ onSynced }) {
   const [editing, setEditing] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [busy, setBusy] = useState('');
+  const [results, setResults] = useState({});
 
   const load = async () => {
     try {
@@ -58,7 +59,9 @@ export default function UniFiIntegrationPanel({ onSynced }) {
     try {
       const response = await spedynet.functions.invoke('unifiIntegrations', { action: 'test', id: integration.id });
       const data = response.data || {};
-      toast.success(`UniFi conectado: ${data.sites_count || 0} site(s), ${data.access_points_count || 0} AP(s).`);
+      setResults(current => ({ ...current, [integration.id]: data.message || 'Teste concluido.' }));
+      if (data.devices_count) toast.success(`UniFi conectado: ${data.sites_count || 0} site(s), ${data.access_points_count || 0} AP(s).`);
+      else toast.warning(data.message || 'API conectada, mas nenhum equipamento adotado foi encontrado.');
     } catch (error) {
       toast.error(error.message || 'Falha ao conectar ao UniFi');
     } finally {
@@ -71,10 +74,27 @@ export default function UniFiIntegrationPanel({ onSynced }) {
     try {
       const response = await spedynet.functions.invoke('unifiIntegrations', { action: 'sync', id: integration.id });
       onSynced?.(response.data?.access_points || []);
-      toast.success(`${response.data?.integration?.access_points_count || 0} AP(s) UniFi sincronizado(s).`);
+      setResults(current => ({ ...current, [integration.id]: response.data?.integration?.access_points_count ? 'Equipamentos adotados sincronizados com sucesso.' : 'Sincronizacao concluida, mas o Site Manager ainda nao retornou equipamentos adotados.' }));
+      if (response.data?.integration?.access_points_count) toast.success(`${response.data.integration.access_points_count} AP(s) UniFi sincronizado(s).`);
+      else toast.warning('Sincronizacao concluida sem equipamentos adotados.');
       await load();
     } catch (error) {
       toast.error(error.message || 'Falha ao sincronizar UniFi');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const discoverNetwork = async (integration) => {
+    setBusy(`discover-${integration.id}`);
+    try {
+      const response = await spedynet.functions.invoke('accessPointDiscover', {});
+      const count = response.data?.unifi_neighbors || 0;
+      onSynced?.(response.data?.access_points || []);
+      setResults(current => ({ ...current, [integration.id]: count ? `${count} equipamento(s) UniFi encontrado(s) na rede local aguardando adocao.` : 'Nenhum equipamento UniFi foi localizado na tabela de vizinhos do MikroTik.' }));
+      toast.success(`${count} UniFi localizado(s) na rede.`);
+    } catch (error) {
+      toast.error(error.message || 'Falha ao buscar UniFi na rede');
     } finally {
       setBusy('');
     }
@@ -119,9 +139,11 @@ export default function UniFiIntegrationPanel({ onSynced }) {
                 </div>
                 <p className="mt-0.5 text-xs text-muted-foreground">{integration.sites_count || 0} site(s) | {integration.devices_count || 0} equipamento(s) | {integration.access_points_count || 0} AP(s)</p>
                 {integration.last_sync_at && <p className="mt-1 text-[10px] text-muted-foreground">Sincronizado em {new Date(integration.last_sync_at).toLocaleString('pt-BR')}</p>}
+                {results[integration.id] && <p className="mt-2 text-xs text-info">{results[integration.id]}</p>}
               </div>
               <div className="flex items-center justify-end gap-1">
                 <Button size="sm" variant="outline" onClick={() => test(integration)} disabled={!!busy}>{busy === `test-${integration.id}` ? <Loader2 className="mr-1.5 w-3.5 h-3.5 animate-spin" /> : <Cloud className="mr-1.5 w-3.5 h-3.5" />}Testar</Button>
+                <Button size="sm" variant="outline" onClick={() => discoverNetwork(integration)} disabled={!!busy}>{busy === `discover-${integration.id}` ? <Loader2 className="mr-1.5 w-3.5 h-3.5 animate-spin" /> : <ScanSearch className="mr-1.5 w-3.5 h-3.5" />}Buscar rede</Button>
                 <Button size="sm" onClick={() => sync(integration)} disabled={!!busy}>{busy === `sync-${integration.id}` ? <Loader2 className="mr-1.5 w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 w-3.5 h-3.5" />}Sincronizar</Button>
                 <button onClick={() => openEdit(integration)} disabled={!!busy} className="p-2 text-muted-foreground hover:text-primary disabled:opacity-50" title="Editar"><Pencil className="w-4 h-4" /></button>
                 <button onClick={() => remove(integration)} disabled={!!busy} className="p-2 text-muted-foreground hover:text-destructive disabled:opacity-50" title="Excluir"><Trash2 className="w-4 h-4" /></button>

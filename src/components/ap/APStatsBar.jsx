@@ -30,7 +30,7 @@ export default function APStatsBar({ aps, loading }) {
     );
   }
 
-  const online = aps.filter(a => a.status !== 'offline').length;
+  const online = aps.filter(a => !['offline', 'pending'].includes(a.status)).length;
   const overloaded = aps.filter(a => a.status === 'overloaded').length;
   const interference = aps.filter(a => a.status === 'interference').length;
   const totalClients = aps.reduce((s, a) => s + a.clients, 0);

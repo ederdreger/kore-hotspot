@@ -641,18 +641,80 @@ async function collectCapsman(device) {
   return { type, access_points: accessPoints, remote_caps: remoteCaps.length, radios: interfaces.length, clients: registrations.length };
 }
 
+function unifiNeighborId(device, mac, identity) {
+  const stable = String(mac || identity || 'ap').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  return `unifi-local-${String(device.id || device.host).replace(/[^a-zA-Z0-9_-]/g, '-')}-${stable}`;
+}
+
+async function collectUnifiNeighbors(device) {
+  const result = await runMikrotikKeyCommand(device, '/ip neighbor print detail without-paging');
+  const rows = parseKeyValueRows(result.stdout).filter(row => {
+    const identity = [row.identity, row.platform, row['system-description']].filter(Boolean).join(' ');
+    return /\b(?:uap|unifi|ubiquiti|ubnt)[-_\s]?/i.test(identity);
+  });
+  const current = readJson(ENTITY_FILES.access_points, []);
+  const now = new Date().toISOString();
+  const accessPoints = rows.map((row, index) => {
+    const identity = row.identity || `UniFi AP ${index + 1}`;
+    const description = String(row['system-description'] || '');
+    const [describedModel = '', describedVersion = ''] = description.split(',').map(value => value.trim());
+    const mac = normalizeMac(row['mac-address'] || '');
+    const id = unifiNeighborId(device, mac, identity);
+    const previous = current.find(item => item.id === id || item._id === id) || {};
+    return {
+      ...previous,
+      id,
+      _id: id,
+      name: previous.custom_name || previous.name || identity,
+      ip: row.address4 || routerAddress(row.address) || previous.ip || '',
+      mac: mac || previous.mac || '',
+      mac_address: mac || previous.mac_address || '',
+      model: describedModel || identity,
+      version: describedVersion || row.version || '',
+      firmware: describedVersion || row.version || '',
+      interface: row.interface || '',
+      clients: 0,
+      maxClients: Number(previous.maxClients || 50),
+      signalAvg: 0,
+      utilization: 0,
+      uptime: '--',
+      managed: false,
+      status: 'pending',
+      adoption_status: 'pending',
+      source: 'unifi-local',
+      controller_type: 'mikrotik-neighbor',
+      controller_id: `unifi-local:${device.id}`,
+      controller_name: device.name || device.host,
+      pollError: '',
+      last_seen: now,
+      created_date: previous.created_date || now,
+      updated_date: now
+    };
+  });
+  return { access_points: accessPoints, neighbors: rows.length };
+}
+
 async function discoverAccessPoints(payload = {}) {
   const device = mikrotikDeviceById(payload.mikrotik_id || payload.controller_id);
-  const result = await collectCapsman(device);
+  if (!device) throw Object.assign(new Error('Nenhum MikroTik cadastrado para descobrir equipamentos na rede'), { status: 400 });
+  let result = { type: '', access_points: [], remote_caps: 0, radios: 0, clients: 0 };
+  let capsmanError = null;
+  try { result = await collectCapsman(device); } catch (error) { capsmanError = error; }
+  const neighbors = await collectUnifiNeighbors(device).catch(() => ({ access_points: [], neighbors: 0 }));
+  if (capsmanError && !neighbors.neighbors) throw capsmanError;
   const current = readJson(ENTITY_FILES.access_points, []);
-  const discoveredIds = new Set(result.access_points.map(item => item.id));
-  const otherControllers = current.filter(item => item.controller_id !== device.id);
+  const cloudMacs = new Set(current.filter(item => item.source === 'unifi').map(item => normalizeMac(item.mac_address || item.mac)).filter(Boolean));
+  const localAccessPoints = neighbors.access_points.filter(item => !cloudMacs.has(normalizeMac(item.mac_address || item.mac)));
+  const discovered = [...result.access_points, ...localAccessPoints];
+  const discoveredIds = new Set(discovered.map(item => item.id));
+  const controllerIds = new Set([device.id, `unifi-local:${device.id}`]);
+  const otherControllers = current.filter(item => !controllerIds.has(item.controller_id));
   const missing = current
-    .filter(item => item.controller_id === device.id && !discoveredIds.has(item.id))
+    .filter(item => controllerIds.has(item.controller_id) && !discoveredIds.has(item.id))
     .map(item => ({ ...item, status: 'offline', pollError: 'Nao encontrado na ultima coleta', updated_date: new Date().toISOString() }));
-  const merged = [...result.access_points, ...missing, ...otherControllers].slice(0, 5000);
+  const merged = [...discovered, ...missing, ...otherControllers].slice(0, 5000);
   writeJson(ENTITY_FILES.access_points, merged);
-  return { success: true, controller: { id: device.id, name: device.name || device.host, host: device.host }, ...result, access_points: merged };
+  return { success: true, controller: { id: device.id, name: device.name || device.host, host: device.host }, ...result, type: result.type || 'unifi-local', unifi_neighbors: neighbors.neighbors, capsman_error: capsmanError?.message || '', access_points: merged };
 }
 
 async function pollAccessPoints(payload = {}) {
@@ -796,7 +858,9 @@ async function syncUnifiAccessPoints(integration) {
   const discoveredIds = new Set(result.access_points.map(item => item.id));
   const missing = current.filter(item => item.controller_id === controllerId && !discoveredIds.has(item.id))
     .map(item => ({ ...item, status: 'offline', pollError: 'Nao encontrado na ultima coleta UniFi', updated_date: new Date().toISOString() }));
-  const merged = [...result.access_points, ...missing, ...current.filter(item => item.controller_id !== controllerId)].slice(0, 5000);
+  const cloudMacs = new Set(result.access_points.map(item => normalizeMac(item.mac_address || item.mac)).filter(Boolean));
+  const otherAccessPoints = current.filter(item => item.controller_id !== controllerId && !(item.source === 'unifi-local' && cloudMacs.has(normalizeMac(item.mac_address || item.mac))));
+  const merged = [...result.access_points, ...missing, ...otherAccessPoints].slice(0, 5000);
   writeJson(ENTITY_FILES.access_points, merged);
   const integrations = readJson(UNIFI_INTEGRATIONS_FILE, []);
   const updated = { ...integration, last_sync_at: new Date().toISOString(), last_sync_status: 'success', sites_count: result.sites.length, devices_count: result.devices.length, access_points_count: result.access_points.length, updated_date: new Date().toISOString() };
@@ -828,7 +892,7 @@ async function unifiIntegrations(payload = {}) {
   }
   if (action === 'test') {
     const result = await collectUnifi(integration);
-    return { success: true, sites_count: result.sites.length, devices_count: result.devices.length, access_points_count: result.access_points.length };
+    return { success: true, sites_count: result.sites.length, devices_count: result.devices.length, access_points_count: result.access_points.length, message: result.devices.length ? 'API UniFi conectada e equipamentos encontrados.' : 'API UniFi conectada, mas nenhum equipamento adotado foi retornado pelo Site Manager.' };
   }
   if (action === 'sync') return { success: true, ...(await syncUnifiAccessPoints(integration)) };
   throw Object.assign(new Error('Acao UniFi invalida'), { status: 400 });
