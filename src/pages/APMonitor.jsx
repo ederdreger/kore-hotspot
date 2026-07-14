@@ -5,6 +5,7 @@ import APChannelAnalyzer from '@/components/ap/APChannelAnalyzer';
 import APAlertPanel from '@/components/ap/APAlertPanel';
 import APStatsBar from '@/components/ap/APStatsBar';
 import APRegisterModal from '@/components/ap/APRegisterModal';
+import APProfileManager from '@/components/ap/APProfileManager';
 import { Wifi, RefreshCw, Plus, MapPin, Trash2, Edit2, AlertTriangle, ScanSearch } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
@@ -190,6 +191,8 @@ export default function APMonitor() {
 
       {/* Stats bar */}
       <APStatsBar aps={aps} loading={loading} />
+
+      <APProfileManager />
 
       {/* Alerts */}
       {(overloaded.length > 0 || interference.length > 0 || weakSignal.length > 0) && (

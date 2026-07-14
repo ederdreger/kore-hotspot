@@ -13,6 +13,7 @@ const CHAP = process.env.KORE_CHAP_FILE || '/etc/ppp/chap-secrets';
 const KEY_DIR = process.env.KORE_KEY_DIR || '/opt/kore-hotspot-vpn-api/keys';
 const KEY_PATH = path.join(KEY_DIR, 'kore-api_rsa');
 const PUB_PATH = `${KEY_PATH}.pub`;
+const DATA_KEY_PATH = path.join(KEY_DIR, 'data-encryption.key');
 const DATA_DIR = process.env.KORE_DATA_DIR || '/opt/kore-hotspot-vpn-api/data';
 const TENANTS_DIR = path.join(DATA_DIR, 'tenants');
 const WEB_DIR = process.env.KORE_WEB_DIR || '/opt/kore-hotspot';
@@ -30,6 +31,7 @@ const DEFAULT_TENANT_ID = String(process.env.KORE_DEFAULT_TENANT || 'default').t
 const MULTI_TENANT = String(process.env.KORE_MULTI_TENANT || 'true') !== 'false';
 const tenantStore = new AsyncLocalStorage();
 const CAPTIVE_DB = path.join(DATA_DIR, 'captive-prospects.json');
+const AP_PROFILES_FILE = path.join(DATA_DIR, 'ap-profiles.json');
 const ENTITY_FILES = {
   admins: path.join(DATA_DIR, 'admin-users.json'),
   admin_sessions: path.join(DATA_DIR, 'admin-sessions.json'),
@@ -176,6 +178,32 @@ async function ensureSshKey() {
   }
   fs.chmodSync(KEY_PATH, 0o600);
   fs.chmodSync(PUB_PATH, 0o644);
+}
+
+function dataEncryptionKey() {
+  fs.mkdirSync(KEY_DIR, { recursive: true, mode: 0o700 });
+  if (!fs.existsSync(DATA_KEY_PATH)) fs.writeFileSync(DATA_KEY_PATH, crypto.randomBytes(32), { mode: 0o600 });
+  const key = fs.readFileSync(DATA_KEY_PATH);
+  if (key.length !== 32) throw new Error('Chave de criptografia de dados invalida');
+  fs.chmodSync(DATA_KEY_PATH, 0o600);
+  return key;
+}
+
+function encryptSecret(value) {
+  if (!value) return '';
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', dataEncryptionKey(), iv);
+  const encrypted = Buffer.concat([cipher.update(String(value), 'utf8'), cipher.final()]);
+  return `v1:${iv.toString('base64')}:${cipher.getAuthTag().toString('base64')}:${encrypted.toString('base64')}`;
+}
+
+function decryptSecret(value) {
+  if (!value) return '';
+  const [version, iv, tag, encrypted] = String(value).split(':');
+  if (version !== 'v1' || !iv || !tag || !encrypted) throw new Error('Segredo armazenado em formato invalido');
+  const decipher = crypto.createDecipheriv('aes-256-gcm', dataEncryptionKey(), Buffer.from(iv, 'base64'));
+  decipher.setAuthTag(Buffer.from(tag, 'base64'));
+  return Buffer.concat([decipher.update(Buffer.from(encrypted, 'base64')), decipher.final()]).toString('utf8');
 }
 
 function validToken(req) {
@@ -639,6 +667,173 @@ async function pollAccessPoints(payload = {}) {
   const accessPoints = readJson(ENTITY_FILES.access_points, []);
   if (errors.length === targets.length) throw Object.assign(new Error(errors.join(' | ')), { status: 502 });
   return { success: errors.length === 0, access_points: accessPoints, errors, controllers_checked: targets.length };
+}
+
+function publicApProfile(profile) {
+  const { passphrase_encrypted, ...safe } = profile;
+  return { ...safe, passphrase_configured: !!passphrase_encrypted };
+}
+
+function apProfileNames(profile) {
+  const suffix = String(profile.id || profile._id || profile.name || 'perfil')
+    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(-24) || 'perfil';
+  return {
+    config: `kore-ap-${suffix}`.slice(0, 48),
+    security: `kore-sec-${suffix}`.slice(0, 48),
+    datapath: `kore-data-${suffix}`.slice(0, 48),
+    comment: `Kore-HotSpot profile ${suffix}`
+  };
+}
+
+function validateApProfile(payload = {}, existing = {}) {
+  const securityMode = payload.security_mode === 'wpa2-psk' ? 'wpa2-psk' : 'open';
+  const passphrase = String(payload.passphrase || '');
+  if (!String(payload.name || existing.name || '').trim()) throw Object.assign(new Error('Informe o nome do perfil'), { status: 400 });
+  if (!String(payload.ssid || existing.ssid || '').trim()) throw Object.assign(new Error('Informe o SSID'), { status: 400 });
+  if (securityMode === 'wpa2-psk' && !passphrase && !existing.passphrase_encrypted) throw Object.assign(new Error('Informe uma senha Wi-Fi com pelo menos 8 caracteres'), { status: 400 });
+  if (passphrase && (passphrase.length < 8 || passphrase.length > 63)) throw Object.assign(new Error('A senha Wi-Fi deve ter entre 8 e 63 caracteres'), { status: 400 });
+  const vlanId = Number(payload.vlan_id || 0);
+  if (vlanId && (vlanId < 1 || vlanId > 4094)) throw Object.assign(new Error('VLAN deve estar entre 1 e 4094'), { status: 400 });
+  const now = new Date().toISOString();
+  const id = existing.id || existing._id || `ap_profile_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  return {
+    ...existing,
+    id,
+    _id: id,
+    name: String(payload.name || existing.name).trim(),
+    ssid: String(payload.ssid || existing.ssid).trim().slice(0, 32),
+    security_mode: securityMode,
+    passphrase_encrypted: passphrase ? encryptSecret(passphrase) : (securityMode === 'open' ? '' : existing.passphrase_encrypted || ''),
+    country: String(payload.country || existing.country || 'Brazil').trim(),
+    bridge: String(payload.bridge ?? existing.bridge ?? '').trim().replace(/"/g, ''),
+    vlan_id: vlanId,
+    controller_id: String(payload.controller_id || existing.controller_id || ''),
+    reprovision_now: payload.reprovision_now === true,
+    status: payload.status === 'inactive' ? 'inactive' : 'active',
+    created_date: existing.created_date || now,
+    updated_date: now
+  };
+}
+
+function apProfileCleanupScript(profile, type) {
+  const names = apProfileNames(profile);
+  if (type === 'wifi') {
+    return [
+      `:do { /interface wifi provisioning remove [find where comment=${routerQuote(names.comment)}] } on-error={}`,
+      `:do { /interface wifi configuration remove [find where name=${routerQuote(names.config)}] } on-error={}`,
+      `:do { /interface wifi security remove [find where name=${routerQuote(names.security)}] } on-error={}`,
+      `:do { /interface wifi datapath remove [find where name=${routerQuote(names.datapath)}] } on-error={}`
+    ].join('; ');
+  }
+  return [
+    `:do { /caps-man provisioning remove [find where comment=${routerQuote(names.comment)}] } on-error={}`,
+    `:do { /caps-man configuration remove [find where name=${routerQuote(names.config)}] } on-error={}`,
+    `:do { /caps-man security remove [find where name=${routerQuote(names.security)}] } on-error={}`,
+    `:do { /caps-man datapath remove [find where name=${routerQuote(names.datapath)}] } on-error={}`
+  ].join('; ');
+}
+
+function buildApProfileScript(profile, type, options = {}) {
+  const names = apProfileNames(profile);
+  const secret = profile.security_mode === 'wpa2-psk'
+    ? (options.maskSecret ? '********' : decryptSecret(profile.passphrase_encrypted))
+    : '';
+  const cleanup = apProfileCleanupScript(profile, type);
+  const hasDatapath = !!(profile.bridge || profile.vlan_id);
+  const warnings = [];
+  if (!profile.bridge) warnings.push('Nenhuma bridge foi definida; confirme como o trafego dos CAPs chegara ao Hotspot.');
+  if (type === 'wifi' && profile.vlan_id) warnings.push('CAPs com wifi-qcom-ac exigem VLAN configurada localmente no AP; valide o driver antes de aplicar.');
+  if (profile.reprovision_now) warnings.push('Os radios conectados serao reprovisionados e poderao desconectar clientes por alguns segundos.');
+
+  const commands = [cleanup];
+  if (type === 'wifi') {
+    if (profile.security_mode === 'wpa2-psk') {
+      commands.push(`/interface wifi security add name=${routerQuote(names.security)} authentication-types=wpa2-psk passphrase=${routerQuote(secret)} ft=yes ft-over-ds=yes`);
+    }
+    if (hasDatapath) {
+      commands.push(`/interface wifi datapath add name=${routerQuote(names.datapath)}${profile.bridge ? ` bridge=${routerQuote(profile.bridge)}` : ''}${profile.vlan_id ? ` vlan-id=${profile.vlan_id}` : ''}`);
+    }
+    commands.push(`/interface wifi configuration add name=${routerQuote(names.config)} ssid=${routerQuote(profile.ssid)} country=${routerQuote(profile.country)} disabled=no${profile.security_mode === 'wpa2-psk' ? ` security=${routerQuote(names.security)}` : ''}${hasDatapath ? ` datapath=${routerQuote(names.datapath)}` : ''}`);
+    commands.push(`/interface wifi provisioning add action=create-dynamic-enabled master-configuration=${routerQuote(names.config)} comment=${routerQuote(names.comment)} disabled=no`);
+    commands.push(`/interface wifi provisioning move [find where comment=${routerQuote(names.comment)}] destination=0`);
+    if (profile.reprovision_now) commands.push('/interface wifi radio provision [find]');
+  } else {
+    if (profile.security_mode === 'wpa2-psk') {
+      commands.push(`/caps-man security add name=${routerQuote(names.security)} authentication-types=wpa2-psk encryption=aes-ccm group-encryption=aes-ccm passphrase=${routerQuote(secret)}`);
+    }
+    if (hasDatapath) {
+      commands.push(`/caps-man datapath add name=${routerQuote(names.datapath)}${profile.bridge ? ` bridge=${routerQuote(profile.bridge)}` : ''} local-forwarding=yes${profile.vlan_id ? ` vlan-mode=use-tag vlan-id=${profile.vlan_id}` : ''}`);
+    }
+    commands.push(`/caps-man configuration add name=${routerQuote(names.config)} ssid=${routerQuote(profile.ssid)} country=${routerQuote(profile.country)}${profile.security_mode === 'wpa2-psk' ? ` security=${routerQuote(names.security)}` : ''}${hasDatapath ? ` datapath=${routerQuote(names.datapath)}` : ''}`);
+    commands.push(`/caps-man provisioning add action=create-dynamic-enabled master-configuration=${routerQuote(names.config)} name-format=prefix-identity name-prefix="kore-" comment=${routerQuote(names.comment)}`);
+    commands.push(`/caps-man provisioning move [find where comment=${routerQuote(names.comment)}] destination=0`);
+    if (profile.reprovision_now) commands.push('/caps-man radio provision [find]');
+  }
+  return { script: commands.join('; '), warnings, names };
+}
+
+async function apProfileCapsmanType(profile, requestedType = '') {
+  if (['wifi', 'legacy'].includes(requestedType)) return requestedType;
+  const storedType = readJson(ENTITY_FILES.access_points, []).find(item => item.controller_id === profile.controller_id)?.capsman_type;
+  if (['wifi', 'legacy'].includes(storedType)) return storedType;
+  const device = mikrotikDeviceById(profile.controller_id);
+  return (await collectCapsman(device)).type;
+}
+
+async function accessPointProfiles(payload = {}) {
+  const action = String(payload.action || 'list');
+  const profiles = readJson(AP_PROFILES_FILE, []);
+  if (action === 'list') return { profiles: profiles.map(publicApProfile) };
+
+  if (action === 'save') {
+    const existing = profiles.find(item => item.id === payload.id || item._id === payload.id) || {};
+    const profile = validateApProfile(payload, existing);
+    writeJson(AP_PROFILES_FILE, [profile, ...profiles.filter(item => item.id !== profile.id && item._id !== profile.id)].slice(0, 500));
+    return { profile: publicApProfile(profile) };
+  }
+
+  const profile = profiles.find(item => item.id === payload.id || item._id === payload.id);
+  if (!profile) throw Object.assign(new Error('Perfil de Access Point nao encontrado'), { status: 404 });
+  if (action === 'delete') {
+    if (profile.last_apply_status === 'success') {
+      throw Object.assign(new Error('Remova primeiro o perfil do CAPsMAN antes de exclui-lo do sistema'), { status: 409 });
+    }
+    writeJson(AP_PROFILES_FILE, profiles.filter(item => item.id !== profile.id && item._id !== profile.id));
+    return { success: true };
+  }
+
+  const type = action === 'rollback' && ['wifi', 'legacy'].includes(profile.last_applied_type)
+    ? profile.last_applied_type
+    : await apProfileCapsmanType(profile, payload.capsman_type);
+  if (action === 'preview') {
+    const preview = buildApProfileScript(profile, type, { maskSecret: true });
+    return { profile: publicApProfile(profile), capsman_type: type, ...preview };
+  }
+
+  const device = mikrotikDeviceById(profile.controller_id);
+  if (!device) throw Object.assign(new Error('Controladora MikroTik nao encontrada'), { status: 400 });
+  if (action === 'apply') {
+    const backupName = `kore-before-ap-${new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14)}`;
+    await runMikrotikKeyCommand(device, `/system backup save name=${routerQuote(backupName)}`, 30000);
+    const generated = buildApProfileScript(profile, type);
+    try {
+      await runMikrotikKeyCommand(device, generated.script, 30000);
+    } catch (error) {
+      const failed = { ...profile, last_apply_status: 'error', last_apply_error: error.message, last_backup: `${backupName}.backup`, updated_date: new Date().toISOString() };
+      writeJson(AP_PROFILES_FILE, profiles.map(item => item.id === profile.id || item._id === profile.id ? failed : item));
+      throw Object.assign(new Error(`Falha ao aplicar perfil; backup preservado em ${backupName}.backup: ${error.message}`), { status: error.status || 502 });
+    }
+    const updated = { ...profile, last_applied_at: new Date().toISOString(), last_applied_type: type, last_backup: `${backupName}.backup`, last_apply_status: 'success', updated_date: new Date().toISOString() };
+    writeJson(AP_PROFILES_FILE, profiles.map(item => item.id === profile.id || item._id === profile.id ? updated : item));
+    return { success: true, profile: publicApProfile(updated), capsman_type: type, backup: updated.last_backup, warnings: generated.warnings };
+  }
+  if (action === 'rollback') {
+    await runMikrotikKeyCommand(device, apProfileCleanupScript(profile, type), 20000);
+    const updated = { ...profile, last_apply_status: 'removed', last_removed_at: new Date().toISOString(), updated_date: new Date().toISOString() };
+    writeJson(AP_PROFILES_FILE, profiles.map(item => item.id === profile.id || item._id === profile.id ? updated : item));
+    return { success: true, profile: publicApProfile(updated), capsman_type: type, backup: profile.last_backup || '' };
+  }
+  throw Object.assign(new Error('Acao de perfil invalida'), { status: 400 });
 }
 
 async function mikrotikHotspotSessions() {
@@ -2739,6 +2934,11 @@ async function handleRequest(req, res) {
     if (req.method === 'GET' && req.url === '/api/radius/sessions') return send(res, 200, await radiusSessions());
     if (req.method === 'POST' && req.url === '/api/access-points/discover') { assertTenantLicense({ action: 'write', resource: 'access_point' }); return send(res, 200, await discoverAccessPoints(await readBody(req))); }
     if (req.method === 'POST' && req.url === '/api/access-points/poll') return send(res, 200, await pollAccessPoints(await readBody(req)));
+    if (req.method === 'POST' && req.url === '/api/access-point-profiles') {
+      const body = await readBody(req);
+      if (body.action !== 'list' && body.action !== 'preview') assertTenantLicense({ action: 'write', resource: 'access_point_profile' });
+      return send(res, 200, await accessPointProfiles(body));
+    }
     if (req.method === 'GET' && req.url === '/api/captive/prospects') return send(res, 200, { prospects: readCaptiveDb() });
     if (req.method === 'DELETE' && req.url.startsWith('/api/captive/prospects/')) return send(res, 200, await deleteCaptiveProspect(decodeURIComponent(req.url.split('/').pop())));
     if (req.method === 'POST' && req.url === '/api/ixc/cliente') return send(res, 200, await ixcConsultaCliente(await readBody(req)));

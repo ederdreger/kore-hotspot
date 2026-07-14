@@ -584,6 +584,17 @@ async function accessPointPoll(payload = {}) {
   return data;
 }
 
+async function accessPointProfiles(payload = {}) {
+  const response = await fetch(`${VPN_API_URL}/api/access-point-profiles`, {
+    method: 'POST',
+    headers: jsonHeaders(),
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || 'Erro ao gerenciar perfil de Access Points');
+  return data;
+}
+
 async function captiveRegister(payload = {}) {
   const response = await fetch(`${VPN_API_URL}/api/captive/register`, {
     method: 'POST',
@@ -764,6 +775,7 @@ async function invoke(functionName, payload) {
     mikrotikPerformance,
     accessPointDiscover,
     accessPointPoll,
+    accessPointProfiles,
     radiusStatus,
     radiusSessions,
     captiveRegister,

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { copyFile, mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { copyFile, mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -137,6 +137,50 @@ test('coleta de AP informa quando nao existe controladora MikroTik', async () =>
   });
   assert.equal(result.response.status, 400);
   assert.match(result.data.error, /Nenhum MikroTik cadastrado/i);
+});
+
+test('perfil Wi-Fi protege a senha e gera previa CAPsMAN sem segredo', async () => {
+  const token = await loginAdmin();
+  const headers = { 'Content-Type': 'application/json', 'X-Kore-Session': token };
+  const secret = 'SenhaWifiSegura123';
+  const saved = await request('/api/access-point-profiles', {
+    method: 'POST', headers,
+    body: JSON.stringify({
+      action: 'save', name: 'Visitantes', ssid: 'Kore Visitantes', security_mode: 'wpa2-psk',
+      passphrase: secret, country: 'Brazil', bridge: 'bridge-hotspot', vlan_id: 20
+    })
+  });
+  assert.equal(saved.response.status, 200);
+  assert.equal(saved.data.profile.passphrase_configured, true);
+  assert.equal(JSON.stringify(saved.data).includes(secret), false);
+
+  const stored = await readFile(path.join(directory, 'data', 'ap-profiles.json'), 'utf8');
+  assert.equal(stored.includes(secret), false);
+
+  const listed = await request('/api/access-point-profiles', {
+    method: 'POST', headers, body: JSON.stringify({ action: 'list' })
+  });
+  assert.equal(listed.response.status, 200);
+  assert.equal(listed.data.profiles.length, 1);
+  assert.equal(JSON.stringify(listed.data).includes(secret), false);
+
+  for (const capsman_type of ['legacy', 'wifi']) {
+    const preview = await request('/api/access-point-profiles', {
+      method: 'POST', headers,
+      body: JSON.stringify({ action: 'preview', id: saved.data.profile.id, capsman_type })
+    });
+    assert.equal(preview.response.status, 200);
+    assert.equal(preview.data.capsman_type, capsman_type);
+    assert.match(preview.data.script, capsman_type === 'legacy' ? /\/caps-man configuration add/ : /\/interface wifi configuration add/);
+    assert.match(preview.data.script, /\*\*\*\*\*\*\*\*/);
+    assert.equal(preview.data.script.includes(secret), false);
+  }
+});
+
+test('arquivo de perfis Wi-Fi nao fica exposto pela API generica', async () => {
+  const token = await loginAdmin();
+  const { response } = await request('/api/entities/ap_profiles', { headers: { 'X-Kore-Session': token } });
+  assert.equal(response.status, 404);
 });
 
 test('configuracao minima do captive permanece publica', async () => {
