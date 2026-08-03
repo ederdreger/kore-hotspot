@@ -54,6 +54,10 @@ fi
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 log "Instalando dependencias oficiais"
+if [ -f /etc/apt/sources.list.d/100-ubnt-unifi.list ]; then
+  log "Desativando repositorio UniFi legado; esta instalacao usa pacote versionado direto"
+  mv -f /etc/apt/sources.list.d/100-ubnt-unifi.list /etc/apt/sources.list.d/100-ubnt-unifi.list.disabled
+fi
 apt-get update -y
 apt-get install -y ca-certificates curl gnupg jq openjdk-17-jre-headless
 
