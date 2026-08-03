@@ -32,6 +32,7 @@ const MULTI_TENANT = String(process.env.KORE_MULTI_TENANT || 'true') !== 'false'
 const tenantStore = new AsyncLocalStorage();
 const CAPTIVE_DB = path.join(DATA_DIR, 'captive-prospects.json');
 const AP_PROFILES_FILE = path.join(DATA_DIR, 'ap-profiles.json');
+const AP_IGNORED_FILE = path.join(DATA_DIR, 'access-points-ignored.json');
 const UNIFI_INTEGRATIONS_FILE = path.join(DATA_DIR, 'unifi-integrations.json');
 const ENTITY_FILES = {
   admins: path.join(DATA_DIR, 'admin-users.json'),
@@ -646,13 +647,93 @@ function unifiNeighborId(device, mac, identity) {
   return `unifi-local-${String(device.id || device.host).replace(/[^a-zA-Z0-9_-]/g, '-')}-${stable}`;
 }
 
-async function collectUnifiNeighbors(device) {
+async function localUnifiSnapshot() {
+  const expression = [
+    'var devices=[];',
+    'db.device.find({adopted:true}).forEach(function(d){devices.push({mac:String(d.mac||""),name:String(d.name||""),ip:String(d.ip||""),model:String(d.model||""),version:String(d.version||"")})});',
+    'var ssids=[];',
+    'db.wlanconf.find({enabled:true}).forEach(function(w){var name=String(w.name||"");if(name&&name.indexOf("element-")!==0)ssids.push(name)});',
+    'print(JSON.stringify({devices:devices,ssids:ssids}));'
+  ].join('');
+  try {
+    const result = await run('mongo', ['--quiet', '--port', '27117', 'ace', '--eval', expression], 5000);
+    const line = result.stdout.split(/\r?\n/).map(value => value.trim()).filter(Boolean).pop();
+    const snapshot = JSON.parse(line || '{}');
+    return {
+      devices: Array.isArray(snapshot.devices) ? snapshot.devices : [],
+      ssids: Array.isArray(snapshot.ssids) ? snapshot.ssids : []
+    };
+  } catch {
+    return { devices: [], ssids: [] };
+  }
+}
+
+function unifiDiscoveryOptions(value = {}) {
+  const managementInterface = String(value.management_interface || '').trim();
+  if (managementInterface && !/^[a-zA-Z0-9_.:+@ -]{1,64}$/.test(managementInterface)) {
+    throw Object.assign(new Error('Interface da VLAN de gerenciamento invalida'), { status: 400 });
+  }
+  const managementVlanId = Number(value.management_vlan_id || 0);
+  if (managementVlanId && (!Number.isInteger(managementVlanId) || managementVlanId < 1 || managementVlanId > 4094)) {
+    throw Object.assign(new Error('VLAN de gerenciamento deve estar entre 1 e 4094'), { status: 400 });
+  }
+  return {
+    management_interface: managementInterface,
+    management_vlan_id: managementVlanId,
+    scan_vlan_hosts: value.scan_vlan_hosts !== false
+  };
+}
+
+function unifiIdentity(row = {}) {
+  return [row.identity, row.platform, row['system-description'], row['host-name'], row.comment, row.name]
+    .filter(Boolean).join(' ');
+}
+
+async function collectUnifiNeighbors(device, options = {}) {
+  const discovery = unifiDiscoveryOptions(options);
   const result = await runMikrotikKeyCommand(device, '/ip neighbor print detail without-paging');
-  const rows = parseKeyValueRows(result.stdout).filter(row => {
-    const identity = [row.identity, row.platform, row['system-description']].filter(Boolean).join(' ');
-    return /\b(?:uap|unifi|ubiquiti|ubnt)[-_\s]?/i.test(identity);
+  const ignored = readJson(AP_IGNORED_FILE, []);
+  const ignoredIds = new Set(ignored.map(item => item.id).filter(Boolean));
+  const ignoredMacs = new Set(ignored.map(item => normalizeMac(item.mac)).filter(Boolean));
+  const neighborRows = parseKeyValueRows(result.stdout).filter(row => {
+    if (discovery.management_interface && row.interface !== discovery.management_interface) return false;
+    const identity = unifiIdentity(row);
+    const mac = normalizeMac(row['mac-address'] || '');
+    const id = unifiNeighborId(device, mac, row.identity || 'ap');
+    return /\b(?:uap|unifi|ubiquiti|ubnt)[-_\s]?/i.test(identity) && !ignoredIds.has(id) && !ignoredMacs.has(mac);
   });
   const current = readJson(ENTITY_FILES.access_points, []);
+  const localController = await localUnifiSnapshot();
+  const adoptedByMac = new Map(localController.devices.map(item => [normalizeMac(item.mac), item]));
+  let vlanCandidates = [];
+  if (discovery.management_interface) {
+    const [arpResult, leaseResult] = await Promise.all([
+      runMikrotikKeyCommand(device, '/ip arp print detail without-paging').catch(() => ({ stdout: '' })),
+      runMikrotikKeyCommand(device, '/ip dhcp-server lease print detail without-paging').catch(() => ({ stdout: '' }))
+    ]);
+    const leases = parseKeyValueRows(leaseResult.stdout);
+    const leasesByMac = new Map(leases.map(row => [normalizeMac(row['mac-address']), row]).filter(([mac]) => mac));
+    const knownMacs = new Set(neighborRows.map(row => normalizeMac(row['mac-address'])).filter(Boolean));
+    vlanCandidates = parseKeyValueRows(arpResult.stdout)
+      .filter(row => row.interface === discovery.management_interface && row.address && row['mac-address'])
+      .map(row => {
+        const mac = normalizeMac(row['mac-address']);
+        const lease = leasesByMac.get(mac) || {};
+        return {
+          ...row,
+          identity: lease['host-name'] || lease.comment || `UniFi ${row.address}`,
+          'host-name': lease['host-name'] || '',
+          detection_confidence: /\b(?:uap|unifi|ubiquiti|ubnt)[-_\s]?/i.test(unifiIdentity(lease)) || adoptedByMac.has(mac) ? 'confirmed' : 'vlan-candidate'
+        };
+      })
+      .filter(row => {
+        const mac = normalizeMac(row['mac-address']);
+        const id = unifiNeighborId(device, mac, row.identity || 'ap');
+        const isCandidate = discovery.scan_vlan_hosts || row.detection_confidence === 'confirmed';
+        return isCandidate && !knownMacs.has(mac) && !ignoredIds.has(id) && !ignoredMacs.has(mac);
+      });
+  }
+  const rows = [...neighborRows.map(row => ({ ...row, detection_confidence: 'confirmed' })), ...vlanCandidates];
   const now = new Date().toISOString();
   const accessPoints = rows.map((row, index) => {
     const identity = row.identity || `UniFi AP ${index + 1}`;
@@ -661,28 +742,33 @@ async function collectUnifiNeighbors(device) {
     const mac = normalizeMac(row['mac-address'] || '');
     const id = unifiNeighborId(device, mac, identity);
     const previous = current.find(item => item.id === id || item._id === id) || {};
+    const controllerDevice = adoptedByMac.get(mac);
+    const adopted = !!controllerDevice || previous.adoption_status === 'adopted';
     return {
       ...previous,
       id,
       _id: id,
-      name: previous.custom_name || previous.name || identity,
-      ip: row.address4 || routerAddress(row.address) || previous.ip || '',
+      name: previous.custom_name || previous.name || controllerDevice?.name || identity,
+      ip: row.address4 || routerAddress(row.address) || controllerDevice?.ip || previous.ip || '',
       mac: mac || previous.mac || '',
       mac_address: mac || previous.mac_address || '',
-      model: describedModel || identity,
-      version: describedVersion || row.version || '',
-      firmware: describedVersion || row.version || '',
+      model: controllerDevice?.model || describedModel || identity,
+      version: controllerDevice?.version || describedVersion || row.version || '',
+      firmware: controllerDevice?.version || describedVersion || row.version || '',
+      ssid: localController.ssids.join(', ') || previous.ssid || '',
       interface: row.interface || '',
+      management_vlan_id: discovery.management_vlan_id || previous.management_vlan_id || 0,
+      detection_confidence: row.detection_confidence || 'confirmed',
       clients: 0,
       maxClients: Number(previous.maxClients || 50),
       signalAvg: 0,
       utilization: 0,
       uptime: '--',
-      managed: false,
-      status: 'pending',
-      adoption_status: 'pending',
+      managed: adopted,
+      status: adopted ? 'ok' : 'pending',
+      adoption_status: adopted ? 'adopted' : 'pending',
       source: 'unifi-local',
-      controller_type: 'mikrotik-neighbor',
+      controller_type: adopted ? 'unifi-network-local' : 'mikrotik-neighbor',
       controller_id: `unifi-local:${device.id}`,
       controller_name: device.name || device.host,
       pollError: '',
@@ -691,7 +777,13 @@ async function collectUnifiNeighbors(device) {
       updated_date: now
     };
   });
-  return { access_points: accessPoints, neighbors: rows.length };
+  return {
+    access_points: accessPoints,
+    neighbors: neighborRows.length,
+    vlan_candidates: vlanCandidates.length,
+    management_interface: discovery.management_interface,
+    management_vlan_id: discovery.management_vlan_id
+  };
 }
 
 async function discoverAccessPoints(payload = {}) {
@@ -700,8 +792,14 @@ async function discoverAccessPoints(payload = {}) {
   let result = { type: '', access_points: [], remote_caps: 0, radios: 0, clients: 0 };
   let capsmanError = null;
   try { result = await collectCapsman(device); } catch (error) { capsmanError = error; }
-  const neighbors = await collectUnifiNeighbors(device).catch(() => ({ access_points: [], neighbors: 0 }));
-  if (capsmanError && !neighbors.neighbors) throw capsmanError;
+  let neighbors;
+  try {
+    neighbors = await collectUnifiNeighbors(device, payload);
+  } catch (error) {
+    if (payload.management_interface) throw error;
+    neighbors = { access_points: [], neighbors: 0, vlan_candidates: 0 };
+  }
+  if (capsmanError && !neighbors.neighbors && !neighbors.vlan_candidates) throw capsmanError;
   const current = readJson(ENTITY_FILES.access_points, []);
   const cloudMacs = new Set(current.filter(item => item.source === 'unifi').map(item => normalizeMac(item.mac_address || item.mac)).filter(Boolean));
   const localAccessPoints = neighbors.access_points.filter(item => !cloudMacs.has(normalizeMac(item.mac_address || item.mac)));
@@ -714,7 +812,7 @@ async function discoverAccessPoints(payload = {}) {
     .map(item => ({ ...item, status: 'offline', pollError: 'Nao encontrado na ultima coleta', updated_date: new Date().toISOString() }));
   const merged = [...discovered, ...missing, ...otherControllers].slice(0, 5000);
   writeJson(ENTITY_FILES.access_points, merged);
-  return { success: true, controller: { id: device.id, name: device.name || device.host, host: device.host }, ...result, type: result.type || 'unifi-local', unifi_neighbors: neighbors.neighbors, capsman_error: capsmanError?.message || '', access_points: merged };
+  return { success: true, controller: { id: device.id, name: device.name || device.host, host: device.host }, ...result, type: result.type || 'unifi-local', unifi_neighbors: neighbors.neighbors, unifi_vlan_candidates: neighbors.vlan_candidates, management_interface: neighbors.management_interface || '', management_vlan_id: neighbors.management_vlan_id || 0, capsman_error: capsmanError?.message || '', access_points: merged };
 }
 
 async function pollAccessPoints(payload = {}) {
@@ -726,7 +824,8 @@ async function pollAccessPoints(payload = {}) {
   if (!targets.length && !unifiTargets.length) throw Object.assign(new Error('Nenhuma controladora de Access Points cadastrada'), { status: 400 });
   const errors = [];
   for (const device of targets) {
-    try { await discoverAccessPoints({ controller_id: device.id }); }
+    const localIntegration = unifiIntegrations.find(item => item.mikrotik_id === device.id && item.management_interface);
+    try { await discoverAccessPoints({ controller_id: device.id, ...(localIntegration ? unifiDiscoveryOptions(localIntegration) : {}) }); }
     catch (error) { errors.push(`${device.name || device.host}: ${error.message}`); }
   }
   for (const integration of unifiTargets) {
@@ -853,6 +952,10 @@ async function collectUnifi(integration) {
 
 async function syncUnifiAccessPoints(integration) {
   const result = await collectUnifi(integration);
+  const ignored = readJson(AP_IGNORED_FILE, []);
+  const ignoredIds = new Set(ignored.map(item => item.id).filter(Boolean));
+  const ignoredMacs = new Set(ignored.map(item => normalizeMac(item.mac)).filter(Boolean));
+  result.access_points = result.access_points.filter(item => !ignoredIds.has(item.id) && !ignoredMacs.has(normalizeMac(item.mac_address || item.mac)));
   const controllerId = `unifi:${integration.id}`;
   const current = readJson(ENTITY_FILES.access_points, []);
   const discoveredIds = new Set(result.access_points.map(item => item.id));
@@ -879,7 +982,29 @@ async function unifiIntegrations(payload = {}) {
     if (!apiKey && !existing.api_key_encrypted) throw Object.assign(new Error('Informe a chave da API UniFi'), { status: 400 });
     const now = new Date().toISOString();
     const id = existing.id || `unifi_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const integration = { ...existing, id, name: String(payload.name || existing.name).trim(), api_key_encrypted: apiKey ? encryptSecret(apiKey) : existing.api_key_encrypted, status: payload.status === 'inactive' ? 'inactive' : 'active', created_date: existing.created_date || now, updated_date: now };
+    const discovery = unifiDiscoveryOptions({
+      management_interface: payload.management_interface ?? existing.management_interface,
+      management_vlan_id: payload.management_vlan_id ?? existing.management_vlan_id,
+      scan_vlan_hosts: payload.scan_vlan_hosts ?? existing.scan_vlan_hosts
+    });
+    const mikrotikId = String(payload.mikrotik_id ?? existing.mikrotik_id ?? '').trim();
+    if (mikrotikId && !getMikrotikDevices().some(device => device.id === mikrotikId)) {
+      throw Object.assign(new Error('MikroTik selecionado nao foi encontrado'), { status: 400 });
+    }
+    if (discovery.management_interface && !mikrotikId) {
+      throw Object.assign(new Error('Selecione o MikroTik conectado a VLAN de gerenciamento'), { status: 400 });
+    }
+    const integration = {
+      ...existing,
+      id,
+      name: String(payload.name || existing.name).trim(),
+      api_key_encrypted: apiKey ? encryptSecret(apiKey) : existing.api_key_encrypted,
+      status: payload.status === 'inactive' ? 'inactive' : 'active',
+      mikrotik_id: mikrotikId,
+      ...discovery,
+      created_date: existing.created_date || now,
+      updated_date: now
+    };
     writeJson(UNIFI_INTEGRATIONS_FILE, [integration, ...integrations.filter(item => item.id !== id)].slice(0, 50));
     return { integration: publicUnifiIntegration(integration) };
   }
@@ -915,11 +1040,11 @@ async function unifiControllerStatus(host) {
     active,
     enabled,
     version,
-    inform_port: 18080,
+    inform_port: 8080,
     ui_port: 8443,
-    inform_ready: ports.includes(':18080 '),
+    inform_ready: ports.includes(':8080 '),
     ui_ready: ports.includes(':8443 '),
-    inform_url: `http://${host}:18080/inform`,
+    inform_url: `http://${host}:8080/inform`,
     ui_url: `https://${host}:8443`
   };
 }
@@ -2292,6 +2417,10 @@ async function entityCrud(req) {
     const filtered = items.filter(existing => existing.id !== id && existing._id !== id);
     filtered.unshift(item);
     writeJson(file, filtered.slice(0, 5000));
+    if (parsed.entity === 'access_points') {
+      const mac = normalizeMac(item.mac_address || item.mac);
+      writeJson(AP_IGNORED_FILE, readJson(AP_IGNORED_FILE, []).filter(entry => entry.id !== id && (!mac || normalizeMac(entry.mac) !== mac)));
+    }
     return { item };
   }
 
@@ -2310,6 +2439,16 @@ async function entityCrud(req) {
     const removedItem = items.find(item => item.id === parsed.id || item._id === parsed.id);
     if (parsed.entity === 'clients' && removedItem) {
       await cleanupMikrotikAccess(removedItem);
+    }
+    if (parsed.entity === 'access_points' && removedItem) {
+      const ignored = readJson(AP_IGNORED_FILE, []);
+      const entry = {
+        id: removedItem.id || removedItem._id || parsed.id,
+        mac: normalizeMac(removedItem.mac_address || removedItem.mac),
+        name: removedItem.name || '',
+        ignored_at: new Date().toISOString()
+      };
+      writeJson(AP_IGNORED_FILE, [entry, ...ignored.filter(item => item.id !== entry.id && (!entry.mac || normalizeMac(item.mac) !== entry.mac))].slice(0, 5000));
     }
     writeJson(file, items.filter(item => item.id !== parsed.id && item._id !== parsed.id));
     return { success: true };
