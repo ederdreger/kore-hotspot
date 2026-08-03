@@ -6,7 +6,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
-const EMPTY = { name: 'UniFi Site Manager', api_key: '', status: 'active' };
+const EMPTY = { name: 'UniFi Site Manager', api_key: '', status: 'active', mikrotik_id: '', management_interface: '', management_vlan_id: '', scan_vlan_hosts: true };
+
+function readMikrotik(setting) {
+  try { return { id: setting.id || setting._id, ...JSON.parse(setting.value || '{}') }; } catch { return null; }
+}
 
 export default function UniFiIntegrationPanel({ onSynced }) {
   const [integrations, setIntegrations] = useState([]);
@@ -16,15 +20,18 @@ export default function UniFiIntegrationPanel({ onSynced }) {
   const [busy, setBusy] = useState('');
   const [results, setResults] = useState({});
   const [controller, setController] = useState(null);
+  const [mikrotiks, setMikrotiks] = useState([]);
 
   const load = async () => {
     try {
-      const [response, controllerResponse] = await Promise.all([
+      const [response, controllerResponse, settings] = await Promise.all([
         spedynet.functions.invoke('unifiIntegrations', { action: 'list' }),
-        spedynet.functions.invoke('unifiController', { action: 'status' }).catch(() => null)
+        spedynet.functions.invoke('unifiController', { action: 'status' }).catch(() => null),
+        spedynet.entities.Setting.filter({ category: 'mikrotik_device' }).catch(() => [])
       ]);
       setIntegrations(response.data?.integrations || []);
       if (controllerResponse) setController(controllerResponse.data || null);
+      setMikrotiks(settings.map(readMikrotik).filter(item => item?.host));
     } catch (error) {
       toast.error(error.message || 'Erro ao carregar integracoes UniFi');
     }
@@ -42,7 +49,7 @@ export default function UniFiIntegrationPanel({ onSynced }) {
   }, [controller?.installing]);
 
   const installController = async () => {
-    if (!window.confirm('Instalar a controladora UniFi Network na VPS? A instalacao adicionara MongoDB, UniFi e abrira as portas 8443, 18080, 3478/UDP e 10001/UDP.')) return;
+    if (!window.confirm('Instalar a controladora UniFi Network na VPS? A instalacao adicionara MongoDB, UniFi e abrira as portas 8443, 8080, 3478/UDP e 10001/UDP.')) return;
     setBusy('install-controller');
     try {
       const response = await spedynet.functions.invoke('unifiController', { action: 'install' });
@@ -63,12 +70,24 @@ export default function UniFiIntegrationPanel({ onSynced }) {
 
   const openEdit = (integration) => {
     setEditing(integration);
-    setForm({ name: integration.name, api_key: '', status: integration.status || 'active' });
+    setForm({
+      name: integration.name,
+      api_key: '',
+      status: integration.status || 'active',
+      mikrotik_id: integration.mikrotik_id || '',
+      management_interface: integration.management_interface || '',
+      management_vlan_id: integration.management_vlan_id || '',
+      scan_vlan_hosts: integration.scan_vlan_hosts !== false
+    });
     setShowForm(true);
   };
 
   const save = async (event) => {
     event.preventDefault();
+    if (form.management_interface && !form.mikrotik_id) {
+      toast.error('Selecione o MikroTik conectado a VLAN de gerenciamento.');
+      return;
+    }
     setBusy('save');
     try {
       await spedynet.functions.invoke('unifiIntegrations', { action: 'save', id: editing?.id, ...form });
@@ -116,11 +135,20 @@ export default function UniFiIntegrationPanel({ onSynced }) {
   const discoverNetwork = async (integration) => {
     setBusy(`discover-${integration.id}`);
     try {
-      const response = await spedynet.functions.invoke('accessPointDiscover', {});
-      const count = response.data?.unifi_neighbors || 0;
+      const response = await spedynet.functions.invoke('accessPointDiscover', {
+        mikrotik_id: integration.mikrotik_id,
+        management_interface: integration.management_interface,
+        management_vlan_id: integration.management_vlan_id,
+        scan_vlan_hosts: integration.scan_vlan_hosts !== false
+      });
+      const neighbors = response.data?.unifi_neighbors || 0;
+      const candidates = response.data?.unifi_vlan_candidates || 0;
+      const count = neighbors + candidates;
       onSynced?.(response.data?.access_points || []);
-      setResults(current => ({ ...current, [integration.id]: count ? `${count} equipamento(s) UniFi encontrado(s) na rede local aguardando adocao.` : 'Nenhum equipamento UniFi foi localizado na tabela de vizinhos do MikroTik.' }));
-      toast.success(`${count} UniFi localizado(s) na rede.`);
+      const source = integration.management_interface ? ` na interface ${integration.management_interface}` : '';
+      setResults(current => ({ ...current, [integration.id]: count ? `${neighbors} UniFi confirmado(s) e ${candidates} candidato(s) da VLAN${source}.` : `Nenhum equipamento foi localizado${source}. Verifique o Neighbor Discovery, ARP e DHCP no MikroTik.` }));
+      if (count) toast.success(`${count} equipamento(s) localizado(s)${source}.`);
+      else toast.warning(`Nenhum equipamento localizado${source}.`);
     } catch (error) {
       toast.error(error.message || 'Falha ao buscar UniFi na rede');
     } finally {
@@ -180,6 +208,7 @@ export default function UniFiIntegrationPanel({ onSynced }) {
                   <span className={`rounded border px-1.5 py-0.5 text-[10px] ${integration.status === 'active' ? 'border-success/30 bg-success/10 text-success' : 'border-border text-muted-foreground'}`}>{integration.status === 'active' ? 'Ativa' : 'Inativa'}</span>
                 </div>
                 <p className="mt-0.5 text-xs text-muted-foreground">{integration.sites_count || 0} site(s) | {integration.devices_count || 0} equipamento(s) | {integration.access_points_count || 0} AP(s)</p>
+                {integration.management_interface && <p className="mt-1 text-[10px] font-mono text-muted-foreground">MikroTik: {mikrotiks.find(item => item.id === integration.mikrotik_id)?.name || integration.mikrotik_id || 'padrao'} | Interface: {integration.management_interface}{integration.management_vlan_id ? ` | VLAN ${integration.management_vlan_id}` : ''}</p>}
                 {integration.last_sync_at && <p className="mt-1 text-[10px] text-muted-foreground">Sincronizado em {new Date(integration.last_sync_at).toLocaleString('pt-BR')}</p>}
                 {results[integration.id] && <p className="mt-2 text-xs text-info">{results[integration.id]}</p>}
               </div>
@@ -205,6 +234,12 @@ export default function UniFiIntegrationPanel({ onSynced }) {
             <div className="space-y-4 p-5">
               <div><Label className="text-xs">Nome</Label><Input className="mt-1" value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} required /></div>
               <div><Label className="text-xs">Chave da API</Label><Input type="password" className="mt-1 font-mono" value={form.api_key} onChange={event => setForm({ ...form, api_key: event.target.value })} placeholder={editing?.api_key_configured ? 'Manter chave atual' : 'X-API-Key'} required={!editing?.api_key_configured} /></div>
+              <div><Label className="text-xs">MikroTik da rede dos APs</Label><select className="mt-1 h-9 w-full rounded-md border border-border bg-input px-3 text-sm" value={form.mikrotik_id} onChange={event => setForm({ ...form, mikrotik_id: event.target.value })}><option value="">Primeiro MikroTik cadastrado</option>{mikrotiks.map(item => <option key={item.id} value={item.id}>{item.name || item.host} ({item.host})</option>)}</select></div>
+              <div className="grid grid-cols-[1fr_110px] gap-3">
+                <div><Label className="text-xs">Interface da VLAN de gerenciamento</Label><Input className="mt-1 font-mono" value={form.management_interface} onChange={event => setForm({ ...form, management_interface: event.target.value })} placeholder="ex: vlan-unifi" /></div>
+                <div><Label className="text-xs">VLAN ID</Label><Input type="number" min="1" max="4094" className="mt-1 font-mono" value={form.management_vlan_id} onChange={event => setForm({ ...form, management_vlan_id: event.target.value })} placeholder="ex: 30" /></div>
+              </div>
+              <label className="flex items-start gap-2 rounded-md border border-border bg-secondary/20 p-3 text-xs text-muted-foreground"><input type="checkbox" className="mt-0.5" checked={form.scan_vlan_hosts} onChange={event => setForm({ ...form, scan_vlan_hosts: event.target.checked })} /><span><strong className="text-foreground">VLAN dedicada aos equipamentos UniFi.</strong> Incluir hosts vistos no ARP/DHCP como candidatos quando LLDP/MNDP nao estiver disponivel.</span></label>
               <div><Label className="text-xs">Status</Label><select className="mt-1 h-9 w-full rounded-md border border-border bg-input px-3 text-sm" value={form.status} onChange={event => setForm({ ...form, status: event.target.value })}><option value="active">Ativa</option><option value="inactive">Inativa</option></select></div>
             </div>
             <div className="flex justify-end gap-2 border-t border-border px-5 py-4"><Button type="button" variant="outline" onClick={() => setShowForm(false)}>Cancelar</Button><Button type="submit" disabled={busy === 'save'}>{busy === 'save' && <Loader2 className="mr-2 w-4 h-4 animate-spin" />}Salvar</Button></div>

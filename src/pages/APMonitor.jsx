@@ -237,7 +237,7 @@ export default function APMonitor() {
       {aps.length > 0 && view === 'map' && (
         <div className="grid grid-cols-1 xl:grid-cols-5 gap-4">
           <div className="xl:col-span-3">
-            <APHeatmapGrid aps={aps} loading={loading} selectedAP={selectedAP} onSelectAP={setSelectedAP} onEditAP={handleEdit} />
+            <APHeatmapGrid aps={aps} loading={loading} selectedAP={selectedAP} onSelectAP={setSelectedAP} onEditAP={handleEdit} onDeleteAP={handleDelete} />
           </div>
           <div className="xl:col-span-2">
             <APChannelAnalyzer aps={aps} />

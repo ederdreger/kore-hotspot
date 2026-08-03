@@ -128,6 +128,13 @@ test('Access Points sao persistidos na API por tenant', async () => {
   assert.equal(listed.response.status, 200);
   assert.equal(listed.data.items.length, 1);
   assert.equal(listed.data.items[0].name, 'AP Teste');
+
+  const removed = await request(`/api/entities/access_points/${created.data.item.id}`, {
+    method: 'DELETE', headers: { 'X-Kore-Session': token }
+  });
+  assert.equal(removed.response.status, 200);
+  const ignored = JSON.parse(await readFile(path.join(directory, 'data', 'access-points-ignored.json'), 'utf8'));
+  assert.equal(ignored[0].id, created.data.item.id);
 });
 
 test('coleta de AP informa quando nao existe controladora cadastrada', async () => {
@@ -187,12 +194,21 @@ test('integracao UniFi armazena a chave criptografada e devolve apenas metadados
   const token = await loginAdmin();
   const headers = { 'Content-Type': 'application/json', 'X-Kore-Session': token };
   const apiKey = 'unifi-api-key-super-secreta';
+  const mikrotik = await request('/api/entities/settings', {
+    method: 'POST', headers,
+    body: JSON.stringify({ category: 'mikrotik_device', key: 'mikrotik_device_unifi', label: 'MikroTik UniFi', value: JSON.stringify({ name: 'MikroTik UniFi', host: '10.255.255.20', port: '22', user: 'kore-api' }) })
+  });
+  assert.equal(mikrotik.response.status, 200);
   const saved = await request('/api/unifi/integrations', {
     method: 'POST', headers,
-    body: JSON.stringify({ action: 'save', name: 'UniFi Teste', api_key: apiKey, status: 'active' })
+    body: JSON.stringify({ action: 'save', name: 'UniFi Teste', api_key: apiKey, status: 'active', mikrotik_id: mikrotik.data.item.id, management_interface: 'vlan-unifi', management_vlan_id: 30, scan_vlan_hosts: true })
   });
   assert.equal(saved.response.status, 200);
   assert.equal(saved.data.integration.api_key_configured, true);
+  assert.equal(saved.data.integration.management_interface, 'vlan-unifi');
+  assert.equal(saved.data.integration.management_vlan_id, 30);
+  assert.equal(saved.data.integration.scan_vlan_hosts, true);
+  assert.equal(saved.data.integration.mikrotik_id, mikrotik.data.item.id);
   assert.equal(JSON.stringify(saved.data).includes(apiKey), false);
 
   const stored = await readFile(path.join(directory, 'data', 'unifi-integrations.json'), 'utf8');
@@ -204,12 +220,24 @@ test('integracao UniFi armazena a chave criptografada e devolve apenas metadados
   assert.equal(listed.response.status, 200);
   assert.equal(listed.data.integrations.length, 1);
   assert.equal(listed.data.integrations[0].name, 'UniFi Teste');
+  assert.equal(listed.data.integrations[0].management_interface, 'vlan-unifi');
   assert.equal(JSON.stringify(listed.data).includes(apiKey), false);
 
   const removed = await request('/api/unifi/integrations', {
     method: 'POST', headers, body: JSON.stringify({ action: 'delete', id: saved.data.integration.id })
   });
   assert.equal(removed.response.status, 200);
+});
+
+test('integracao UniFi exige MikroTik quando usa VLAN de gerenciamento', async () => {
+  const token = await loginAdmin();
+  const { response, data } = await request('/api/unifi/integrations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Kore-Session': token },
+    body: JSON.stringify({ action: 'save', name: 'UniFi VLAN invalida', api_key: 'chave-teste', management_interface: 'vlan-sem-router', management_vlan_id: 50 })
+  });
+  assert.equal(response.status, 400);
+  assert.match(data.error, /Selecione o MikroTik/i);
 });
 
 test('status da controladora UniFi funciona mesmo antes da instalacao', async () => {
@@ -222,7 +250,7 @@ test('status da controladora UniFi funciona mesmo antes da instalacao', async ()
   assert.equal(response.status, 200);
   assert.equal(typeof data.installed, 'boolean');
   assert.equal(typeof data.active, 'boolean');
-  assert.match(data.inform_url, /:18080\/inform$/);
+  assert.match(data.inform_url, /:8080\/inform$/);
   assert.match(data.ui_url, /:8443$/);
 });
 

@@ -2,8 +2,10 @@
 set -Eeuo pipefail
 
 PUBLIC_HOST="${KORE_PUBLIC_HOST:-}"
-INFORM_PORT="${KORE_UNIFI_INFORM_PORT:-18080}"
+INFORM_PORT="${KORE_UNIFI_INFORM_PORT:-8080}"
 UI_PORT="${KORE_UNIFI_UI_PORT:-8443}"
+UNIFI_VERSION="${KORE_UNIFI_VERSION:-9.4.19}"
+MONGO_VERSION="${KORE_UNIFI_MONGO_VERSION:-4.4.31}"
 
 log() { printf '\033[36m[Kore-HotSpot UniFi]\033[0m %s\n' "$*"; }
 fail() { printf '\033[31m[Kore-HotSpot UniFi] ERRO:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -33,6 +35,15 @@ available_kb="$(df -Pk /var | awk 'NR==2 {print $4}')"
 memory_kb="$(awk '/MemTotal/ {print $2}' /proc/meminfo)"
 [ "$memory_kb" -ge 1900000 ] || fail "Sao necessarios pelo menos 2 GB de RAM."
 
+nginx_kore_site="/etc/nginx/sites-available/kore-hotspot"
+if [ "$INFORM_PORT" = "8080" ] && [ -f "$nginx_kore_site" ] && grep -qE '^[[:space:]]*listen[[:space:]]+8080([[:space:]]+default_server)?;' "$nginx_kore_site"; then
+  log "Reservando 8080/tcp para o inform UniFi"
+  cp -a "$nginx_kore_site" "${nginx_kore_site}.pre-unifi.$(date +%Y%m%d%H%M%S)"
+  sed -i -E 's/^([[:space:]]*listen[[:space:]]+)8080([[:space:]]+default_server)?;/\118082\2;/' "$nginx_kore_site"
+  nginx -t || fail "A troca da porta auxiliar do Nginx falhou; o backup foi preservado."
+  systemctl reload nginx
+fi
+
 if ss -ltnH "sport = :${UI_PORT}" | grep -q . && ! systemctl is-active --quiet unifi; then
   fail "A porta ${UI_PORT}/tcp ja esta em uso por outro servico."
 fi
@@ -44,27 +55,19 @@ export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 log "Instalando dependencias oficiais"
 apt-get update -y
-apt-get install -y ca-certificates curl gnupg jq
+apt-get install -y ca-certificates curl gnupg jq openjdk-17-jre-headless
 
 install -d -m 0755 /usr/share/keyrings
 rm -f /etc/apt/sources.list.d/mongodb-org-8.0.list /etc/apt/sources.list.d/kore-mongodb-4.4.list
 
-if grep -qw avx /proc/cpuinfo; then
-  mongo_series="8.0"
-  curl -fsSL https://pgp.mongodb.com/server-8.0.asc | gpg --dearmor --yes -o /usr/share/keyrings/mongodb-server-8.0.gpg
-  cat > /etc/apt/sources.list.d/mongodb-org-8.0.list <<EOF
-deb [arch=amd64 signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/8.0 multiverse
-EOF
-else
-  mongo_series="4.4"
-  log "CPU sem AVX detectada; usando MongoDB 4.4 compativel"
-  curl -fsSL https://pgp.mongodb.com/server-4.4.asc | gpg --dearmor --yes -o /usr/share/keyrings/mongodb-server-4.4.gpg
-  cat > /etc/apt/sources.list.d/kore-mongodb-4.4.list <<EOF
+log "Configurando MongoDB ${MONGO_VERSION}, compativel com CPUs com ou sem AVX"
+curl -fsSL https://pgp.mongodb.com/server-4.4.asc | gpg --dearmor --yes -o /usr/share/keyrings/mongodb-server-4.4.gpg
+cat > /etc/apt/sources.list.d/kore-mongodb-4.4.list <<EOF
 deb [arch=amd64 signed-by=/usr/share/keyrings/mongodb-server-4.4.gpg] https://repo.mongodb.org/apt/ubuntu focal/mongodb-org/4.4 multiverse
 EOF
 
-  # MongoDB 4.4 needs libssl1.1, which is no longer shipped by Jammy.
-  # Install only that signed Ubuntu package and immediately remove the Focal source.
+# MongoDB 4.4 needs libssl1.1 on Jammy. Use only the signed Ubuntu package.
+if ! dpkg-query -W libssl1.1 >/dev/null 2>&1; then
   echo 'deb http://security.ubuntu.com/ubuntu focal-security main' > /etc/apt/sources.list.d/kore-focal-libssl.list
   apt-get update -y
   if ! apt-get install -y libssl1.1; then
@@ -74,17 +77,25 @@ EOF
   rm -f /etc/apt/sources.list.d/kore-focal-libssl.list
 fi
 
-curl -fsSL https://dl.ui.com/unifi/unifi-repo.gpg -o /usr/share/keyrings/unifi-repo.gpg
-cat > /etc/apt/sources.list.d/100-ubnt-unifi.list <<EOF
-deb [arch=amd64 signed-by=/usr/share/keyrings/unifi-repo.gpg] https://www.ui.com/downloads/unifi/debian stable ubiquiti
-EOF
-
 apt-get update -y
 apt-mark unhold mongodb-org mongodb-org-server mongodb-org-mongos mongodb-org-shell mongodb-org-tools >/dev/null 2>&1 || true
-apt-get install -y --allow-downgrades mongodb-org unifi
-if [ "$mongo_series" = "4.4" ]; then
-  apt-mark hold mongodb-org mongodb-org-server mongodb-org-mongos mongodb-org-shell mongodb-org-tools >/dev/null
+apt-get install -y --allow-downgrades \
+  "mongodb-org=${MONGO_VERSION}" \
+  "mongodb-org-server=${MONGO_VERSION}" \
+  "mongodb-org-mongos=${MONGO_VERSION}" \
+  "mongodb-org-shell=${MONGO_VERSION}" \
+  "mongodb-org-tools=${MONGO_VERSION}"
+apt-mark hold mongodb-org mongodb-org-server mongodb-org-mongos mongodb-org-shell mongodb-org-tools >/dev/null
+
+installed_unifi="$(dpkg-query -W -f='${Version}' unifi 2>/dev/null | sed 's/-.*//' || true)"
+if [ -n "$installed_unifi" ] && dpkg --compare-versions "$installed_unifi" gt "$UNIFI_VERSION"; then
+  fail "UniFi ${installed_unifi} ja possui uma base mais nova. Restaure um backup compativel antes de instalar ${UNIFI_VERSION}."
 fi
+
+unifi_deb="/tmp/unifi-${UNIFI_VERSION}.deb"
+curl -fL "https://dl.ui.com/unifi/${UNIFI_VERSION}/unifi_sysvinit_all.deb" -o "$unifi_deb"
+apt-get install -y --allow-downgrades "$unifi_deb"
+apt-mark hold unifi >/dev/null
 systemctl stop unifi || true
 
 properties="/var/lib/unifi/system.properties"
@@ -104,7 +115,7 @@ set_property() {
 set_property unifi.http.port "$INFORM_PORT"
 set_property unifi.https.port "$UI_PORT"
 set_property system_ip "$PUBLIC_HOST"
-set_property unifi.override_inform_host true
+set_property unifi.override_inform_host false
 chown unifi:unifi "$properties"
 chmod 0640 "$properties"
 

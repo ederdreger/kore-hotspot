@@ -1,4 +1,4 @@
-import { MapPin, Edit2, Wifi, Users, Signal } from 'lucide-react';
+import { MapPin, Edit2, Trash2, Wifi, Users, Signal } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
 const STATUS_CONFIG = {
@@ -26,7 +26,7 @@ function UtilBar({ value }) {
   );
 }
 
-function APCard({ ap, selected, onSelect, onEdit }) {
+function APCard({ ap, selected, onSelect, onEdit, onDelete }) {
   const cfg = STATUS_CONFIG[ap.status] || STATUS_CONFIG.ok;
   const sigColor = SignalColor(ap.signalAvg);
   const loadPct = Math.round((ap.clients / ap.maxClients) * 100);
@@ -45,15 +45,26 @@ function APCard({ ap, selected, onSelect, onEdit }) {
       className={`relative rounded-xl border p-3 cursor-pointer transition-all hover:scale-[1.02] ${cfg.bg} ${selected ? 'ring-2 ring-primary/60' : ''}`}
       style={{ borderColor: selected ? cfg.color : undefined }}
     >
-      {/* Edit button */}
-      {onEdit && (
-        <button
-          onClick={e => { e.stopPropagation(); onEdit(ap); }}
-          className="absolute top-2 right-2 p-1 rounded-md hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <Edit2 className="w-3 h-3" />
-        </button>
-      )}
+      <div className="absolute top-2 right-2 flex items-center gap-0.5">
+        {onEdit && (
+          <button
+            onClick={e => { e.stopPropagation(); onEdit(ap); }}
+            className="p-1 rounded-md hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+            title="Editar Access Point"
+          >
+            <Edit2 className="w-3 h-3" />
+          </button>
+        )}
+        {onDelete && (
+          <button
+            onClick={e => { e.stopPropagation(); onDelete(ap); }}
+            className="p-1 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+            title="Excluir Access Point"
+          >
+            <Trash2 className="w-3 h-3" />
+          </button>
+        )}
+      </div>
 
       {/* Header */}
       <div className="flex items-start gap-2 mb-2 pr-5">
@@ -64,6 +75,7 @@ function APCard({ ap, selected, onSelect, onEdit }) {
             {ap.street}{ap.number ? `, ${ap.number}` : ''}
           </p>
           <p className="text-[10px] font-mono text-muted-foreground/70">{ap.ip} · CH{ap.channel}</p>
+          {ap.ssid && <p className="text-[10px] font-medium text-info truncate">Wi-Fi: {ap.ssid}</p>}
         </div>
       </div>
 
@@ -105,7 +117,7 @@ function APCard({ ap, selected, onSelect, onEdit }) {
   );
 }
 
-export default function APHeatmapGrid({ aps, loading, selectedAP, onSelectAP, onEditAP }) {
+export default function APHeatmapGrid({ aps, loading, selectedAP, onSelectAP, onEditAP, onDeleteAP }) {
   if (loading) {
     return <div className="bg-card border border-border rounded-xl h-64 animate-pulse" />;
   }
@@ -166,6 +178,7 @@ export default function APHeatmapGrid({ aps, loading, selectedAP, onSelectAP, on
                     selected={selectedAP?.id === apItem.id}
                     onSelect={onSelectAP}
                     onEdit={onEditAP}
+                    onDelete={onDeleteAP}
                   />
                 ))}
               </div>
@@ -188,11 +201,17 @@ export default function APHeatmapGrid({ aps, loading, selectedAP, onSelectAP, on
               </p>
               {ap.reference && <p className="text-[11px] text-muted-foreground/70 italic mt-0.5">Ref: {ap.reference}</p>}
               <p className="text-xs font-mono text-muted-foreground mt-0.5">{ap.ip} · {ap.band} · Canal {ap.channel}</p>
+              {ap.ssid && <p className="text-xs font-medium text-info mt-0.5">Wi-Fi: {ap.ssid}</p>}
             </div>
             <div className="flex items-center gap-2">
               {onEditAP && (
                 <button onClick={() => onEditAP(ap)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors">
                   <Edit2 className="w-3.5 h-3.5" />
+                </button>
+              )}
+              {onDeleteAP && (
+                <button onClick={() => onDeleteAP(ap)} className="p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors" title="Excluir Access Point">
+                  <Trash2 className="w-3.5 h-3.5" />
                 </button>
               )}
               <button onClick={() => onSelectAP(null)} className="text-muted-foreground hover:text-foreground text-xs p-1">✕</button>

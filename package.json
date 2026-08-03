@@ -1,7 +1,7 @@
 {
   "name": "kore-hotspot",
   "private": true,
-  "version": "0.2.42",
+  "version": "0.2.44",
   "type": "module",
   "scripts": {
     "dev": "vite",
