@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 APP_NAME="Kore-HotSpot"
-SCRIPT_VERSION="v0.2.44"
+SCRIPT_VERSION="v0.2.45"
 REPO_URL="${REPO_URL:-https://github.com/ederdreger/kore-hotspot.git}"
 REPO_SLUG="${REPO_SLUG:-ederdreger/kore-hotspot}"
 BRANCH="${BRANCH:-main}"
@@ -82,6 +82,10 @@ migrate_public_endpoints() {
 
 install_vpn_packages() {
   export DEBIAN_FRONTEND=noninteractive
+  if [ -f /etc/apt/sources.list.d/100-ubnt-unifi.list ]; then
+    log "Desativando repositorio UniFi legado; a controladora usa pacote versionado direto"
+    mv -f /etc/apt/sources.list.d/100-ubnt-unifi.list /etc/apt/sources.list.d/100-ubnt-unifi.list.disabled
+  fi
   apt-get update
   apt-get install -y strongswan xl2tpd ppp iptables iptables-persistent net-tools certbot python3-certbot-nginx
 }
