@@ -29,7 +29,7 @@ function statusMessage(status) {
   if (status === 'ready-to-adopt') return 'O AP enviou o Inform e esta pronto para confirmação na controladora.';
   if (status === 'no-inform') return 'Tempo limite encerrado: o AP não iniciou conexão com a controladora.';
   if (status === 'failed') return 'A preparação remota falhou em uma das verificações.';
-  return 'Adoção remota ativa por DHCP e DNS. Aguardando o AP enviar o Inform.';
+  return 'Adoção remota ativa por DHCP, DNS e relay UDP 10001. Aguardando o AP enviar o Inform.';
 }
 
 export default function APRegisterModal({ ap, onSave, onCheckAdoption, onClose }) {
@@ -270,7 +270,7 @@ export default function APRegisterModal({ ap, onSave, onCheckAdoption, onClose }
               </p>
               {!adoptionResult ? (
                 <p className="text-[11px] text-muted-foreground">
-                  O Kore executará a adoção remota sem reiniciar o equipamento: bypass do Hotspot, Option 43 forçada, DNS unifi exclusivo para o AP, renovação DHCP e monitoramento da porta Inform. Não é necessária senha SSH.
+                  O Kore executará a adoção remota sem reiniciar o equipamento: bypass do Hotspot, Option 43, DNS unifi, relay dos anúncios broadcast/multicast UDP 10001 e monitoramento da porta Inform. Não é necessária senha SSH.
                 </p>
               ) : (
                 <div className="space-y-2 text-[11px]">
@@ -281,7 +281,8 @@ export default function APRegisterModal({ ap, onSave, onCheckAdoption, onClose }
                       ['dns_unifi', 'DNS unifi direcionado'],
                       ['controller', 'Controladora ativa'],
                       ['inform_reachable', 'Inform porta 8080'],
-                      ['discovery_udp', 'Discovery UDP 10001']
+                      ['discovery_relay', 'Relay UDP 10001'],
+                      ['discovery_udp', 'Anúncio recebido do AP']
                     ].map(([key, label]) => {
                       const done = adoptionResult.checks?.[key] || adoptionResult.access_point?.adoption_checks?.[key];
                       return <span key={key} className="flex items-center gap-1.5">{done ? <CheckCircle2 className="w-3 h-3 text-success" /> : <RefreshCw className="w-3 h-3 text-muted-foreground" />}{label}</span>;
