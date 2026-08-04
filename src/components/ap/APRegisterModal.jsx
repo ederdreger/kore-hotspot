@@ -281,6 +281,7 @@ export default function APRegisterModal({ ap, onSave, onCheckAdoption, onClose }
                       ['dns_unifi', 'DNS unifi direcionado'],
                       ['controller', 'Controladora ativa'],
                       ['inform_reachable', 'Inform porta 8080'],
+                      ['inform_redirect', 'Inform forçado para VPS'],
                       ['discovery_relay', 'Relay UDP 10001'],
                       ['discovery_udp', 'Anúncio recebido do AP']
                     ].map(([key, label]) => {
