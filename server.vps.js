@@ -4,7 +4,6 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const net = require('net');
-const dgram = require('dgram');
 const dns = require('dns').promises;
 const { AsyncLocalStorage } = require('async_hooks');
 
@@ -996,90 +995,66 @@ async function configureUnifiDnsAdoption(mikrotik, accessPoint, controllerIp) {
   return { ready: true, hostname: 'unifi', address: controllerIp, dns_redirect: true, monitor_comment: informComment };
 }
 
-function parseUbiquitiDiscoveryPacket(message) {
-  if (!Buffer.isBuffer(message) || message.length < 4) return null;
-  const version = message[0];
-  const command = message[1];
-  if (!((version === 1 && command === 0) || (version === 2 && [6, 9, 11].includes(command)))) return null;
-  const declaredLength = message.readUInt16BE(2);
-  if (declaredLength + 4 !== message.length) return null;
-  const result = { protocol: `v${version}`, command, macs: [], ips: [] };
-  for (let offset = 4; offset + 3 <= message.length;) {
-    const type = message[offset];
-    const length = message.readUInt16BE(offset + 1);
-    const start = offset + 3;
-    const end = start + length;
-    if (end > message.length) break;
-    const value = message.subarray(start, end);
-    if (type === 0x01 && value.length >= 6) result.macs.push([...value.subarray(0, 6)].map(byte => byte.toString(16).padStart(2, '0')).join(':').toUpperCase());
-    else if (type === 0x02 && value.length >= 10) {
-      result.macs.push([...value.subarray(0, 6)].map(byte => byte.toString(16).padStart(2, '0')).join(':').toUpperCase());
-      result.ips.push([...value.subarray(6, 10)].join('.'));
-    } else if (type === 0x03) result.firmware = value.toString('utf8').replace(/\0+$/g, '');
-    else if (type === 0x0b) result.hostname = value.toString('utf8').replace(/\0+$/g, '');
-    else if (type === 0x0c) result.product = value.toString('utf8').replace(/\0+$/g, '');
-    else if (type === 0x0f && value.length >= 4) result.management_port = value.readUInt32BE(0) & 0xffff;
-    else if (type === 0x14 || type === 0x15) result.model = value.toString('utf8').replace(/\0+$/g, '');
-    else if (type === 0x16) result.version = value.toString('utf8').replace(/\0+$/g, '');
-    else if (type === 0x17 && value.length) result.config_status = [...value].some(byte => byte !== 0) ? 'default/unmanaged' : 'managed/adopted';
-    offset = end;
-  }
-  result.macs = [...new Set(result.macs)];
-  result.ips = [...new Set(result.ips)];
-  return result;
+function unifiDiscoveryRelayPlan(apIp, controllerIp, mac) {
+  const suffix = mac.replace(/:/g, '').toLowerCase();
+  const broadcastComment = `Kore UniFi Discovery ${suffix} broadcast`;
+  const multicastComment = `Kore UniFi Discovery ${suffix} multicast`;
+  const sourceNatComment = `Kore UniFi Discovery ${suffix} source-nat`;
+  const filterComment = `Kore UniFi Discovery ${suffix} forward`;
+  return {
+    suffix,
+    broadcastComment,
+    multicastComment,
+    sourceNatComment,
+    filterComment,
+    script: [
+      `:local broadcast [/ip firewall nat find where comment="${broadcastComment}"]`,
+      `:if ([:len $broadcast] = 0) do={ /ip firewall nat add chain=dstnat src-address="${apIp}" dst-address=255.255.255.255 protocol=udp dst-port=10001 action=dst-nat to-addresses="${controllerIp}" to-ports=10001 comment="${broadcastComment}" disabled=no; :set broadcast [/ip firewall nat find where comment="${broadcastComment}"] } else={ /ip firewall nat set $broadcast chain=dstnat src-address="${apIp}" dst-address=255.255.255.255 protocol=udp dst-port=10001 action=dst-nat to-addresses="${controllerIp}" to-ports=10001 disabled=no }`,
+      `:local multicast [/ip firewall nat find where comment="${multicastComment}"]`,
+      `:if ([:len $multicast] = 0) do={ /ip firewall nat add chain=dstnat src-address="${apIp}" dst-address=233.89.188.1 protocol=udp dst-port=10001 action=dst-nat to-addresses="${controllerIp}" to-ports=10001 comment="${multicastComment}" disabled=no; :set multicast [/ip firewall nat find where comment="${multicastComment}"] } else={ /ip firewall nat set $multicast chain=dstnat src-address="${apIp}" dst-address=233.89.188.1 protocol=udp dst-port=10001 action=dst-nat to-addresses="${controllerIp}" to-ports=10001 disabled=no }`,
+      `:local sourceNat [/ip firewall nat find where comment="${sourceNatComment}"]`,
+      `:if ([:len $sourceNat] = 0) do={ /ip firewall nat add chain=srcnat src-address="${apIp}" dst-address="${controllerIp}" protocol=udp dst-port=10001 action=masquerade comment="${sourceNatComment}" disabled=no; :set sourceNat [/ip firewall nat find where comment="${sourceNatComment}"] } else={ /ip firewall nat set $sourceNat chain=srcnat src-address="${apIp}" dst-address="${controllerIp}" protocol=udp dst-port=10001 action=masquerade disabled=no }`,
+      `:local forward [/ip firewall filter find where comment="${filterComment}"]`,
+      `:if ([:len $forward] = 0) do={ /ip firewall filter add chain=forward src-address="${apIp}" dst-address="${controllerIp}" protocol=udp dst-port=10001 action=accept comment="${filterComment}" disabled=no; :set forward [/ip firewall filter find where comment="${filterComment}"] } else={ /ip firewall filter set $forward chain=forward src-address="${apIp}" dst-address="${controllerIp}" protocol=udp dst-port=10001 action=accept disabled=no }`,
+      '/ip firewall nat move $sourceNat destination=0',
+      '/ip firewall nat move $multicast destination=0',
+      '/ip firewall nat move $broadcast destination=0',
+      '/ip firewall filter move $forward destination=0'
+    ].join('; ')
+  };
 }
 
-function sendUbiquitiDiscoveryProbe(host, port, timeout = 6000) {
-  return new Promise((resolve, reject) => {
-    const socket = dgram.createSocket('udp4');
-    let settled = false;
-    const finish = (error, value) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      socket.close();
-      if (error) reject(error); else resolve(value);
-    };
-    const timer = setTimeout(() => finish(Object.assign(new Error('O AP nao respondeu ao discovery UDP 10001'), { status: 504 })), timeout);
-    socket.on('error', error => finish(error));
-    socket.on('message', message => {
-      const parsed = parseUbiquitiDiscoveryPacket(message);
-      if (parsed) finish(null, parsed);
-    });
-    socket.bind(0, '0.0.0.0', () => {
-      socket.send(Buffer.from([0x01, 0x00, 0x00, 0x00]), port, host);
-      setTimeout(() => { if (!settled) socket.send(Buffer.from([0x02, 0x08, 0x00, 0x00]), port, host); }, 500);
-    });
-  });
-}
-
-async function probeUnifiThroughMikrotik(mikrotik, accessPoint, controllerIp) {
+async function configureUnifiDiscoveryRelay(mikrotik, accessPoint, controllerIp) {
   const apIp = String(accessPoint.ip || '').trim();
-  const routerHost = routerAddress(mikrotik.host);
-  if (net.isIP(apIp) !== 4 || net.isIP(controllerIp) !== 4 || !routerHost) return { reachable: false, error: 'Enderecos invalidos para discovery remoto' };
-  const publicPort = 41000 + crypto.randomInt(7000);
-  const comment = `kore-unifi-probe-${crypto.randomBytes(4).toString('hex')}`;
-  try {
-    const script = [
-      `/ip firewall nat add chain=dstnat src-address="${controllerIp}" protocol=udp dst-port=${publicPort} action=dst-nat to-addresses="${apIp}" to-ports=10001 comment="${comment}" disabled=no`,
-      `/ip firewall filter add chain=forward src-address="${controllerIp}" dst-address="${apIp}" protocol=udp dst-port=10001 action=accept comment="${comment}" disabled=no`,
-      `/ip firewall filter move [find where comment="${comment}"] destination=0`
-    ].join('; ');
-    await runMikrotikKeyCommand(mikrotik, script, 15000);
-    const device = await sendUbiquitiDiscoveryProbe(routerHost, publicPort);
-    const expectedMac = normalizeMac(accessPoint.mac_address || accessPoint.mac);
-    if (expectedMac && device.macs.length && !device.macs.includes(expectedMac)) {
-      return { reachable: false, error: `O discovery respondeu com MAC diferente de ${expectedMac}` };
-    }
-    return { reachable: true, ...device };
-  } catch (error) {
-    return { reachable: false, error: error.message };
-  } finally {
-    await Promise.all([
-      runMikrotikKeyCommand(mikrotik, `/ip firewall nat remove [find where comment="${comment}"]`, 10000).catch(() => {}),
-      runMikrotikKeyCommand(mikrotik, `/ip firewall filter remove [find where comment="${comment}"]`, 10000).catch(() => {})
-    ]);
+  const mac = normalizeMac(accessPoint.mac_address || accessPoint.mac);
+  if (net.isIP(apIp) !== 4 || net.isIP(controllerIp) !== 4 || !mac) {
+    throw Object.assign(new Error('Dados invalidos para configurar o relay de discovery UniFi'), { status: 400 });
   }
+  const plan = unifiDiscoveryRelayPlan(apIp, controllerIp, mac);
+  await runMikrotikKeyCommand(mikrotik, plan.script, 20000);
+  const [natResult, filterResult] = await Promise.all([
+    runMikrotikKeyCommand(mikrotik, `/ip firewall nat print detail without-paging where comment~"Kore UniFi Discovery ${plan.suffix}"`),
+    runMikrotikKeyCommand(mikrotik, `/ip firewall filter print detail without-paging where comment="${plan.filterComment}"`)
+  ]);
+  const natRows = parseKeyValueRows(natResult.stdout);
+  const destinations = new Set(natRows.filter(row => row.chain === 'dstnat' && row.action === 'dst-nat' && row['to-addresses'] === controllerIp && row['dst-port'] === '10001' && row.disabled !== 'true').map(row => row['dst-address']));
+  const sourceNatReady = natRows.some(row => row.chain === 'srcnat' && row.action === 'masquerade' && row['dst-address'] === controllerIp && row['dst-port'] === '10001' && row.disabled !== 'true');
+  const forwardReady = parseKeyValueRows(filterResult.stdout).some(row => row.chain === 'forward' && row.action === 'accept' && row['dst-address'] === controllerIp && row['dst-port'] === '10001' && row.disabled !== 'true');
+  if (!destinations.has('255.255.255.255') || !destinations.has('233.89.188.1') || !sourceNatReady || !forwardReady) {
+    throw Object.assign(new Error('O RouterOS nao confirmou o relay bidirecional do discovery UniFi'), { status: 502 });
+  }
+  return { ready: true, controller_ip: controllerIp, port: 10001, broadcast: true, multicast: true };
+}
+
+async function unifiDiscoveryTraffic(mikrotik, accessPoint) {
+  const mac = normalizeMac(accessPoint.mac_address || accessPoint.mac);
+  if (!mac) return { packets: 0, bytes: 0, seen: false };
+  const suffix = mac.replace(/:/g, '').toLowerCase();
+  const result = await runMikrotikKeyCommand(mikrotik, `/ip firewall nat print stats detail without-paging where comment~"Kore UniFi Discovery ${suffix}"`, 10000).catch(() => ({ stdout: '' }));
+  const rows = parseKeyValueRows(result.stdout).filter(row => row.chain === 'dstnat');
+  const packets = rows.reduce((total, row) => total + (Number(String(row.packets || '0').replace(/[^0-9]/g, '')) || 0), 0);
+  const bytes = rows.reduce((total, row) => total + (Number(String(row.bytes || '0').replace(/[^0-9]/g, '')) || 0), 0);
+  return { packets, bytes, seen: packets > 0 };
 }
 
 async function unifiInformTraffic(mikrotik, accessPoint) {
@@ -1151,18 +1126,15 @@ async function prepareUnifiVlanAdoption(mikrotik, accessPoint, controller, host)
     checks.inform_reachable = true;
     working = saveAccessPointAdoption(working, { adoption_checks: { ...checks } });
 
-    const discovery = await probeUnifiThroughMikrotik(mikrotik, working, dhcp.inform_ip);
-    checks.discovery_udp = discovery.reachable;
-    if (discovery.reachable && discovery.config_status === 'managed/adopted') {
-      working = saveAccessPointAdoption(working, { adoption_checks: { ...checks }, ubiquiti_discovery: discovery });
-      throw Object.assign(new Error('O discovery do proprio equipamento informa que ele ainda esta gerenciado/adotado. Remova-o da controladora anterior ou restaure-o realmente ao padrao antes de tentar uma nova adocao.'), { status: 409 });
-    }
+    const discoveryRelay = await configureUnifiDiscoveryRelay(mikrotik, working, dhcp.inform_ip);
+    checks.discovery_relay = true;
+    const discoveryTraffic = await unifiDiscoveryTraffic(mikrotik, working);
+    checks.discovery_udp = discoveryTraffic.seen;
     const updated = saveAccessPointAdoption(working, {
       adoption_status: 'waiting-inform',
       adoption_checks: { ...checks },
-      ubiquiti_discovery: discovery,
-      model: discovery.model || discovery.product || working.model,
-      version: discovery.version || discovery.firmware || working.version
+      discovery_relay: discoveryRelay,
+      discovery_traffic: discoveryTraffic
     });
     return {
       success: true,
@@ -1176,10 +1148,11 @@ async function prepareUnifiVlanAdoption(mikrotik, accessPoint, controller, host)
       dhcp_option: dhcp,
       dns_adoption: dnsAdoption,
       connectivity,
-      discovery,
-      message: discovery.reachable
-        ? `Equipamento ${discovery.model || discovery.product || ''} validado por discovery remoto. Aguardando o Inform.`.replace(/\s+/g, ' ').trim()
-        : 'Configuracoes de adocao confirmadas. O AP nao respondeu ao discovery UDP 10001; aguardando o contador de Inform.'
+      discovery_relay: discoveryRelay,
+      discovery_traffic: discoveryTraffic,
+      message: discoveryTraffic.seen
+        ? 'O anuncio local do AP foi encaminhado para a controladora. Aguardando o Inform.'
+        : 'Relay de discovery ativo. Aguardando o primeiro anuncio broadcast ou multicast do AP.'
     };
   } catch (error) {
     saveAccessPointAdoption(working, {
@@ -1201,7 +1174,9 @@ async function unifiAccessPointAdoptionStatus(payload = {}) {
   const controllerDevice = snapshot.devices.find(item => normalizeMac(item.mac) === mac);
   const controllerId = String(accessPoint.controller_id || '').replace(/^unifi-local:/, '');
   const mikrotik = mikrotikDeviceById(controllerId);
-  const informTraffic = mikrotik ? await unifiInformTraffic(mikrotik, accessPoint) : { packets: 0, bytes: 0, seen: false };
+  const [informTraffic, discoveryTraffic] = mikrotik
+    ? await Promise.all([unifiInformTraffic(mikrotik, accessPoint), unifiDiscoveryTraffic(mikrotik, accessPoint)])
+    : [{ packets: 0, bytes: 0, seen: false }, { packets: 0, bytes: 0, seen: false }];
   let adoptionStatus = accessPoint.adoption_status || 'pending';
   if (controllerDevice?.adopted) adoptionStatus = 'adopted';
   else if (controllerDevice) adoptionStatus = 'ready-to-adopt';
@@ -1209,24 +1184,31 @@ async function unifiAccessPointAdoptionStatus(payload = {}) {
     const requestedAt = Date.parse(accessPoint.adoption_requested_at || '');
     if (Number.isFinite(requestedAt) && Date.now() - requestedAt >= 2 * 60 * 1000) adoptionStatus = 'no-inform';
   }
+  const adoptionChecks = { ...(accessPoint.adoption_checks || {}), discovery_udp: discoveryTraffic.seen };
   const updated = saveAccessPointAdoption(accessPoint, {
     managed: adoptionStatus === 'adopted',
     status: adoptionStatus === 'adopted' ? 'ok' : 'pending',
     adoption_status: adoptionStatus,
+    adoption_checks: adoptionChecks,
     controller_device_state: controllerDevice?.state || accessPoint.controller_device_state || '',
     inform_traffic: informTraffic,
+    discovery_traffic: discoveryTraffic,
     controller_seen_at: controllerDevice ? new Date().toISOString() : accessPoint.controller_seen_at
   });
   const messages = {
     adopted: 'AP adotado e gerenciado pela controladora.',
     'ready-to-adopt': 'O AP ja enviou o Inform e esta pronto para adocao na controladora.',
     failed: accessPoint.adoption_error || 'A preparacao remota falhou em uma das verificacoes.',
-    'no-inform': 'Tempo limite encerrado: o AP nao iniciou nenhum trafego para a porta Inform. A controladora e o MikroTik estao acessiveis; o firmware do equipamento nao reagiu a DHCP nem DNS.',
+    'no-inform': discoveryTraffic.seen
+      ? 'O MikroTik encaminhou anuncios UDP 10001 do AP para a controladora, mas o AP ainda nao iniciou o Inform TCP 8080.'
+      : 'O AP nao transmitiu anuncio UDP 10001 nem iniciou o Inform durante a medicao. A configuracao do MikroTik esta pronta, mas nao houve trafego de adocao originado pelo equipamento.',
     'waiting-inform': informTraffic.seen
       ? 'O AP ja tentou acessar a porta Inform. Aguardando a controladora processar o equipamento.'
-      : 'Adocao remota ativa por DHCP e DNS. Aguardando a primeira tentativa do AP na porta Inform.'
+      : discoveryTraffic.seen
+        ? 'O anuncio UDP 10001 do AP foi encaminhado para a controladora. Aguardando o Inform.'
+        : 'Relay de discovery, DHCP e DNS ativos. Aguardando trafego de adocao originado pelo AP.'
   };
-  return { success: true, access_point: updated, adoption_status: adoptionStatus, controller_device: controllerDevice || null, inform_traffic: informTraffic, message: messages[adoptionStatus] || 'Aguardando o AP enviar o Inform.' };
+  return { success: true, access_point: updated, adoption_status: adoptionStatus, controller_device: controllerDevice || null, inform_traffic: informTraffic, discovery_traffic: discoveryTraffic, message: messages[adoptionStatus] || 'Aguardando o AP enviar o Inform.' };
 }
 
 async function adoptUnifiAccessPoint(payload = {}) {
@@ -1251,6 +1233,7 @@ async function adoptUnifiAccessPoint(payload = {}) {
   if (!host) throw Object.assign(new Error('IP ou dominio publico da VPS nao identificado'), { status: 400 });
   const controller = await unifiControllerStatus(host);
   if (!controller.active || !controller.inform_ready) throw Object.assign(new Error('A controladora UniFi local nao esta pronta na porta 8080'), { status: 503 });
+  if (mode === 'vlan' && !controller.discovery_ready) throw Object.assign(new Error('A controladora UniFi local nao esta escutando discovery UDP na porta 10001'), { status: 503 });
   const ip = String(accessPoint.ip).trim();
   const controllerId = String(accessPoint.controller_id || '').replace(/^unifi-local:/, '');
   const mikrotik = mikrotikDeviceById(controllerId);
@@ -1552,7 +1535,10 @@ async function unifiControllerStatus(host) {
   const active = await run('systemctl', ['is-active', 'unifi'], 5000).then(result => result.stdout.trim() === 'active').catch(() => false);
   const enabled = await run('systemctl', ['is-enabled', 'unifi'], 5000).then(result => result.stdout.trim() === 'enabled').catch(() => false);
   const version = await run('dpkg-query', ['-W', '-f=${Version}', 'unifi'], 5000).then(result => result.stdout.trim()).catch(() => '');
-  const ports = await run('ss', ['-ltnH'], 5000).then(result => result.stdout).catch(() => '');
+  const [tcpPorts, udpPorts] = await Promise.all([
+    run('ss', ['-ltnH'], 5000).then(result => result.stdout).catch(() => ''),
+    run('ss', ['-lunH'], 5000).then(result => result.stdout).catch(() => '')
+  ]);
   return {
     installed: !!version,
     installing,
@@ -1561,8 +1547,9 @@ async function unifiControllerStatus(host) {
     version,
     inform_port: 8080,
     ui_port: 8443,
-    inform_ready: ports.includes(':8080 '),
-    ui_ready: ports.includes(':8443 '),
+    inform_ready: tcpPorts.includes(':8080 '),
+    ui_ready: tcpPorts.includes(':8443 '),
+    discovery_ready: udpPorts.includes(':10001 '),
     inform_url: `http://${host}:8080/inform`,
     ui_url: `https://${host}:8443`
   };
@@ -3922,7 +3909,7 @@ const server = http.createServer((req, res) => {
 });
 
 if (process.env.KORE_TEST_EXPORTS === 'true') {
-  module.exports = { normalizeRouterHex, parseUbiquitiDiscoveryPacket, unifiDhcpOption43 };
+  module.exports = { normalizeRouterHex, unifiDhcpOption43, unifiDiscoveryRelayPlan };
 } else {
   ensureSshKey().then(() => {
     server.listen(PORT, '0.0.0.0', () => console.log(`Kore VPN API listening on ${PORT}`));
