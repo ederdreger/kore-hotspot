@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 APP_NAME="Kore-HotSpot"
-SCRIPT_VERSION="v0.2.46"
+SCRIPT_VERSION="v0.2.47"
 REPO_URL="${REPO_URL:-https://github.com/ederdreger/kore-hotspot.git}"
 REPO_SLUG="${REPO_SLUG:-ederdreger/kore-hotspot}"
 BRANCH="${BRANCH:-main}"
@@ -87,7 +87,7 @@ install_vpn_packages() {
     mv -f /etc/apt/sources.list.d/100-ubnt-unifi.list /etc/apt/sources.list.d/100-ubnt-unifi.list.disabled
   fi
   apt-get update
-  apt-get install -y strongswan xl2tpd ppp iptables iptables-persistent net-tools certbot python3-certbot-nginx
+  apt-get install -y strongswan xl2tpd ppp iptables iptables-persistent net-tools certbot python3-certbot-nginx sshpass
 }
 
 configure_l2tp_base() {

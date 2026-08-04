@@ -146,6 +146,27 @@ test('coleta de AP informa quando nao existe controladora cadastrada', async () 
   assert.match(result.data.error, /Nenhuma controladora/i);
 });
 
+test('adocao UniFi exige senha SSH e nao persiste credenciais', async () => {
+  const token = await loginAdmin();
+  const headers = { 'Content-Type': 'application/json', 'X-Kore-Session': token };
+  const created = await request('/api/entities/access_points', {
+    method: 'POST', headers,
+    body: JSON.stringify({ name: 'UniFi pendente', ip: '192.168.1.245', source: 'unifi-local', adoption_status: 'pending', managed: false })
+  });
+  assert.equal(created.response.status, 200);
+
+  const adoption = await request('/api/access-points/adopt', {
+    method: 'POST', headers,
+    body: JSON.stringify({ ap_id: created.data.item.id, username: 'ubnt', password: '' })
+  });
+  assert.equal(adoption.response.status, 400);
+  assert.match(adoption.data.error, /senha SSH/i);
+
+  const stored = await readFile(path.join(directory, 'data', 'access-points.json'), 'utf8');
+  assert.equal(stored.includes('password'), false);
+  assert.equal(stored.includes('sshPassword'), false);
+});
+
 test('perfil Wi-Fi protege a senha e gera previa CAPsMAN sem segredo', async () => {
   const token = await loginAdmin();
   const headers = { 'Content-Type': 'application/json', 'X-Kore-Session': token };

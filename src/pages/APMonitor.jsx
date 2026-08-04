@@ -81,14 +81,14 @@ export default function APMonitor() {
     }
   };
 
-  const handleRegister = async (formData) => {
+  const handleRegister = async (formData, adoption = null) => {
     try {
+      let saved;
       if (editingAP) {
-        const updated = await spedynet.entities.AccessPoint.update(editingAP.id, { ...formData, custom_name: formData.name });
-        setAPs(prev => prev.map(ap => ap.id === editingAP.id ? updated : ap));
-        setEditingAP(null);
+        saved = await spedynet.entities.AccessPoint.update(editingAP.id, { ...formData, custom_name: formData.name });
+        setAPs(prev => prev.map(ap => ap.id === editingAP.id ? saved : ap));
       } else {
-        const created = await spedynet.entities.AccessPoint.create({
+        saved = await spedynet.entities.AccessPoint.create({
           ...formData,
           clients: 0,
           signalAvg: 0,
@@ -98,12 +98,26 @@ export default function APMonitor() {
           status: 'offline',
           managed: false
         });
-        setAPs(prev => [created, ...prev]);
+        setAPs(prev => [saved, ...prev]);
       }
+      if (adoption) {
+        const response = await spedynet.functions.invoke('accessPointAdopt', {
+          ap_id: saved.id || saved._id,
+          username: adoption.username,
+          password: adoption.password,
+          port: adoption.port
+        });
+        setAPs(prev => prev.map(item => item.id === saved.id ? response.data.access_point : item));
+        toast.success(response.data.message || 'A adocao foi iniciada.');
+      } else {
+        toast.success(editingAP ? 'Access Point atualizado.' : 'Access Point cadastrado.');
+      }
+      setEditingAP(null);
       setShowRegister(false);
-      toast.success(editingAP ? 'Access Point atualizado.' : 'Access Point cadastrado.');
+      return true;
     } catch (error) {
       toast.error(error.message || 'Erro ao salvar Access Point');
+      throw error;
     }
   };
 

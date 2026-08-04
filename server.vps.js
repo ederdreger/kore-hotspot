@@ -3,6 +3,7 @@ const { execFile, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const net = require('net');
 const dns = require('dns').promises;
 const { AsyncLocalStorage } = require('async_hooks');
 
@@ -156,6 +157,15 @@ function run(command, args, timeout = 15000) {
         const message = stderr || stdout || error.message;
         reject(new Error(message.includes('Permission denied') ? 'SSH negado pelo MikroTik: chave, usuario, senha ou permissoes invalidas' : message));
       } else resolve({ stdout, stderr });
+    });
+  });
+}
+
+function runWithEnv(command, args, env, timeout = 15000) {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, { timeout, maxBuffer: 1024 * 1024, env: { ...process.env, ...env } }, (error, stdout, stderr) => {
+      if (error) return reject(new Error(String(stderr || stdout || error.message).trim()));
+      resolve({ stdout, stderr });
     });
   });
 }
@@ -858,6 +868,61 @@ async function pollAccessPoints(payload = {}) {
   const accessPoints = readJson(ENTITY_FILES.access_points, []);
   if (errors.length === targets.length + unifiTargets.length) throw Object.assign(new Error(errors.join(' | ')), { status: 502 });
   return { success: errors.length === 0, access_points: accessPoints, errors, controllers_checked: targets.length + unifiTargets.length };
+}
+
+async function adoptUnifiAccessPoint(payload = {}) {
+  const apId = String(payload.ap_id || payload.id || '').trim();
+  const username = normalizeUser(payload.username || 'ubnt');
+  const password = String(payload.password || '');
+  const port = Number(payload.port || 22);
+  const accessPoints = readJson(ENTITY_FILES.access_points, []);
+  const accessPoint = accessPoints.find(item => String(item.id || item._id) === apId);
+
+  if (!accessPoint) throw Object.assign(new Error('Access Point nao encontrado'), { status: 404 });
+  if (accessPoint.source !== 'unifi-local') throw Object.assign(new Error('A adocao direta esta disponivel somente para equipamentos UniFi descobertos na rede local'), { status: 400 });
+  if (accessPoint.managed || accessPoint.adoption_status === 'adopted') throw Object.assign(new Error('Este equipamento ja esta adotado pela controladora'), { status: 409 });
+  if (net.isIP(String(accessPoint.ip || '').trim()) !== 4) throw Object.assign(new Error('O AP nao possui um IPv4 de gerenciamento valido'), { status: 400 });
+  if (!username) throw Object.assign(new Error('Informe o usuario SSH do AP'), { status: 400 });
+  if (!password) throw Object.assign(new Error('Informe a senha SSH do AP'), { status: 400 });
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw Object.assign(new Error('A porta SSH deve estar entre 1 e 65535'), { status: 400 });
+
+  const host = unifiControllerHost();
+  if (!host) throw Object.assign(new Error('IP ou dominio publico da VPS nao identificado'), { status: 400 });
+  const controller = await unifiControllerStatus(host);
+  if (!controller.active || !controller.inform_ready) throw Object.assign(new Error('A controladora UniFi local nao esta pronta na porta 8080'), { status: 503 });
+  const sshpassAvailable = await run('which', ['sshpass'], 3000).then(() => true).catch(() => false);
+  if (!sshpassAvailable) throw Object.assign(new Error('Componente de adocao SSH ausente na VPS. Execute: apt-get install -y sshpass'), { status: 503 });
+
+  const ip = String(accessPoint.ip).trim();
+  try {
+    await runWithEnv('sshpass', [
+      '-e', 'ssh',
+      '-o', 'StrictHostKeyChecking=no',
+      '-o', 'UserKnownHostsFile=/dev/null',
+      '-o', 'ConnectTimeout=10',
+      '-o', 'PreferredAuthentications=password,keyboard-interactive',
+      '-o', 'PubkeyAuthentication=no',
+      '-p', String(port),
+      `${username}@${ip}`,
+      `set-inform ${controller.inform_url}`
+    ], { SSHPASS: password }, 25000);
+  } catch (error) {
+    const message = /permission denied|authentication failed/i.test(error.message)
+      ? 'Credenciais SSH recusadas pelo Access Point'
+      : `Nao foi possivel enviar o Inform ao AP: ${error.message}`;
+    throw Object.assign(new Error(message), { status: 502 });
+  }
+
+  const now = new Date().toISOString();
+  const updated = { ...accessPoint, status: 'pending', adoption_status: 'inform-sent', adoption_requested_at: now, inform_url: controller.inform_url, updated_date: now };
+  writeJson(ENTITY_FILES.access_points, accessPoints.map(item => String(item.id || item._id) === apId ? updated : item));
+  return {
+    success: true,
+    access_point: updated,
+    inform_url: controller.inform_url,
+    controller_url: controller.ui_url,
+    message: 'Inform enviado. O AP deve aparecer na controladora para concluir a adocao.'
+  };
 }
 
 function publicUnifiIntegration(integration) {
@@ -3374,6 +3439,7 @@ async function handleRequest(req, res) {
     if (req.method === 'GET' && req.url === '/api/radius/sessions') return send(res, 200, await radiusSessions());
     if (req.method === 'POST' && req.url === '/api/access-points/discover') { assertTenantLicense({ action: 'write', resource: 'access_point' }); return send(res, 200, await discoverAccessPoints(await readBody(req))); }
     if (req.method === 'POST' && req.url === '/api/access-points/poll') return send(res, 200, await pollAccessPoints(await readBody(req)));
+    if (req.method === 'POST' && req.url === '/api/access-points/adopt') { assertTenantLicense({ action: 'write', resource: 'access_point' }); return send(res, 200, await adoptUnifiAccessPoint(await readBody(req))); }
     if (req.method === 'POST' && req.url === '/api/access-point-profiles') {
       const body = await readBody(req);
       if (body.action !== 'list' && body.action !== 'preview') assertTenantLicense({ action: 'write', resource: 'access_point_profile' });
