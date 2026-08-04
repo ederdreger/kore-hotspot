@@ -660,7 +660,7 @@ function unifiNeighborId(device, mac, identity) {
 async function localUnifiSnapshot() {
   const expression = [
     'var devices=[];',
-    'db.device.find({adopted:true}).forEach(function(d){devices.push({mac:String(d.mac||""),name:String(d.name||""),ip:String(d.ip||""),model:String(d.model||""),version:String(d.version||"")})});',
+    'db.device.find({}).forEach(function(d){devices.push({mac:String(d.mac||""),name:String(d.name||""),ip:String(d.ip||""),model:String(d.model||""),version:String(d.version||""),adopted:!!d.adopted,state:String(d.state||""),inform_url:String(d.inform_url||"")})});',
     'var ssids=[];',
     'db.wlanconf.find({enabled:true}).forEach(function(w){var name=String(w.name||"");if(name&&name.indexOf("element-")!==0)ssids.push(name)});',
     'print(JSON.stringify({devices:devices,ssids:ssids}));'
@@ -714,7 +714,7 @@ async function collectUnifiNeighbors(device, options = {}) {
   });
   const current = readJson(ENTITY_FILES.access_points, []);
   const localController = await localUnifiSnapshot();
-  const adoptedByMac = new Map(localController.devices.map(item => [normalizeMac(item.mac), item]));
+  const controllerByMac = new Map(localController.devices.map(item => [normalizeMac(item.mac), item]));
   let vlanCandidates = [];
   if (discovery.management_interface) {
     const [arpResult, leaseResult, dhcpServerResult] = await Promise.all([
@@ -738,7 +738,7 @@ async function collectUnifiNeighbors(device, options = {}) {
           ...row,
           identity: lease['host-name'] || lease.comment || `UniFi ${row.address}`,
           'host-name': lease['host-name'] || '',
-          detection_confidence: /\b(?:uap|unifi|ubiquiti|ubnt)[-_\s]?/i.test(unifiIdentity(lease)) || adoptedByMac.has(mac) ? 'confirmed' : 'vlan-candidate'
+          detection_confidence: /\b(?:uap|unifi|ubiquiti|ubnt)[-_\s]?/i.test(unifiIdentity(lease)) || controllerByMac.has(mac) ? 'confirmed' : 'vlan-candidate'
         };
       })) {
       candidatesByMac.set(normalizeMac(row['mac-address']), row);
@@ -775,8 +775,13 @@ async function collectUnifiNeighbors(device, options = {}) {
     const mac = normalizeMac(row['mac-address'] || '');
     const id = unifiNeighborId(device, mac, identity);
     const previous = current.find(item => item.id === id || item._id === id) || {};
-    const controllerDevice = adoptedByMac.get(mac);
-    const adopted = !!controllerDevice || previous.adoption_status === 'adopted';
+    const controllerDevice = controllerByMac.get(mac);
+    const adopted = !!controllerDevice?.adopted || previous.adoption_status === 'adopted';
+    const adoptionStatus = adopted
+      ? 'adopted'
+      : controllerDevice
+        ? 'ready-to-adopt'
+        : (previous.adoption_status && previous.adoption_status !== 'adopted' ? previous.adoption_status : 'pending');
     return {
       ...previous,
       id,
@@ -799,7 +804,8 @@ async function collectUnifiNeighbors(device, options = {}) {
       uptime: '--',
       managed: adopted,
       status: adopted ? 'ok' : 'pending',
-      adoption_status: adopted ? 'adopted' : 'pending',
+      adoption_status: adoptionStatus,
+      controller_device_state: controllerDevice?.state || previous.controller_device_state || '',
       source: 'unifi-local',
       controller_type: adopted ? 'unifi-network-local' : 'mikrotik-neighbor',
       controller_id: `unifi-local:${device.id}`,
@@ -883,18 +889,141 @@ async function configureUnifiDhcpAdoption(mikrotik, accessPoint, controllerHost)
     `:if ([:len $lease] = 0) do={ :error "Lease DHCP do AP nao encontrada" }`,
     `:if ([:len [/ip dhcp-server lease find where mac-address="${mac}" dynamic=yes]] > 0) do={ /ip dhcp-server lease make-static $lease }`,
     `:local option [/ip dhcp-server option find where name="${optionName}"]`,
-    `:if ([:len $option] = 0) do={ /ip dhcp-server option add name="${optionName}" code=43 value=${optionValue} } else={ /ip dhcp-server option set $option code=43 value=${optionValue} }`,
+    `:if ([:len $option] = 0) do={ /ip dhcp-server option add name="${optionName}" code=43 value=${optionValue} force=yes } else={ /ip dhcp-server option set $option code=43 value=${optionValue} force=yes }`,
     `:set lease [/ip dhcp-server lease find where mac-address="${mac}"]`,
     `:local current [/ip dhcp-server lease get $lease dhcp-option]`,
     `:if ([:typeof [:find ("," . $current . ",") (",${optionName},")]] = "nil") do={ :if ([:len $current] = 0) do={ /ip dhcp-server lease set $lease dhcp-option="${optionName}" } else={ /ip dhcp-server lease set $lease dhcp-option=($current . ",${optionName}") } }`,
+    `:local dhcpServer [/ip dhcp-server lease get $lease server]`,
+    `:do { /ip dhcp-server set [find where name=$dhcpServer] use-reconfigure=yes; /ip dhcp-server lease send-reconfigure $lease; :put "dhcp-reconfigure-sent=yes" } on-error={ :put "dhcp-reconfigure-sent=no" }`,
     `:put "dhcp-option-ready"`
   ].join('; ');
+  const configurationResult = await runMikrotikKeyCommand(mikrotik, script, 15000);
+  const [optionResult, leaseResult] = await Promise.all([
+    runMikrotikKeyCommand(mikrotik, `/ip dhcp-server option print detail without-paging where name="${optionName}"`),
+    runMikrotikKeyCommand(mikrotik, `/ip dhcp-server lease print detail without-paging where mac-address="${mac}"`)
+  ]);
+  const option = parseKeyValueRows(optionResult.stdout)[0] || {};
+  const lease = parseKeyValueRows(leaseResult.stdout)[0] || {};
+  const leaseOptions = String(lease['dhcp-option'] || '').split(',').map(value => value.trim());
+  if (!['yes', 'true'].includes(String(option.force || '').toLowerCase()) || !leaseOptions.includes(optionName)) {
+    throw Object.assign(new Error('O RouterOS nao confirmou a Option 43 forcada no lease do AP'), { status: 502 });
+  }
+  return {
+    option_name: optionName,
+    option_value: optionValue,
+    inform_ip: informIp,
+    forced: true,
+    lease_static: lease.dynamic !== 'true',
+    renewal_requested: /dhcp-reconfigure-sent=yes/i.test(configurationResult.stdout)
+  };
+}
+
+async function configureUnifiHotspotBypass(mikrotik, accessPoint) {
+  const mac = normalizeMac(accessPoint.mac_address || accessPoint.mac);
+  const ip = String(accessPoint.ip || '').trim();
+  if (!mac || net.isIP(ip) !== 4) throw Object.assign(new Error('MAC ou IPv4 invalido para configurar o bypass do AP'), { status: 400 });
+  const comment = `Kore UniFi adoption ${mac}`;
+  const script = [
+    `:local bindings [/ip hotspot ip-binding find where mac-address="${mac}"]`,
+    `:if ([:len $bindings] = 0) do={ /ip hotspot ip-binding add mac-address="${mac}" address="${ip}" type=bypassed server=all disabled=no comment="${comment}" } else={ :foreach binding in=$bindings do={ /ip hotspot ip-binding set $binding address="${ip}" type=bypassed server=all disabled=no comment="${comment}" } }`,
+    `:put "hotspot-bypass-ready"`
+  ].join('; ');
   await runMikrotikKeyCommand(mikrotik, script, 15000);
-  return { option_name: optionName, option_value: optionValue, inform_ip: informIp };
+  const result = await runMikrotikKeyCommand(mikrotik, `/ip hotspot ip-binding print detail without-paging where mac-address="${mac}"`);
+  const binding = parseKeyValueRows(result.stdout).find(row => row.type === 'bypassed' && row.disabled !== 'true');
+  if (!binding) throw Object.assign(new Error('O RouterOS nao confirmou o bypass do Hotspot para o AP'), { status: 502 });
+  return { ready: true, mac, address: binding.address || ip, type: 'bypassed' };
+}
+
+async function testMikrotikInformReachability(mikrotik, informIp) {
+  if (net.isIP(informIp) !== 4) return { reachable: false, error: 'IPv4 da controladora invalido' };
+  const comment = `kore-inform-${crypto.randomBytes(5).toString('hex')}`;
+  try {
+    const command = [
+      `:local test [/tool netwatch add host=${informIp} type=tcp-conn port=8080 interval=10s timeout=3s start-delay=0s comment="${comment}"]`,
+      ':delay 4s',
+      ':put ("inform-status=" . [/tool netwatch get $test status])'
+    ].join('; ');
+    const result = await runMikrotikKeyCommand(mikrotik, command, 12000);
+    const status = String(result.stdout || '').match(/inform-status=(up|down)/i)?.[1]?.toLowerCase() || 'unknown';
+    return { reachable: status === 'up', status, host: informIp, port: 8080 };
+  } finally {
+    await runMikrotikKeyCommand(mikrotik, `/tool netwatch remove [find where comment="${comment}"]`, 10000).catch(() => {});
+  }
+}
+
+function saveAccessPointAdoption(accessPoint, changes) {
+  const accessPoints = readJson(ENTITY_FILES.access_points, []);
+  const apId = String(accessPoint.id || accessPoint._id);
+  const updated = { ...accessPoint, ...changes, updated_date: new Date().toISOString() };
+  writeJson(ENTITY_FILES.access_points, accessPoints.map(item => String(item.id || item._id) === apId ? updated : item));
+  return updated;
+}
+
+async function prepareUnifiVlanAdoption(mikrotik, accessPoint, controller, host) {
+  const bypass = await configureUnifiHotspotBypass(mikrotik, accessPoint);
+  const dhcp = await configureUnifiDhcpAdoption(mikrotik, accessPoint, host);
+  const connectivity = await testMikrotikInformReachability(mikrotik, dhcp.inform_ip);
+  if (!connectivity.reachable) {
+    throw Object.assign(new Error(`O MikroTik nao alcanca a controladora em ${dhcp.inform_ip}:8080. Verifique NAT/firewall antes de reiniciar o AP.`), { status: 502 });
+  }
+  const now = new Date().toISOString();
+  const updated = saveAccessPointAdoption(accessPoint, {
+    status: 'pending',
+    adoption_status: 'waiting-inform',
+    adoption_method: 'vlan-dhcp-option-43',
+    adoption_requested_at: now,
+    adoption_requires_restart: true,
+    inform_url: controller.inform_url,
+    controller_url: controller.ui_url,
+    adoption_checks: { controller: true, hotspot_bypass: true, dhcp_option_43: true, inform_reachable: true }
+  });
+  return {
+    success: true,
+    access_point: updated,
+    inform_url: controller.inform_url,
+    controller_url: controller.ui_url,
+    adoption_method: 'vlan-dhcp-option-43',
+    requires_restart: true,
+    checks: updated.adoption_checks,
+    hotspot_bypass: bypass,
+    dhcp_option: dhcp,
+    connectivity,
+    message: dhcp.renewal_requested
+      ? 'VLAN preparada e renovacao DHCP solicitada ao AP. O Kore esta aguardando o Inform; se o firmware ignorar o FORCERENEW, reinicie apenas a alimentacao do AP.'
+      : 'VLAN preparada e validada. O firmware nao aceitou renovacao remota; reinicie apenas a alimentacao do AP e o Kore acompanhara o Inform.'
+  };
+}
+
+async function unifiAccessPointAdoptionStatus(payload = {}) {
+  const apId = String(payload.ap_id || payload.id || '').trim();
+  const accessPoints = readJson(ENTITY_FILES.access_points, []);
+  const accessPoint = accessPoints.find(item => String(item.id || item._id) === apId);
+  if (!accessPoint) throw Object.assign(new Error('Access Point nao encontrado'), { status: 404 });
+  const mac = normalizeMac(accessPoint.mac_address || accessPoint.mac);
+  const snapshot = await localUnifiSnapshot();
+  const controllerDevice = snapshot.devices.find(item => normalizeMac(item.mac) === mac);
+  let adoptionStatus = accessPoint.adoption_status || 'pending';
+  if (controllerDevice?.adopted) adoptionStatus = 'adopted';
+  else if (controllerDevice) adoptionStatus = 'ready-to-adopt';
+  const updated = saveAccessPointAdoption(accessPoint, {
+    managed: adoptionStatus === 'adopted',
+    status: adoptionStatus === 'adopted' ? 'ok' : 'pending',
+    adoption_status: adoptionStatus,
+    controller_device_state: controllerDevice?.state || accessPoint.controller_device_state || '',
+    controller_seen_at: controllerDevice ? new Date().toISOString() : accessPoint.controller_seen_at
+  });
+  const messages = {
+    adopted: 'AP adotado e gerenciado pela controladora.',
+    'ready-to-adopt': 'O AP ja enviou o Inform e esta pronto para adocao na controladora.',
+    'waiting-inform': 'Configuracao pronta. Aguardando o AP reiniciar e enviar o Inform.'
+  };
+  return { success: true, access_point: updated, adoption_status: adoptionStatus, controller_device: controllerDevice || null, message: messages[adoptionStatus] || 'Aguardando o AP enviar o Inform.' };
 }
 
 async function adoptUnifiAccessPoint(payload = {}) {
   const apId = String(payload.ap_id || payload.id || '').trim();
+  const mode = String(payload.mode || 'vlan').toLowerCase();
   const username = normalizeUser(payload.username || 'ubnt');
   const password = String(payload.password || '');
   const port = Number(payload.port || 22);
@@ -905,21 +1034,23 @@ async function adoptUnifiAccessPoint(payload = {}) {
   if (accessPoint.source !== 'unifi-local') throw Object.assign(new Error('A adocao direta esta disponivel somente para equipamentos UniFi descobertos na rede local'), { status: 400 });
   if (accessPoint.managed || accessPoint.adoption_status === 'adopted') throw Object.assign(new Error('Este equipamento ja esta adotado pela controladora'), { status: 409 });
   if (net.isIP(String(accessPoint.ip || '').trim()) !== 4) throw Object.assign(new Error('O AP nao possui um IPv4 de gerenciamento valido'), { status: 400 });
-  if (!username) throw Object.assign(new Error('Informe o usuario SSH do AP'), { status: 400 });
-  if (!password) throw Object.assign(new Error('Informe a senha SSH do AP'), { status: 400 });
-  if (!Number.isInteger(port) || port < 1 || port > 65535) throw Object.assign(new Error('A porta SSH deve estar entre 1 e 65535'), { status: 400 });
+  if (!['vlan', 'ssh'].includes(mode)) throw Object.assign(new Error('Modo de adocao invalido'), { status: 400 });
+  if (mode === 'ssh' && !username) throw Object.assign(new Error('Informe o usuario SSH do AP'), { status: 400 });
+  if (mode === 'ssh' && !password) throw Object.assign(new Error('Informe a senha SSH do AP'), { status: 400 });
+  if (mode === 'ssh' && (!Number.isInteger(port) || port < 1 || port > 65535)) throw Object.assign(new Error('A porta SSH deve estar entre 1 e 65535'), { status: 400 });
 
   const host = unifiControllerHost();
   if (!host) throw Object.assign(new Error('IP ou dominio publico da VPS nao identificado'), { status: 400 });
   const controller = await unifiControllerStatus(host);
   if (!controller.active || !controller.inform_ready) throw Object.assign(new Error('A controladora UniFi local nao esta pronta na porta 8080'), { status: 503 });
-  const sshpassAvailable = await run('which', ['sshpass'], 3000).then(() => true).catch(() => false);
-  if (!sshpassAvailable) throw Object.assign(new Error('Componente de adocao SSH ausente na VPS. Execute: apt-get install -y sshpass'), { status: 503 });
-
   const ip = String(accessPoint.ip).trim();
   const controllerId = String(accessPoint.controller_id || '').replace(/^unifi-local:/, '');
   const mikrotik = mikrotikDeviceById(controllerId);
   if (!mikrotik) throw Object.assign(new Error('MikroTik associado ao AP nao encontrado'), { status: 400 });
+  if (mode === 'vlan') return prepareUnifiVlanAdoption(mikrotik, accessPoint, controller, host);
+
+  const sshpassAvailable = await run('which', ['sshpass'], 3000).then(() => true).catch(() => false);
+  if (!sshpassAvailable) throw Object.assign(new Error('Componente de adocao SSH ausente na VPS. Execute: apt-get install -y sshpass'), { status: 503 });
   const mikrotikHost = routerAddress(mikrotik.host);
   const mikrotikPort = Number(mikrotik.port || 22);
   const mikrotikUser = normalizeUser(mikrotik.user || 'kore-api');
@@ -989,22 +1120,19 @@ async function adoptUnifiAccessPoint(payload = {}) {
   } catch (error) {
     throw Object.assign(new Error(`Falha critica ao restaurar o encaminhamento SSH do MikroTik: ${error.message}`), { status: 500 });
   }
-  let adoptionMethod = 'ssh';
-  let dhcpAdoption = null;
   if (adoptionError) {
     if (!/timed out|timeout|operation timed out/i.test(adoptionError.message)) throw adoptionError;
-    dhcpAdoption = await configureUnifiDhcpAdoption(mikrotik, accessPoint, host);
-    adoptionMethod = 'dhcp-option-43';
+    return prepareUnifiVlanAdoption(mikrotik, accessPoint, controller, host);
   }
 
   const now = new Date().toISOString();
   const updated = {
     ...accessPoint,
     status: 'pending',
-    adoption_status: adoptionMethod === 'ssh' ? 'inform-sent' : 'dhcp-ready',
-    adoption_method: adoptionMethod,
+    adoption_status: 'inform-sent',
+    adoption_method: 'ssh',
     adoption_requested_at: now,
-    adoption_requires_restart: adoptionMethod === 'dhcp-option-43',
+    adoption_requires_restart: false,
     inform_url: controller.inform_url,
     updated_date: now
   };
@@ -1014,12 +1142,9 @@ async function adoptUnifiAccessPoint(payload = {}) {
     access_point: updated,
     inform_url: controller.inform_url,
     controller_url: controller.ui_url,
-    adoption_method: adoptionMethod,
-    requires_restart: adoptionMethod === 'dhcp-option-43',
-    dhcp_option: dhcpAdoption,
-    message: adoptionMethod === 'ssh'
-      ? 'Inform enviado. O AP deve aparecer na controladora para concluir a adocao.'
-      : 'DHCP Option 43 aplicado somente a este AP. Reinicie o equipamento para ele solicitar a adocao.'
+    adoption_method: 'ssh',
+    requires_restart: false,
+    message: 'Inform enviado. O AP deve aparecer na controladora para concluir a adocao.'
   };
 }
 
@@ -3538,6 +3663,7 @@ async function handleRequest(req, res) {
     if (req.method === 'POST' && req.url === '/api/access-points/discover') { assertTenantLicense({ action: 'write', resource: 'access_point' }); return send(res, 200, await discoverAccessPoints(await readBody(req))); }
     if (req.method === 'POST' && req.url === '/api/access-points/poll') return send(res, 200, await pollAccessPoints(await readBody(req)));
     if (req.method === 'POST' && req.url === '/api/access-points/adopt') { assertTenantLicense({ action: 'write', resource: 'access_point' }); return send(res, 200, await adoptUnifiAccessPoint(await readBody(req))); }
+    if (req.method === 'POST' && req.url === '/api/access-points/adoption-status') return send(res, 200, await unifiAccessPointAdoptionStatus(await readBody(req)));
     if (req.method === 'POST' && req.url === '/api/access-point-profiles') {
       const body = await readBody(req);
       if (body.action !== 'list' && body.action !== 'preview') assertTenantLicense({ action: 'write', resource: 'access_point_profile' });

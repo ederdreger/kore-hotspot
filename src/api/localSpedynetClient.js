@@ -595,6 +595,17 @@ async function accessPointAdopt(payload = {}) {
   return data;
 }
 
+async function accessPointAdoptionStatus(payload = {}) {
+  const response = await fetch(`${VPN_API_URL}/api/access-points/adoption-status`, {
+    method: 'POST',
+    headers: jsonHeaders(),
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || 'Erro ao acompanhar adocao do Access Point');
+  return data;
+}
+
 async function accessPointProfiles(payload = {}) {
   const response = await fetch(`${VPN_API_URL}/api/access-point-profiles`, {
     method: 'POST',
@@ -809,6 +820,7 @@ async function invoke(functionName, payload) {
     accessPointDiscover,
     accessPointPoll,
     accessPointAdopt,
+    accessPointAdoptionStatus,
     accessPointProfiles,
     unifiIntegrations,
     unifiController,
