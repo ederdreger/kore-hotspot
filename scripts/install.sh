@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 APP_NAME="Kore-HotSpot"
-SCRIPT_VERSION="v0.2.46"
+SCRIPT_VERSION="v0.2.47"
 REPO_URL="${REPO_URL:-https://github.com/ederdreger/kore-hotspot.git}"
 REPO_SLUG="${REPO_SLUG:-ederdreger/kore-hotspot}"
 BRANCH="${BRANCH:-main}"
@@ -78,7 +78,7 @@ install_packages() {
   fi
   apt-get update
   apt-get install -y \
-    ca-certificates curl gnupg git nginx openssh-client openssl unzip tar jq \
+    ca-certificates curl gnupg git nginx openssh-client sshpass openssl unzip tar jq \
     certbot python3-certbot-nginx \
     mysql-client freeradius freeradius-mysql \
     strongswan xl2tpd ppp iptables iptables-persistent net-tools \

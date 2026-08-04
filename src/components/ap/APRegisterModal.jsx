@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X, MapPin, Wifi, Save } from 'lucide-react';
+import { X, MapPin, Wifi, Save, Send, Loader2, KeyRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -27,7 +27,10 @@ const DEFAULT = {
 export default function APRegisterModal({ ap, onSave, onClose }) {
   const [form, setForm] = useState(ap ? { ...DEFAULT, ...ap } : DEFAULT);
   const [errors, setErrors] = useState({});
+  const [adoption, setAdoption] = useState({ username: 'ubnt', password: '', port: 22 });
+  const [submitting, setSubmitting] = useState('');
   const managed = !!form.managed;
+  const canAdopt = !!ap && ap.source === 'unifi-local' && !managed;
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -42,10 +45,24 @@ export default function APRegisterModal({ ap, onSave, onClose }) {
     return Object.keys(e).length === 0;
   };
 
-  const handleSave = () => {
+  const handleSave = async (applyAdoption = false) => {
     if (!validate()) return;
+    if (applyAdoption && !adoption.password) {
+      setErrors(current => ({ ...current, sshPassword: 'Senha SSH obrigatória para iniciar a adoção' }));
+      return;
+    }
     const address = `${form.street}${form.number ? ', ' + form.number : ''} — ${form.neighborhood}${form.city ? ', ' + form.city : ''}`;
-    onSave({ ...form, address, channel: Number(form.channel), maxClients: Number(form.maxClients), txPower: Number(form.txPower) });
+    setSubmitting(applyAdoption ? 'adopt' : 'save');
+    try {
+      await onSave(
+        { ...form, address, channel: Number(form.channel), maxClients: Number(form.maxClients), txPower: Number(form.txPower) },
+        applyAdoption ? { ...adoption, port: Number(adoption.port) } : null
+      );
+    } catch {
+      // A pagina exibe o erro e mantemos o modal aberto para correcao.
+    } finally {
+      setSubmitting('');
+    }
   };
 
   return (
@@ -215,15 +232,47 @@ export default function APRegisterModal({ ap, onSave, onClose }) {
               className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring resize-none"
             />
           </div>
+
+          {canAdopt && (
+            <div className="rounded-xl border border-primary/30 bg-primary/5 p-3 space-y-3">
+              <p className="text-xs font-semibold text-primary uppercase tracking-wider flex items-center gap-1.5">
+                <KeyRound className="w-3 h-3" /> Adoção UniFi
+              </p>
+              <p className="text-[11px] text-muted-foreground">
+                As credenciais são usadas somente para enviar o Inform ao AP e não serão armazenadas. Depois, conclua a adoção na controladora UniFi.
+              </p>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <Label className="text-xs mb-1 block">Usuário SSH</Label>
+                  <Input value={adoption.username} onChange={e => setAdoption(value => ({ ...value, username: e.target.value }))} className="h-8 text-xs" />
+                </div>
+                <div>
+                  <Label className="text-xs mb-1 block">Porta</Label>
+                  <Input type="number" min={1} max={65535} value={adoption.port} onChange={e => setAdoption(value => ({ ...value, port: e.target.value }))} className="h-8 text-xs" />
+                </div>
+                <div>
+                  <Label className="text-xs mb-1 block">Senha SSH *</Label>
+                  <Input type="password" value={adoption.password} onChange={e => { setAdoption(value => ({ ...value, password: e.target.value })); setErrors(current => ({ ...current, sshPassword: '' })); }} className={`h-8 text-xs ${errors.sshPassword ? 'border-destructive' : ''}`} />
+                </div>
+              </div>
+              {errors.sshPassword && <p className="text-[10px] text-destructive">{errors.sshPassword}</p>}
+            </div>
+          )}
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-border flex-shrink-0">
-          <Button variant="ghost" size="sm" onClick={onClose}>Cancelar</Button>
-          <Button size="sm" onClick={handleSave} className="gap-1.5">
-            <Save className="w-3.5 h-3.5" />
+        <div className="flex flex-wrap items-center justify-end gap-2 px-5 py-4 border-t border-border flex-shrink-0">
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={!!submitting}>Cancelar</Button>
+          <Button variant={canAdopt ? 'outline' : 'default'} size="sm" onClick={() => handleSave(false)} disabled={!!submitting} className="gap-1.5">
+            {submitting === 'save' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
             {ap ? 'Salvar Alterações' : 'Cadastrar AP'}
           </Button>
+          {canAdopt && (
+            <Button size="sm" onClick={() => handleSave(true)} disabled={!!submitting} className="gap-1.5">
+              {submitting === 'adopt' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+              Salvar e iniciar adoção
+            </Button>
+          )}
         </div>
       </div>
     </div>

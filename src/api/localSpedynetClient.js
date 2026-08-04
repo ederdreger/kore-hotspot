@@ -584,6 +584,17 @@ async function accessPointPoll(payload = {}) {
   return data;
 }
 
+async function accessPointAdopt(payload = {}) {
+  const response = await fetch(`${VPN_API_URL}/api/access-points/adopt`, {
+    method: 'POST',
+    headers: jsonHeaders(),
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || 'Erro ao iniciar adocao do Access Point');
+  return data;
+}
+
 async function accessPointProfiles(payload = {}) {
   const response = await fetch(`${VPN_API_URL}/api/access-point-profiles`, {
     method: 'POST',
@@ -797,6 +808,7 @@ async function invoke(functionName, payload) {
     mikrotikPerformance,
     accessPointDiscover,
     accessPointPoll,
+    accessPointAdopt,
     accessPointProfiles,
     unifiIntegrations,
     unifiController,
