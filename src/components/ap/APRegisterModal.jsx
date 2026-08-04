@@ -29,6 +29,7 @@ export default function APRegisterModal({ ap, onSave, onClose }) {
   const [errors, setErrors] = useState({});
   const [adoption, setAdoption] = useState({ username: 'ubnt', password: '', port: 22 });
   const [submitting, setSubmitting] = useState('');
+  const [submitError, setSubmitError] = useState('');
   const managed = !!form.managed;
   const canAdopt = !!ap && ap.source === 'unifi-local' && !managed;
 
@@ -53,13 +54,14 @@ export default function APRegisterModal({ ap, onSave, onClose }) {
     }
     const address = `${form.street}${form.number ? ', ' + form.number : ''} — ${form.neighborhood}${form.city ? ', ' + form.city : ''}`;
     setSubmitting(applyAdoption ? 'adopt' : 'save');
+    setSubmitError('');
     try {
       await onSave(
         { ...form, address, channel: Number(form.channel), maxClients: Number(form.maxClients), txPower: Number(form.txPower) },
         applyAdoption ? { ...adoption, port: Number(adoption.port) } : null
       );
-    } catch {
-      // A pagina exibe o erro e mantemos o modal aberto para correcao.
+    } catch (error) {
+      setSubmitError(error.message || 'Não foi possível concluir a operação.');
     } finally {
       setSubmitting('');
     }
@@ -261,6 +263,11 @@ export default function APRegisterModal({ ap, onSave, onClose }) {
         </div>
 
         {/* Footer */}
+        {submitError && (
+          <div className="mx-5 mt-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive" role="alert">
+            {submitError}
+          </div>
+        )}
         <div className="flex flex-wrap items-center justify-end gap-2 px-5 py-4 border-t border-border flex-shrink-0">
           <Button variant="ghost" size="sm" onClick={onClose} disabled={!!submitting}>Cancelar</Button>
           <Button variant={canAdopt ? 'outline' : 'default'} size="sm" onClick={() => handleSave(false)} disabled={!!submitting} className="gap-1.5">
