@@ -12,17 +12,24 @@ process.env.KORE_TEST_EXPORTS = 'true';
 process.env.KORE_DATA_DIR = path.join(directory, 'data');
 process.env.KORE_KEY_DIR = path.join(directory, 'keys');
 const require = createRequire(import.meta.url);
-const { normalizeRouterHex, unifiDhcpOption43, unifiDiscoveryRelayPlan, unifiInformRedirectPlan } = require(serverCopy);
+const { normalizeRouterHex, unifiDhcpOption43, unifiDiscoveryRelayPlan, unifiInformRedirectPlan, unifiActivityMonitorPlan } = require(serverCopy);
 delete process.env.KORE_TEST_EXPORTS;
 
 test.after(async () => {
   await rm(directory, { recursive: true, force: true });
 });
 
-test('Option 43 UniFi inclui IP e URL completa do Inform', () => {
+test('Option 43 UniFi usa o formato minimo por IPv4', () => {
   const result = unifiDhcpOption43('190.8.175.35', '190.8.175.35');
   assert.equal(result.informUrl, 'http://190.8.175.35:8080/inform');
-  assert.equal(result.optionValue, '0x0104be08af23021f687474703a2f2f3139302e382e3137352e33353a383038302f696e666f726d');
+  assert.equal(result.optionValue, '0x0104be08af23');
+  assert.equal(result.encoding, 'controller-ip');
+});
+
+test('monitor de atividade mede qualquer pacote originado pelo MAC do AP', () => {
+  const plan = unifiActivityMonitorPlan('D8:B3:70:C0:7A:DB');
+  assert.match(plan.script, /chain=prerouting src-mac-address="D8:B3:70:C0:7A:DB" action=passthrough/);
+  assert.match(plan.script, /reset-counters/);
 });
 
 test('validacao da Option 43 ignora formatacao do terminal RouterOS', () => {

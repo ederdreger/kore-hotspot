@@ -28,6 +28,7 @@ function statusMessage(status) {
   if (status === 'adopted') return 'AP adotado e gerenciado pela controladora.';
   if (status === 'ready-to-adopt') return 'O AP enviou o Inform e esta pronto para confirmação na controladora.';
   if (status === 'no-inform') return 'Tempo limite encerrado: o AP não iniciou conexão com a controladora.';
+  if (status === 'device-silent') return 'O MikroTik possui um lease salvo, mas não recebeu tráfego atual desse equipamento.';
   if (status === 'failed') return 'A preparação remota falhou em uma das verificações.';
   return 'Adoção remota ativa por DHCP, DNS e relay UDP 10001. Aguardando o AP enviar o Inform.';
 }
@@ -46,7 +47,7 @@ export default function APRegisterModal({ ap, onSave, onCheckAdoption, onClose }
   const canAdopt = !!ap && ap.source === 'unifi-local' && !managed;
 
   useEffect(() => {
-    if (!adoptionResult || !onCheckAdoption || ['adopted', 'no-inform', 'failed'].includes(adoptionResult.adoption_status)) return undefined;
+    if (!adoptionResult || !onCheckAdoption || ['adopted', 'no-inform', 'device-silent', 'failed'].includes(adoptionResult.adoption_status)) return undefined;
     const check = async () => {
       try {
         const result = await onCheckAdoption(ap.id || ap._id);
@@ -277,7 +278,8 @@ export default function APRegisterModal({ ap, onSave, onCheckAdoption, onClose }
                   <div className="grid grid-cols-2 gap-1.5 text-muted-foreground">
                     {[
                       ['hotspot_bypass', 'Bypass do Hotspot'],
-                      ['dhcp_option_43', 'Option 43 completa'],
+                      ['dhcp_option_43', 'Option 43 UniFi por IP'],
+                      ['ap_activity', 'Tráfego atual do AP'],
                       ['dns_unifi', 'DNS unifi direcionado'],
                       ['controller', 'Controladora ativa'],
                       ['inform_reachable', 'Inform porta 8080'],
@@ -292,7 +294,7 @@ export default function APRegisterModal({ ap, onSave, onCheckAdoption, onClose }
                   <p className="flex items-start gap-1.5 text-foreground">
                     {adoptionStatus === 'adopted'
                       ? <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 text-success" />
-                      : ['no-inform', 'failed'].includes(adoptionStatus)
+                      : ['no-inform', 'device-silent', 'failed'].includes(adoptionStatus)
                         ? <AlertTriangle className="w-3.5 h-3.5 mt-0.5 text-destructive" />
                         : <RefreshCw className="w-3.5 h-3.5 mt-0.5 text-primary animate-spin" />}
                     {adoptionResult.message}
