@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const net = require('net');
+const dgram = require('dgram');
 const dns = require('dns').promises;
 const { AsyncLocalStorage } = require('async_hooks');
 
@@ -876,13 +877,21 @@ async function pollAccessPoints(payload = {}) {
   return { success: errors.length === 0, access_points: accessPoints, errors, controllers_checked: targets.length + unifiTargets.length };
 }
 
+function unifiDhcpOption43(controllerHost, informIp) {
+  const informUrl = `http://${controllerHost}:8080/inform`;
+  const informUrlBytes = Buffer.from(informUrl, 'utf8');
+  if (informUrlBytes.length > 255) throw Object.assign(new Error('A URL de Inform e longa demais para a Option 43 UniFi'), { status: 400 });
+  const optionValue = `0x0104${informIp.split('.').map(part => Number(part).toString(16).padStart(2, '0')).join('')}02${informUrlBytes.length.toString(16).padStart(2, '0')}${informUrlBytes.toString('hex')}`;
+  return { informUrl, optionValue };
+}
+
 async function configureUnifiDhcpAdoption(mikrotik, accessPoint, controllerHost) {
   const mac = normalizeMac(accessPoint.mac_address || accessPoint.mac);
   if (!mac) throw Object.assign(new Error('O AP nao possui MAC valido para configurar a adocao por DHCP'), { status: 400 });
   let informIp = net.isIP(controllerHost) === 4 ? controllerHost : '';
   if (!informIp) informIp = await dns.resolve4(controllerHost).then(rows => rows[0] || '').catch(() => '');
   if (net.isIP(informIp) !== 4) throw Object.assign(new Error('Nao foi possivel resolver o IPv4 da controladora para o DHCP Option 43'), { status: 502 });
-  const optionValue = `0x0104${informIp.split('.').map(part => Number(part).toString(16).padStart(2, '0')).join('')}`;
+  const { informUrl, optionValue } = unifiDhcpOption43(controllerHost, informIp);
   const optionName = `kore-unifi-${mac.replace(/:/g, '').toLowerCase()}`;
   const script = [
     `:local lease [/ip dhcp-server lease find where mac-address="${mac}"]`,
@@ -905,12 +914,15 @@ async function configureUnifiDhcpAdoption(mikrotik, accessPoint, controllerHost)
   const option = parseKeyValueRows(optionResult.stdout)[0] || {};
   const lease = parseKeyValueRows(leaseResult.stdout)[0] || {};
   const leaseOptions = String(lease['dhcp-option'] || '').split(',').map(value => value.trim());
-  if (!['yes', 'true'].includes(String(option.force || '').toLowerCase()) || !leaseOptions.includes(optionName)) {
-    throw Object.assign(new Error('O RouterOS nao confirmou a Option 43 forcada no lease do AP'), { status: 502 });
+  const actualRawValue = String(option['raw-value'] || option.value || '').replace(/^0x/i, '').toLowerCase();
+  const expectedRawValue = optionValue.replace(/^0x/i, '').toLowerCase();
+  if (!['yes', 'true'].includes(String(option.force || '').toLowerCase()) || !leaseOptions.includes(optionName) || actualRawValue !== expectedRawValue) {
+    throw Object.assign(new Error('O RouterOS nao confirmou a Option 43 completa (IP e URL de Inform) no lease do AP'), { status: 502 });
   }
   return {
     option_name: optionName,
     option_value: optionValue,
+    inform_url: informUrl,
     inform_ip: informIp,
     forced: true,
     lease_static: lease.dynamic !== 'true',
@@ -956,13 +968,107 @@ async function configureUnifiDnsAdoption(mikrotik, accessPoint, controllerIp) {
     '/ip firewall nat move $tcp destination=0',
     '/ip firewall nat move $udp destination=0',
     `:local monitor [/ip firewall mangle find where comment="${informComment}"]`,
-    `:if ([:len $monitor] = 0) do={ /ip firewall mangle add chain=prerouting src-address="${ip}" dst-address="${controllerIp}" protocol=tcp dst-port=8080 action=passthrough comment="${informComment}" disabled=no } else={ /ip firewall mangle set $monitor chain=prerouting src-address="${ip}" dst-address="${controllerIp}" protocol=tcp dst-port=8080 action=passthrough disabled=no }`,
-    ':put ("unifi-resolved=" . [:resolve "unifi"])'
+    `:if ([:len $monitor] = 0) do={ /ip firewall mangle add chain=prerouting src-address="${ip}" dst-address="${controllerIp}" protocol=tcp dst-port=8080 action=passthrough comment="${informComment}" disabled=no } else={ /ip firewall mangle set $monitor chain=prerouting src-address="${ip}" dst-address="${controllerIp}" protocol=tcp dst-port=8080 action=passthrough disabled=no }`
   ].join('; ');
-  const result = await runMikrotikKeyCommand(mikrotik, script, 20000);
-  const resolved = String(result.stdout || '').match(/unifi-resolved=([0-9.]+)/i)?.[1] || '';
-  if (resolved !== controllerIp) throw Object.assign(new Error('O MikroTik nao confirmou a resolucao DNS unifi para a controladora'), { status: 502 });
+  await runMikrotikKeyCommand(mikrotik, script, 20000);
+  const [dnsResult, natResult] = await Promise.all([
+    runMikrotikKeyCommand(mikrotik, '/ip dns static print detail without-paging where name="unifi"'),
+    runMikrotikKeyCommand(mikrotik, `/ip firewall nat print detail without-paging where comment~"Kore UniFi DNS ${suffix}"`)
+  ]);
+  const dnsReady = parseKeyValueRows(dnsResult.stdout).some(row => row.address === controllerIp && row.disabled !== 'true');
+  const redirectProtocols = new Set(parseKeyValueRows(natResult.stdout)
+    .filter(row => row.action === 'redirect' && [ip, `${ip}/32`].includes(row['src-address']) && row['dst-port'] === '53' && row.disabled !== 'true')
+    .map(row => row.protocol));
+  if (!dnsReady || !redirectProtocols.has('udp') || !redirectProtocols.has('tcp')) {
+    throw Object.assign(new Error('O MikroTik nao confirmou o registro DNS unifi e os redirecionamentos exclusivos do AP'), { status: 502 });
+  }
   return { ready: true, hostname: 'unifi', address: controllerIp, dns_redirect: true, monitor_comment: informComment };
+}
+
+function parseUbiquitiDiscoveryPacket(message) {
+  if (!Buffer.isBuffer(message) || message.length < 4) return null;
+  const version = message[0];
+  const command = message[1];
+  if (!((version === 1 && command === 0) || (version === 2 && [6, 9, 11].includes(command)))) return null;
+  const declaredLength = message.readUInt16BE(2);
+  if (declaredLength + 4 !== message.length) return null;
+  const result = { protocol: `v${version}`, command, macs: [], ips: [] };
+  for (let offset = 4; offset + 3 <= message.length;) {
+    const type = message[offset];
+    const length = message.readUInt16BE(offset + 1);
+    const start = offset + 3;
+    const end = start + length;
+    if (end > message.length) break;
+    const value = message.subarray(start, end);
+    if (type === 0x01 && value.length >= 6) result.macs.push([...value.subarray(0, 6)].map(byte => byte.toString(16).padStart(2, '0')).join(':').toUpperCase());
+    else if (type === 0x02 && value.length >= 10) {
+      result.macs.push([...value.subarray(0, 6)].map(byte => byte.toString(16).padStart(2, '0')).join(':').toUpperCase());
+      result.ips.push([...value.subarray(6, 10)].join('.'));
+    } else if (type === 0x03) result.firmware = value.toString('utf8').replace(/\0+$/g, '');
+    else if (type === 0x0b) result.hostname = value.toString('utf8').replace(/\0+$/g, '');
+    else if (type === 0x0c) result.product = value.toString('utf8').replace(/\0+$/g, '');
+    else if (type === 0x0f && value.length >= 4) result.management_port = value.readUInt32BE(0) & 0xffff;
+    else if (type === 0x14 || type === 0x15) result.model = value.toString('utf8').replace(/\0+$/g, '');
+    else if (type === 0x16) result.version = value.toString('utf8').replace(/\0+$/g, '');
+    else if (type === 0x17 && value.length) result.config_status = [...value].some(byte => byte !== 0) ? 'default/unmanaged' : 'managed/adopted';
+    offset = end;
+  }
+  result.macs = [...new Set(result.macs)];
+  result.ips = [...new Set(result.ips)];
+  return result;
+}
+
+function sendUbiquitiDiscoveryProbe(host, port, timeout = 6000) {
+  return new Promise((resolve, reject) => {
+    const socket = dgram.createSocket('udp4');
+    let settled = false;
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.close();
+      if (error) reject(error); else resolve(value);
+    };
+    const timer = setTimeout(() => finish(Object.assign(new Error('O AP nao respondeu ao discovery UDP 10001'), { status: 504 })), timeout);
+    socket.on('error', error => finish(error));
+    socket.on('message', message => {
+      const parsed = parseUbiquitiDiscoveryPacket(message);
+      if (parsed) finish(null, parsed);
+    });
+    socket.bind(0, '0.0.0.0', () => {
+      socket.send(Buffer.from([0x01, 0x00, 0x00, 0x00]), port, host);
+      setTimeout(() => { if (!settled) socket.send(Buffer.from([0x02, 0x08, 0x00, 0x00]), port, host); }, 500);
+    });
+  });
+}
+
+async function probeUnifiThroughMikrotik(mikrotik, accessPoint, controllerIp) {
+  const apIp = String(accessPoint.ip || '').trim();
+  const routerHost = routerAddress(mikrotik.host);
+  if (net.isIP(apIp) !== 4 || net.isIP(controllerIp) !== 4 || !routerHost) return { reachable: false, error: 'Enderecos invalidos para discovery remoto' };
+  const publicPort = 41000 + crypto.randomInt(7000);
+  const comment = `kore-unifi-probe-${crypto.randomBytes(4).toString('hex')}`;
+  try {
+    const script = [
+      `/ip firewall nat add chain=dstnat src-address="${controllerIp}" protocol=udp dst-port=${publicPort} action=dst-nat to-addresses="${apIp}" to-ports=10001 comment="${comment}" disabled=no`,
+      `/ip firewall filter add chain=forward src-address="${controllerIp}" dst-address="${apIp}" protocol=udp dst-port=10001 action=accept comment="${comment}" disabled=no`,
+      `/ip firewall filter move [find where comment="${comment}"] destination=0`
+    ].join('; ');
+    await runMikrotikKeyCommand(mikrotik, script, 15000);
+    const device = await sendUbiquitiDiscoveryProbe(routerHost, publicPort);
+    const expectedMac = normalizeMac(accessPoint.mac_address || accessPoint.mac);
+    if (expectedMac && device.macs.length && !device.macs.includes(expectedMac)) {
+      return { reachable: false, error: `O discovery respondeu com MAC diferente de ${expectedMac}` };
+    }
+    return { reachable: true, ...device };
+  } catch (error) {
+    return { reachable: false, error: error.message };
+  } finally {
+    await Promise.all([
+      runMikrotikKeyCommand(mikrotik, `/ip firewall nat remove [find where comment="${comment}"]`, 10000).catch(() => {}),
+      runMikrotikKeyCommand(mikrotik, `/ip firewall filter remove [find where comment="${comment}"]`, 10000).catch(() => {})
+    ]);
+  }
 }
 
 async function unifiInformTraffic(mikrotik, accessPoint) {
@@ -1002,38 +1108,76 @@ function saveAccessPointAdoption(accessPoint, changes) {
 }
 
 async function prepareUnifiVlanAdoption(mikrotik, accessPoint, controller, host) {
-  const bypass = await configureUnifiHotspotBypass(mikrotik, accessPoint);
-  const dhcp = await configureUnifiDhcpAdoption(mikrotik, accessPoint, host);
-  const dnsAdoption = await configureUnifiDnsAdoption(mikrotik, accessPoint, dhcp.inform_ip);
-  const connectivity = await testMikrotikInformReachability(mikrotik, dhcp.inform_ip);
-  if (!connectivity.reachable) {
-    throw Object.assign(new Error(`O MikroTik nao alcanca a controladora em ${dhcp.inform_ip}:8080. Verifique NAT/firewall antes de reiniciar o AP.`), { status: 502 });
-  }
   const now = new Date().toISOString();
-  const updated = saveAccessPointAdoption(accessPoint, {
+  const checks = { controller: true };
+  let working = saveAccessPointAdoption(accessPoint, {
     status: 'pending',
-    adoption_status: 'waiting-inform',
+    adoption_status: 'preparing',
     adoption_method: 'vlan-dhcp-option-43',
     adoption_requested_at: now,
     adoption_requires_restart: false,
     inform_url: controller.inform_url,
     controller_url: controller.ui_url,
-    adoption_checks: { controller: true, hotspot_bypass: true, dhcp_option_43: true, dns_unifi: true, inform_reachable: true }
+    adoption_error: '',
+    adoption_checks: checks,
+    ubiquiti_discovery: null
   });
-  return {
-    success: true,
-    access_point: updated,
-    inform_url: controller.inform_url,
-    controller_url: controller.ui_url,
-    adoption_method: 'vlan-dhcp-option-43',
-    requires_restart: false,
-    checks: updated.adoption_checks,
-    hotspot_bypass: bypass,
-    dhcp_option: dhcp,
-    dns_adoption: dnsAdoption,
-    connectivity,
-    message: 'Adocao remota ativada por DHCP e DNS, sem reiniciar o AP. O Kore esta aguardando e medindo a tentativa de Inform.'
-  };
+  try {
+    const bypass = await configureUnifiHotspotBypass(mikrotik, working);
+    checks.hotspot_bypass = true;
+    working = saveAccessPointAdoption(working, { adoption_checks: { ...checks } });
+
+    const dhcp = await configureUnifiDhcpAdoption(mikrotik, working, host);
+    checks.dhcp_option_43 = true;
+    working = saveAccessPointAdoption(working, { adoption_checks: { ...checks } });
+
+    const dnsAdoption = await configureUnifiDnsAdoption(mikrotik, working, dhcp.inform_ip);
+    checks.dns_unifi = true;
+    working = saveAccessPointAdoption(working, { adoption_checks: { ...checks } });
+
+    const connectivity = await testMikrotikInformReachability(mikrotik, dhcp.inform_ip);
+    if (!connectivity.reachable) throw Object.assign(new Error(`O MikroTik nao alcanca a controladora em ${dhcp.inform_ip}:8080`), { status: 502 });
+    checks.inform_reachable = true;
+    working = saveAccessPointAdoption(working, { adoption_checks: { ...checks } });
+
+    const discovery = await probeUnifiThroughMikrotik(mikrotik, working, dhcp.inform_ip);
+    checks.discovery_udp = discovery.reachable;
+    if (discovery.reachable && discovery.config_status === 'managed/adopted') {
+      working = saveAccessPointAdoption(working, { adoption_checks: { ...checks }, ubiquiti_discovery: discovery });
+      throw Object.assign(new Error('O discovery do proprio equipamento informa que ele ainda esta gerenciado/adotado. Remova-o da controladora anterior ou restaure-o realmente ao padrao antes de tentar uma nova adocao.'), { status: 409 });
+    }
+    const updated = saveAccessPointAdoption(working, {
+      adoption_status: 'waiting-inform',
+      adoption_checks: { ...checks },
+      ubiquiti_discovery: discovery,
+      model: discovery.model || discovery.product || working.model,
+      version: discovery.version || discovery.firmware || working.version
+    });
+    return {
+      success: true,
+      access_point: updated,
+      inform_url: controller.inform_url,
+      controller_url: controller.ui_url,
+      adoption_method: 'vlan-dhcp-option-43',
+      requires_restart: false,
+      checks: updated.adoption_checks,
+      hotspot_bypass: bypass,
+      dhcp_option: dhcp,
+      dns_adoption: dnsAdoption,
+      connectivity,
+      discovery,
+      message: discovery.reachable
+        ? `Equipamento ${discovery.model || discovery.product || ''} validado por discovery remoto. Aguardando o Inform.`.replace(/\s+/g, ' ').trim()
+        : 'Configuracoes de adocao confirmadas. O AP nao respondeu ao discovery UDP 10001; aguardando o contador de Inform.'
+    };
+  } catch (error) {
+    saveAccessPointAdoption(working, {
+      adoption_status: 'failed',
+      adoption_checks: { ...checks },
+      adoption_error: error.message
+    });
+    throw error;
+  }
 }
 
 async function unifiAccessPointAdoptionStatus(payload = {}) {
@@ -1065,6 +1209,7 @@ async function unifiAccessPointAdoptionStatus(payload = {}) {
   const messages = {
     adopted: 'AP adotado e gerenciado pela controladora.',
     'ready-to-adopt': 'O AP ja enviou o Inform e esta pronto para adocao na controladora.',
+    failed: accessPoint.adoption_error || 'A preparacao remota falhou em uma das verificacoes.',
     'no-inform': 'Tempo limite encerrado: o AP nao iniciou nenhum trafego para a porta Inform. A controladora e o MikroTik estao acessiveis; o firmware do equipamento nao reagiu a DHCP nem DNS.',
     'waiting-inform': informTraffic.seen
       ? 'O AP ja tentou acessar a porta Inform. Aguardando a controladora processar o equipamento.'
@@ -3765,9 +3910,13 @@ const server = http.createServer((req, res) => {
   });
 });
 
-ensureSshKey().then(() => {
-  server.listen(PORT, '0.0.0.0', () => console.log(`Kore VPN API listening on ${PORT}`));
-}).catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+if (process.env.KORE_TEST_EXPORTS === 'true') {
+  module.exports = { parseUbiquitiDiscoveryPacket, unifiDhcpOption43 };
+} else {
+  ensureSshKey().then(() => {
+    server.listen(PORT, '0.0.0.0', () => console.log(`Kore VPN API listening on ${PORT}`));
+  }).catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}

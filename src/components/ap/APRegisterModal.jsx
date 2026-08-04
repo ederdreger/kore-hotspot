@@ -28,6 +28,7 @@ function statusMessage(status) {
   if (status === 'adopted') return 'AP adotado e gerenciado pela controladora.';
   if (status === 'ready-to-adopt') return 'O AP enviou o Inform e esta pronto para confirmação na controladora.';
   if (status === 'no-inform') return 'Tempo limite encerrado: o AP não iniciou conexão com a controladora.';
+  if (status === 'failed') return 'A preparação remota falhou em uma das verificações.';
   return 'Adoção remota ativa por DHCP e DNS. Aguardando o AP enviar o Inform.';
 }
 
@@ -36,7 +37,7 @@ export default function APRegisterModal({ ap, onSave, onCheckAdoption, onClose }
   const [errors, setErrors] = useState({});
   const [adoptionResult, setAdoptionResult] = useState(
     ap?.adoption_status && ap.adoption_status !== 'pending'
-      ? { access_point: ap, adoption_status: ap.adoption_status, checks: ap.adoption_checks, controller_url: ap.controller_url, message: statusMessage(ap.adoption_status) }
+      ? { access_point: ap, adoption_status: ap.adoption_status, checks: ap.adoption_checks, controller_url: ap.controller_url, message: ap.adoption_error || statusMessage(ap.adoption_status) }
       : null
   );
   const [submitting, setSubmitting] = useState('');
@@ -45,7 +46,7 @@ export default function APRegisterModal({ ap, onSave, onCheckAdoption, onClose }
   const canAdopt = !!ap && ap.source === 'unifi-local' && !managed;
 
   useEffect(() => {
-    if (!adoptionResult || !onCheckAdoption || ['adopted', 'no-inform'].includes(adoptionResult.adoption_status)) return undefined;
+    if (!adoptionResult || !onCheckAdoption || ['adopted', 'no-inform', 'failed'].includes(adoptionResult.adoption_status)) return undefined;
     const check = async () => {
       try {
         const result = await onCheckAdoption(ap.id || ap._id);
@@ -85,6 +86,10 @@ export default function APRegisterModal({ ap, onSave, onCheckAdoption, onClose }
       if (applyAdoption && result) setAdoptionResult(result);
     } catch (error) {
       setSubmitError(error.message || 'Não foi possível concluir a operação.');
+      if (applyAdoption && onCheckAdoption && ap) {
+        const result = await onCheckAdoption(ap.id || ap._id).catch(() => null);
+        if (result) setAdoptionResult(result);
+      }
     } finally {
       setSubmitting('');
     }
@@ -272,10 +277,11 @@ export default function APRegisterModal({ ap, onSave, onCheckAdoption, onClose }
                   <div className="grid grid-cols-2 gap-1.5 text-muted-foreground">
                     {[
                       ['hotspot_bypass', 'Bypass do Hotspot'],
-                      ['dhcp_option_43', 'Option 43 forçada'],
+                      ['dhcp_option_43', 'Option 43 completa'],
                       ['dns_unifi', 'DNS unifi direcionado'],
                       ['controller', 'Controladora ativa'],
-                      ['inform_reachable', 'Inform porta 8080']
+                      ['inform_reachable', 'Inform porta 8080'],
+                      ['discovery_udp', 'Discovery UDP 10001']
                     ].map(([key, label]) => {
                       const done = adoptionResult.checks?.[key] || adoptionResult.access_point?.adoption_checks?.[key];
                       return <span key={key} className="flex items-center gap-1.5">{done ? <CheckCircle2 className="w-3 h-3 text-success" /> : <RefreshCw className="w-3 h-3 text-muted-foreground" />}{label}</span>;
@@ -284,7 +290,7 @@ export default function APRegisterModal({ ap, onSave, onCheckAdoption, onClose }
                   <p className="flex items-start gap-1.5 text-foreground">
                     {adoptionStatus === 'adopted'
                       ? <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 text-success" />
-                      : adoptionStatus === 'no-inform'
+                      : ['no-inform', 'failed'].includes(adoptionStatus)
                         ? <AlertTriangle className="w-3.5 h-3.5 mt-0.5 text-destructive" />
                         : <RefreshCw className="w-3.5 h-3.5 mt-0.5 text-primary animate-spin" />}
                     {adoptionResult.message}
