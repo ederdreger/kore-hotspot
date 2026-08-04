@@ -12,7 +12,7 @@ process.env.KORE_TEST_EXPORTS = 'true';
 process.env.KORE_DATA_DIR = path.join(directory, 'data');
 process.env.KORE_KEY_DIR = path.join(directory, 'keys');
 const require = createRequire(import.meta.url);
-const { parseUbiquitiDiscoveryPacket, unifiDhcpOption43 } = require(serverCopy);
+const { normalizeRouterHex, parseUbiquitiDiscoveryPacket, unifiDhcpOption43 } = require(serverCopy);
 delete process.env.KORE_TEST_EXPORTS;
 
 test.after(async () => {
@@ -45,6 +45,11 @@ test('Option 43 UniFi inclui IP e URL completa do Inform', () => {
   const result = unifiDhcpOption43('190.8.175.35', '190.8.175.35');
   assert.equal(result.informUrl, 'http://190.8.175.35:8080/inform');
   assert.equal(result.optionValue, '0x0104be08af23021f687474703a2f2f3139302e382e3137352e33353a383038302f696e666f726d');
+});
+
+test('validacao da Option 43 ignora formatacao do terminal RouterOS', () => {
+  const wrapped = '0x0104BE08AF23 021F687474703A2F2F\r\n 3139302E382E3137352E33353A383038302F696E666F726D';
+  assert.equal(normalizeRouterHex(wrapped), '0104be08af23021f687474703a2f2f3139302e382e3137352e33353a383038302f696e666f726d');
 });
 
 test('discovery Ubiquiti identifica o AP e seu estado de fabrica', () => {
