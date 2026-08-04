@@ -898,31 +898,49 @@ async function adoptUnifiAccessPoint(payload = {}) {
   const mikrotik = mikrotikDeviceById(controllerId);
   if (!mikrotik) throw Object.assign(new Error('MikroTik associado ao AP nao encontrado'), { status: 400 });
   const mikrotikHost = routerAddress(mikrotik.host);
-  const publicHost = unifiControllerHost();
-  let sourceIp = /^10\.255\.255\./.test(mikrotikHost) ? '10.255.255.1' : (net.isIP(publicHost) === 4 ? publicHost : '');
-  if (!sourceIp && publicHost) sourceIp = await dns.resolve4(publicHost).then(rows => rows[0] || '').catch(() => '');
-  if (net.isIP(sourceIp) !== 4) throw Object.assign(new Error('Nao foi possivel identificar o IPv4 da VPS para proteger o tunel de adocao'), { status: 500 });
+  const mikrotikPort = Number(mikrotik.port || 22);
+  const mikrotikUser = normalizeUser(mikrotik.user || 'kore-api');
+  if (!/^[A-Za-z0-9.-]+$/.test(mikrotikHost) || !mikrotikUser || !Number.isInteger(mikrotikPort) || mikrotikPort < 1 || mikrotikPort > 65535) {
+    throw Object.assign(new Error('Configuracao SSH do MikroTik invalida para encaminhar a adocao'), { status: 400 });
+  }
 
-  const tunnelPort = 40000 + crypto.randomInt(10000);
-  const tunnelComment = `kore-unifi-adopt-${crypto.randomBytes(5).toString('hex')}`;
-  const cleanupTunnel = async () => {
-    const command = `/ip firewall nat remove [find where comment="${tunnelComment}"]; /ip firewall filter remove [find where comment="${tunnelComment}"]`;
+  const forwardingResult = await runMikrotikKeyCommand(mikrotik, ':put [/ip ssh get forwarding-enabled]', 10000);
+  const previousForwarding = String(forwardingResult.stdout || '').trim().toLowerCase();
+  if (!['no', 'local', 'remote', 'both'].includes(previousForwarding)) {
+    throw Object.assign(new Error('O RouterOS nao informou o estado do encaminhamento SSH; verifique a versao do MikroTik'), { status: 502 });
+  }
+  const requiredForwarding = previousForwarding === 'remote' ? 'both' : (previousForwarding === 'no' ? 'local' : previousForwarding);
+  let forwardingChanged = false;
+  const restoreForwarding = async () => {
+    if (!forwardingChanged) return;
     let lastError;
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      try { await runMikrotikKeyCommand(mikrotik, command, 10000); return; }
+      try { await runMikrotikKeyCommand(mikrotik, `/ip ssh set forwarding-enabled=${previousForwarding}`, 10000); return; }
       catch (error) { lastError = error; }
     }
     throw lastError;
   };
   let adoptionError = null;
   try {
-    const openTunnel = [
-      `/ip firewall filter add chain=forward protocol=tcp src-address=${sourceIp} dst-address=${ip} dst-port=${port} connection-nat-state=dstnat action=accept comment="${tunnelComment}"`,
-      `/ip firewall filter move [find where comment="${tunnelComment}"] 0`,
-      `/ip firewall nat add chain=dstnat protocol=tcp src-address=${sourceIp} dst-port=${tunnelPort} action=dst-nat to-addresses=${ip} to-ports=${port} comment="${tunnelComment}"`,
-      `/ip firewall nat move [find where comment="${tunnelComment}"] 0`
-    ].join('; ');
-    await runMikrotikKeyCommand(mikrotik, openTunnel, 15000);
+    if (requiredForwarding !== previousForwarding) {
+      // Marque antes do comando: se a conexao cair apos aplicar, ainda tentamos restaurar.
+      forwardingChanged = true;
+      await runMikrotikKeyCommand(mikrotik, `/ip ssh set forwarding-enabled=${requiredForwarding}`, 10000);
+    }
+    const proxyCommand = [
+      'ssh', '-i', KEY_PATH,
+      '-o', 'LogLevel=ERROR',
+      '-o', 'BatchMode=yes',
+      '-o', 'IdentitiesOnly=yes',
+      '-o', 'PreferredAuthentications=publickey',
+      '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa',
+      '-o', 'HostkeyAlgorithms=+ssh-rsa',
+      '-o', 'StrictHostKeyChecking=no',
+      '-o', 'UserKnownHostsFile=/dev/null',
+      '-p', String(mikrotikPort),
+      '-W', '%h:%p',
+      `${mikrotikUser}@${mikrotikHost}`
+    ].join(' ');
     await runWithEnv('sshpass', [
       '-e', 'ssh',
       '-o', 'StrictHostKeyChecking=no',
@@ -930,20 +948,23 @@ async function adoptUnifiAccessPoint(payload = {}) {
       '-o', 'ConnectTimeout=10',
       '-o', 'PreferredAuthentications=password,keyboard-interactive',
       '-o', 'PubkeyAuthentication=no',
-      '-p', String(tunnelPort),
-      `${username}@${mikrotikHost}`,
+      '-o', `ProxyCommand=${proxyCommand}`,
+      '-p', String(port),
+      `${username}@${ip}`,
       `set-inform ${controller.inform_url}`
     ], { SSHPASS: password }, 25000);
   } catch (error) {
     const message = /permission denied|authentication failed/i.test(error.message)
       ? 'Credenciais SSH recusadas pelo Access Point'
+      : /administratively prohibited|forwarding disabled/i.test(error.message)
+        ? 'O MikroTik recusou o encaminhamento SSH para a VLAN do AP'
       : `Nao foi possivel enviar o Inform ao AP atraves do MikroTik: ${error.message}`;
     adoptionError = Object.assign(new Error(message), { status: 502 });
   }
   try {
-    await cleanupTunnel();
+    await restoreForwarding();
   } catch (error) {
-    throw Object.assign(new Error(`Falha critica ao remover o tunel temporario de adocao no MikroTik: ${error.message}`), { status: 500 });
+    throw Object.assign(new Error(`Falha critica ao restaurar o encaminhamento SSH do MikroTik: ${error.message}`), { status: 500 });
   }
   if (adoptionError) throw adoptionError;
 
