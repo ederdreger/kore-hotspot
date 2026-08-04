@@ -685,7 +685,7 @@ function unifiDiscoveryOptions(value = {}) {
 }
 
 function unifiIdentity(row = {}) {
-  return [row.identity, row.platform, row['system-description'], row['host-name'], row.comment, row.name]
+  return [row.identity, row.platform, row['system-description'], row['host-name'], row['class-id'], row['vendor-class-id'], row.comment, row.name]
     .filter(Boolean).join(' ');
 }
 
@@ -707,14 +707,19 @@ async function collectUnifiNeighbors(device, options = {}) {
   const adoptedByMac = new Map(localController.devices.map(item => [normalizeMac(item.mac), item]));
   let vlanCandidates = [];
   if (discovery.management_interface) {
-    const [arpResult, leaseResult] = await Promise.all([
+    const [arpResult, leaseResult, dhcpServerResult] = await Promise.all([
       runMikrotikKeyCommand(device, '/ip arp print detail without-paging').catch(() => ({ stdout: '' })),
-      runMikrotikKeyCommand(device, '/ip dhcp-server lease print detail without-paging').catch(() => ({ stdout: '' }))
+      runMikrotikKeyCommand(device, '/ip dhcp-server lease print detail without-paging').catch(() => ({ stdout: '' })),
+      runMikrotikKeyCommand(device, '/ip dhcp-server print detail without-paging').catch(() => ({ stdout: '' }))
     ]);
     const leases = parseKeyValueRows(leaseResult.stdout);
     const leasesByMac = new Map(leases.map(row => [normalizeMac(row['mac-address']), row]).filter(([mac]) => mac));
+    const interfaceDhcpServers = new Set(parseKeyValueRows(dhcpServerResult.stdout)
+      .filter(row => row.interface === discovery.management_interface && row.disabled !== 'true')
+      .map(row => row.name).filter(Boolean));
     const knownMacs = new Set(neighborRows.map(row => normalizeMac(row['mac-address'])).filter(Boolean));
-    vlanCandidates = parseKeyValueRows(arpResult.stdout)
+    const candidatesByMac = new Map();
+    for (const row of parseKeyValueRows(arpResult.stdout)
       .filter(row => row.interface === discovery.management_interface && row.address && row['mac-address'])
       .map(row => {
         const mac = normalizeMac(row['mac-address']);
@@ -725,7 +730,25 @@ async function collectUnifiNeighbors(device, options = {}) {
           'host-name': lease['host-name'] || '',
           detection_confidence: /\b(?:uap|unifi|ubiquiti|ubnt)[-_\s]?/i.test(unifiIdentity(lease)) || adoptedByMac.has(mac) ? 'confirmed' : 'vlan-candidate'
         };
-      })
+      })) {
+      candidatesByMac.set(normalizeMac(row['mac-address']), row);
+    }
+    for (const lease of leases) {
+      const mac = normalizeMac(lease['active-mac-address'] || lease['mac-address']);
+      const address = lease['active-address'] || lease.address;
+      const belongsToInterface = interfaceDhcpServers.has(lease['active-server'] || lease.server);
+      const isUnifi = /\b(?:uap|unifi|ubiquiti|ubnt)[-_\s]?/i.test(unifiIdentity(lease));
+      if (!mac || !address || !belongsToInterface || !isUnifi || candidatesByMac.has(mac)) continue;
+      candidatesByMac.set(mac, {
+        ...lease,
+        address,
+        'mac-address': mac,
+        interface: discovery.management_interface,
+        identity: lease['host-name'] || lease.comment || `Ubiquiti ${address}`,
+        detection_confidence: 'confirmed'
+      });
+    }
+    vlanCandidates = [...candidatesByMac.values()]
       .filter(row => {
         const mac = normalizeMac(row['mac-address']);
         const id = unifiNeighborId(device, mac, row.identity || 'ap');
