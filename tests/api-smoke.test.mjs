@@ -146,6 +146,20 @@ test('coleta de AP informa quando nao existe controladora cadastrada', async () 
   assert.match(result.data.error, /Nenhuma controladora/i);
 });
 
+test('UniFi local excluido pode ser redescoberto em um novo teste', async () => {
+  const token = await loginAdmin();
+  const headers = { 'Content-Type': 'application/json', 'X-Kore-Session': token };
+  const created = await request('/api/entities/access_points', {
+    method: 'POST', headers,
+    body: JSON.stringify({ name: 'UniFi redescoberta', ip: '192.168.1.245', mac_address: 'D8:B3:70:C0:7A:DB', source: 'unifi-local', managed: false })
+  });
+  assert.equal(created.response.status, 200);
+  const removed = await request(`/api/entities/access_points/${created.data.item.id}`, { method: 'DELETE', headers });
+  assert.equal(removed.response.status, 200);
+  const ignored = JSON.parse(await readFile(path.join(directory, 'data', 'access-points-ignored.json'), 'utf8'));
+  assert.equal(ignored.some(item => item.id === created.data.item.id || item.mac === 'D8:B3:70:C0:7A:DB'), false);
+});
+
 test('modo alternativo SSH exige senha e nao persiste credenciais', async () => {
   const token = await loginAdmin();
   const headers = { 'Content-Type': 'application/json', 'X-Kore-Session': token };

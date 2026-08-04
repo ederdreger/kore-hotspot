@@ -2753,13 +2753,15 @@ async function entityCrud(req) {
     }
     if (parsed.entity === 'access_points' && removedItem) {
       const ignored = readJson(AP_IGNORED_FILE, []);
-      const entry = {
-        id: removedItem.id || removedItem._id || parsed.id,
-        mac: normalizeMac(removedItem.mac_address || removedItem.mac),
-        name: removedItem.name || '',
-        ignored_at: new Date().toISOString()
-      };
-      writeJson(AP_IGNORED_FILE, [entry, ...ignored.filter(item => item.id !== entry.id && (!entry.mac || normalizeMac(item.mac) !== entry.mac))].slice(0, 5000));
+      const mac = normalizeMac(removedItem.mac_address || removedItem.mac);
+      const id = removedItem.id || removedItem._id || parsed.id;
+      if (removedItem.source === 'unifi-local') {
+        // Equipamentos descobertos localmente devem poder reaparecer em um novo teste.
+        writeJson(AP_IGNORED_FILE, ignored.filter(item => item.id !== id && (!mac || normalizeMac(item.mac) !== mac)));
+      } else {
+        const entry = { id, mac, name: removedItem.name || '', ignored_at: new Date().toISOString() };
+        writeJson(AP_IGNORED_FILE, [entry, ...ignored.filter(item => item.id !== entry.id && (!entry.mac || normalizeMac(item.mac) !== entry.mac))].slice(0, 5000));
+      }
     }
     writeJson(file, items.filter(item => item.id !== parsed.id && item._id !== parsed.id));
     return { success: true };
