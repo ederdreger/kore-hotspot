@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { X, MapPin, Wifi, Save, Send, Loader2, CheckCircle2, RefreshCw } from 'lucide-react';
+import { X, MapPin, Wifi, Save, Send, Loader2, CheckCircle2, RefreshCw, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -27,6 +27,7 @@ const DEFAULT = {
 function statusMessage(status) {
   if (status === 'adopted') return 'AP adotado e gerenciado pela controladora.';
   if (status === 'ready-to-adopt') return 'O AP enviou o Inform e esta pronto para confirmação na controladora.';
+  if (status === 'no-inform') return 'Tempo limite encerrado: o AP não iniciou conexão com a controladora.';
   return 'Adoção remota ativa por DHCP e DNS. Aguardando o AP enviar o Inform.';
 }
 
@@ -44,7 +45,7 @@ export default function APRegisterModal({ ap, onSave, onCheckAdoption, onClose }
   const canAdopt = !!ap && ap.source === 'unifi-local' && !managed;
 
   useEffect(() => {
-    if (!adoptionResult || !onCheckAdoption || adoptionResult.adoption_status === 'adopted') return undefined;
+    if (!adoptionResult || !onCheckAdoption || ['adopted', 'no-inform'].includes(adoptionResult.adoption_status)) return undefined;
     const check = async () => {
       try {
         const result = await onCheckAdoption(ap.id || ap._id);
@@ -281,7 +282,11 @@ export default function APRegisterModal({ ap, onSave, onCheckAdoption, onClose }
                     })}
                   </div>
                   <p className="flex items-start gap-1.5 text-foreground">
-                    {adoptionStatus === 'adopted' ? <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 text-success" /> : <RefreshCw className="w-3.5 h-3.5 mt-0.5 text-primary animate-spin" />}
+                    {adoptionStatus === 'adopted'
+                      ? <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 text-success" />
+                      : adoptionStatus === 'no-inform'
+                        ? <AlertTriangle className="w-3.5 h-3.5 mt-0.5 text-destructive" />
+                        : <RefreshCw className="w-3.5 h-3.5 mt-0.5 text-primary animate-spin" />}
                     {adoptionResult.message}
                   </p>
                   {adoptionStatus === 'ready-to-adopt' && adoptionResult.controller_url && (
