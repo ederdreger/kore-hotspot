@@ -27,7 +27,7 @@ const DEFAULT = {
 function statusMessage(status) {
   if (status === 'adopted') return 'AP adotado e gerenciado pela controladora.';
   if (status === 'ready-to-adopt') return 'O AP enviou o Inform e esta pronto para confirmação na controladora.';
-  return 'Configuração pronta. Aguardando o AP renovar o DHCP e enviar o Inform.';
+  return 'Adoção remota ativa por DHCP e DNS. Aguardando o AP enviar o Inform.';
 }
 
 export default function APRegisterModal({ ap, onSave, onCheckAdoption, onClose }) {
@@ -264,14 +264,21 @@ export default function APRegisterModal({ ap, onSave, onCheckAdoption, onClose }
               </p>
               {!adoptionResult ? (
                 <p className="text-[11px] text-muted-foreground">
-                  O Kore configurará no MikroTik o bypass do Hotspot e a DHCP Option 43 forçada somente para este AP, validará a porta Inform 8080 e acompanhará a controladora. Não é necessária senha SSH do equipamento.
+                  O Kore executará a adoção remota sem reiniciar o equipamento: bypass do Hotspot, Option 43 forçada, DNS unifi exclusivo para o AP, renovação DHCP e monitoramento da porta Inform. Não é necessária senha SSH.
                 </p>
               ) : (
                 <div className="space-y-2 text-[11px]">
                   <div className="grid grid-cols-2 gap-1.5 text-muted-foreground">
-                    {['Bypass do Hotspot', 'Option 43 forçada', 'Lease exclusivo', 'Inform porta 8080'].map(label => (
-                      <span key={label} className="flex items-center gap-1.5"><CheckCircle2 className="w-3 h-3 text-success" />{label}</span>
-                    ))}
+                    {[
+                      ['hotspot_bypass', 'Bypass do Hotspot'],
+                      ['dhcp_option_43', 'Option 43 forçada'],
+                      ['dns_unifi', 'DNS unifi direcionado'],
+                      ['controller', 'Controladora ativa'],
+                      ['inform_reachable', 'Inform porta 8080']
+                    ].map(([key, label]) => {
+                      const done = adoptionResult.checks?.[key] || adoptionResult.access_point?.adoption_checks?.[key];
+                      return <span key={key} className="flex items-center gap-1.5">{done ? <CheckCircle2 className="w-3 h-3 text-success" /> : <RefreshCw className="w-3 h-3 text-muted-foreground" />}{label}</span>;
+                    })}
                   </div>
                   <p className="flex items-start gap-1.5 text-foreground">
                     {adoptionStatus === 'adopted' ? <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 text-success" /> : <RefreshCw className="w-3.5 h-3.5 mt-0.5 text-primary animate-spin" />}
@@ -299,9 +306,9 @@ export default function APRegisterModal({ ap, onSave, onCheckAdoption, onClose }
             {ap ? 'Salvar Alterações' : 'Cadastrar AP'}
           </Button>
           {canAdopt && (
-            <Button size="sm" onClick={() => handleSave(true)} disabled={!!submitting || !!adoptionResult} className="gap-1.5">
+            <Button size="sm" onClick={() => handleSave(true)} disabled={!!submitting || ['adopted', 'ready-to-adopt'].includes(adoptionStatus)} className="gap-1.5">
               {submitting === 'adopt' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-              {adoptionResult ? 'Adoção em acompanhamento' : 'Preparar adoção pela VLAN'}
+              {['adopted', 'ready-to-adopt'].includes(adoptionStatus) ? 'Adoção em acompanhamento' : adoptionResult ? 'Reexecutar adoção remota' : 'Executar adoção remota'}
             </Button>
           )}
         </div>

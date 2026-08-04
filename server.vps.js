@@ -935,6 +935,47 @@ async function configureUnifiHotspotBypass(mikrotik, accessPoint) {
   return { ready: true, mac, address: binding.address || ip, type: 'bypassed' };
 }
 
+async function configureUnifiDnsAdoption(mikrotik, accessPoint, controllerIp) {
+  const mac = normalizeMac(accessPoint.mac_address || accessPoint.mac);
+  const ip = String(accessPoint.ip || '').trim();
+  if (!mac || net.isIP(ip) !== 4 || net.isIP(controllerIp) !== 4) {
+    throw Object.assign(new Error('Dados invalidos para configurar o DNS remoto do UniFi'), { status: 400 });
+  }
+  const suffix = mac.replace(/:/g, '').toLowerCase();
+  const udpComment = `Kore UniFi DNS ${suffix} UDP`;
+  const tcpComment = `Kore UniFi DNS ${suffix} TCP`;
+  const informComment = `Kore UniFi Inform ${suffix}`;
+  const script = [
+    '/ip dns set allow-remote-requests=yes',
+    ':local records [/ip dns static find where name="unifi"]',
+    `:if ([:len $records] = 0) do={ /ip dns static add name="unifi" type=A address="${controllerIp}" ttl=5m disabled=no comment="Kore UniFi adoption" } else={ :foreach record in=$records do={ /ip dns static set $record type=A address="${controllerIp}" ttl=5m disabled=no comment="Kore UniFi adoption" } }`,
+    `:local udp [/ip firewall nat find where comment="${udpComment}"]`,
+    `:if ([:len $udp] = 0) do={ /ip firewall nat add chain=dstnat src-address="${ip}" protocol=udp dst-port=53 action=redirect to-ports=53 comment="${udpComment}" disabled=no; :set udp [/ip firewall nat find where comment="${udpComment}"] } else={ /ip firewall nat set $udp chain=dstnat src-address="${ip}" protocol=udp dst-port=53 action=redirect to-ports=53 disabled=no }`,
+    `:local tcp [/ip firewall nat find where comment="${tcpComment}"]`,
+    `:if ([:len $tcp] = 0) do={ /ip firewall nat add chain=dstnat src-address="${ip}" protocol=tcp dst-port=53 action=redirect to-ports=53 comment="${tcpComment}" disabled=no; :set tcp [/ip firewall nat find where comment="${tcpComment}"] } else={ /ip firewall nat set $tcp chain=dstnat src-address="${ip}" protocol=tcp dst-port=53 action=redirect to-ports=53 disabled=no }`,
+    '/ip firewall nat move $tcp destination=0',
+    '/ip firewall nat move $udp destination=0',
+    `:local monitor [/ip firewall mangle find where comment="${informComment}"]`,
+    `:if ([:len $monitor] = 0) do={ /ip firewall mangle add chain=prerouting src-address="${ip}" dst-address="${controllerIp}" protocol=tcp dst-port=8080 action=passthrough comment="${informComment}" disabled=no } else={ /ip firewall mangle set $monitor chain=prerouting src-address="${ip}" dst-address="${controllerIp}" protocol=tcp dst-port=8080 action=passthrough disabled=no }`,
+    ':put ("unifi-resolved=" . [:resolve "unifi"])'
+  ].join('; ');
+  const result = await runMikrotikKeyCommand(mikrotik, script, 20000);
+  const resolved = String(result.stdout || '').match(/unifi-resolved=([0-9.]+)/i)?.[1] || '';
+  if (resolved !== controllerIp) throw Object.assign(new Error('O MikroTik nao confirmou a resolucao DNS unifi para a controladora'), { status: 502 });
+  return { ready: true, hostname: 'unifi', address: controllerIp, dns_redirect: true, monitor_comment: informComment };
+}
+
+async function unifiInformTraffic(mikrotik, accessPoint) {
+  const mac = normalizeMac(accessPoint.mac_address || accessPoint.mac);
+  if (!mac) return { packets: 0, bytes: 0, seen: false };
+  const comment = `Kore UniFi Inform ${mac.replace(/:/g, '').toLowerCase()}`;
+  const result = await runMikrotikKeyCommand(mikrotik, `/ip firewall mangle print stats detail without-paging where comment="${comment}"`, 10000).catch(() => ({ stdout: '' }));
+  const row = parseKeyValueRows(result.stdout)[0] || {};
+  const packets = Number(String(row.packets || '0').replace(/[^0-9]/g, '')) || 0;
+  const bytes = Number(String(row.bytes || '0').replace(/[^0-9]/g, '')) || 0;
+  return { packets, bytes, seen: packets > 0 };
+}
+
 async function testMikrotikInformReachability(mikrotik, informIp) {
   if (net.isIP(informIp) !== 4) return { reachable: false, error: 'IPv4 da controladora invalido' };
   const comment = `kore-inform-${crypto.randomBytes(5).toString('hex')}`;
@@ -963,6 +1004,7 @@ function saveAccessPointAdoption(accessPoint, changes) {
 async function prepareUnifiVlanAdoption(mikrotik, accessPoint, controller, host) {
   const bypass = await configureUnifiHotspotBypass(mikrotik, accessPoint);
   const dhcp = await configureUnifiDhcpAdoption(mikrotik, accessPoint, host);
+  const dnsAdoption = await configureUnifiDnsAdoption(mikrotik, accessPoint, dhcp.inform_ip);
   const connectivity = await testMikrotikInformReachability(mikrotik, dhcp.inform_ip);
   if (!connectivity.reachable) {
     throw Object.assign(new Error(`O MikroTik nao alcanca a controladora em ${dhcp.inform_ip}:8080. Verifique NAT/firewall antes de reiniciar o AP.`), { status: 502 });
@@ -973,10 +1015,10 @@ async function prepareUnifiVlanAdoption(mikrotik, accessPoint, controller, host)
     adoption_status: 'waiting-inform',
     adoption_method: 'vlan-dhcp-option-43',
     adoption_requested_at: now,
-    adoption_requires_restart: true,
+    adoption_requires_restart: false,
     inform_url: controller.inform_url,
     controller_url: controller.ui_url,
-    adoption_checks: { controller: true, hotspot_bypass: true, dhcp_option_43: true, inform_reachable: true }
+    adoption_checks: { controller: true, hotspot_bypass: true, dhcp_option_43: true, dns_unifi: true, inform_reachable: true }
   });
   return {
     success: true,
@@ -984,14 +1026,13 @@ async function prepareUnifiVlanAdoption(mikrotik, accessPoint, controller, host)
     inform_url: controller.inform_url,
     controller_url: controller.ui_url,
     adoption_method: 'vlan-dhcp-option-43',
-    requires_restart: true,
+    requires_restart: false,
     checks: updated.adoption_checks,
     hotspot_bypass: bypass,
     dhcp_option: dhcp,
+    dns_adoption: dnsAdoption,
     connectivity,
-    message: dhcp.renewal_requested
-      ? 'VLAN preparada e renovacao DHCP solicitada ao AP. O Kore esta aguardando o Inform; se o firmware ignorar o FORCERENEW, reinicie apenas a alimentacao do AP.'
-      : 'VLAN preparada e validada. O firmware nao aceitou renovacao remota; reinicie apenas a alimentacao do AP e o Kore acompanhara o Inform.'
+    message: 'Adocao remota ativada por DHCP e DNS, sem reiniciar o AP. O Kore esta aguardando e medindo a tentativa de Inform.'
   };
 }
 
@@ -1003,6 +1044,9 @@ async function unifiAccessPointAdoptionStatus(payload = {}) {
   const mac = normalizeMac(accessPoint.mac_address || accessPoint.mac);
   const snapshot = await localUnifiSnapshot();
   const controllerDevice = snapshot.devices.find(item => normalizeMac(item.mac) === mac);
+  const controllerId = String(accessPoint.controller_id || '').replace(/^unifi-local:/, '');
+  const mikrotik = mikrotikDeviceById(controllerId);
+  const informTraffic = mikrotik ? await unifiInformTraffic(mikrotik, accessPoint) : { packets: 0, bytes: 0, seen: false };
   let adoptionStatus = accessPoint.adoption_status || 'pending';
   if (controllerDevice?.adopted) adoptionStatus = 'adopted';
   else if (controllerDevice) adoptionStatus = 'ready-to-adopt';
@@ -1011,14 +1055,17 @@ async function unifiAccessPointAdoptionStatus(payload = {}) {
     status: adoptionStatus === 'adopted' ? 'ok' : 'pending',
     adoption_status: adoptionStatus,
     controller_device_state: controllerDevice?.state || accessPoint.controller_device_state || '',
+    inform_traffic: informTraffic,
     controller_seen_at: controllerDevice ? new Date().toISOString() : accessPoint.controller_seen_at
   });
   const messages = {
     adopted: 'AP adotado e gerenciado pela controladora.',
     'ready-to-adopt': 'O AP ja enviou o Inform e esta pronto para adocao na controladora.',
-    'waiting-inform': 'Configuracao pronta. Aguardando o AP reiniciar e enviar o Inform.'
+    'waiting-inform': informTraffic.seen
+      ? 'O AP ja tentou acessar a porta Inform. Aguardando a controladora processar o equipamento.'
+      : 'Adocao remota ativa por DHCP e DNS. Aguardando a primeira tentativa do AP na porta Inform.'
   };
-  return { success: true, access_point: updated, adoption_status: adoptionStatus, controller_device: controllerDevice || null, message: messages[adoptionStatus] || 'Aguardando o AP enviar o Inform.' };
+  return { success: true, access_point: updated, adoption_status: adoptionStatus, controller_device: controllerDevice || null, inform_traffic: informTraffic, message: messages[adoptionStatus] || 'Aguardando o AP enviar o Inform.' };
 }
 
 async function adoptUnifiAccessPoint(payload = {}) {
