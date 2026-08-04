@@ -894,7 +894,35 @@ async function adoptUnifiAccessPoint(payload = {}) {
   if (!sshpassAvailable) throw Object.assign(new Error('Componente de adocao SSH ausente na VPS. Execute: apt-get install -y sshpass'), { status: 503 });
 
   const ip = String(accessPoint.ip).trim();
+  const controllerId = String(accessPoint.controller_id || '').replace(/^unifi-local:/, '');
+  const mikrotik = mikrotikDeviceById(controllerId);
+  if (!mikrotik) throw Object.assign(new Error('MikroTik associado ao AP nao encontrado'), { status: 400 });
+  const mikrotikHost = routerAddress(mikrotik.host);
+  const publicHost = unifiControllerHost();
+  let sourceIp = /^10\.255\.255\./.test(mikrotikHost) ? '10.255.255.1' : (net.isIP(publicHost) === 4 ? publicHost : '');
+  if (!sourceIp && publicHost) sourceIp = await dns.resolve4(publicHost).then(rows => rows[0] || '').catch(() => '');
+  if (net.isIP(sourceIp) !== 4) throw Object.assign(new Error('Nao foi possivel identificar o IPv4 da VPS para proteger o tunel de adocao'), { status: 500 });
+
+  const tunnelPort = 40000 + crypto.randomInt(10000);
+  const tunnelComment = `kore-unifi-adopt-${crypto.randomBytes(5).toString('hex')}`;
+  const cleanupTunnel = async () => {
+    const command = `/ip firewall nat remove [find where comment="${tunnelComment}"]; /ip firewall filter remove [find where comment="${tunnelComment}"]`;
+    let lastError;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try { await runMikrotikKeyCommand(mikrotik, command, 10000); return; }
+      catch (error) { lastError = error; }
+    }
+    throw lastError;
+  };
+  let adoptionError = null;
   try {
+    const openTunnel = [
+      `/ip firewall filter add chain=forward protocol=tcp src-address=${sourceIp} dst-address=${ip} dst-port=${port} connection-nat-state=dstnat action=accept comment="${tunnelComment}"`,
+      `/ip firewall filter move [find where comment="${tunnelComment}"] 0`,
+      `/ip firewall nat add chain=dstnat protocol=tcp src-address=${sourceIp} dst-port=${tunnelPort} action=dst-nat to-addresses=${ip} to-ports=${port} comment="${tunnelComment}"`,
+      `/ip firewall nat move [find where comment="${tunnelComment}"] 0`
+    ].join('; ');
+    await runMikrotikKeyCommand(mikrotik, openTunnel, 15000);
     await runWithEnv('sshpass', [
       '-e', 'ssh',
       '-o', 'StrictHostKeyChecking=no',
@@ -902,16 +930,22 @@ async function adoptUnifiAccessPoint(payload = {}) {
       '-o', 'ConnectTimeout=10',
       '-o', 'PreferredAuthentications=password,keyboard-interactive',
       '-o', 'PubkeyAuthentication=no',
-      '-p', String(port),
-      `${username}@${ip}`,
+      '-p', String(tunnelPort),
+      `${username}@${mikrotikHost}`,
       `set-inform ${controller.inform_url}`
     ], { SSHPASS: password }, 25000);
   } catch (error) {
     const message = /permission denied|authentication failed/i.test(error.message)
       ? 'Credenciais SSH recusadas pelo Access Point'
-      : `Nao foi possivel enviar o Inform ao AP: ${error.message}`;
-    throw Object.assign(new Error(message), { status: 502 });
+      : `Nao foi possivel enviar o Inform ao AP atraves do MikroTik: ${error.message}`;
+    adoptionError = Object.assign(new Error(message), { status: 502 });
   }
+  try {
+    await cleanupTunnel();
+  } catch (error) {
+    throw Object.assign(new Error(`Falha critica ao remover o tunel temporario de adocao no MikroTik: ${error.message}`), { status: 500 });
+  }
+  if (adoptionError) throw adoptionError;
 
   const now = new Date().toISOString();
   const updated = { ...accessPoint, status: 'pending', adoption_status: 'inform-sent', adoption_requested_at: now, inform_url: controller.inform_url, updated_date: now };
