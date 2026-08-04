@@ -885,6 +885,10 @@ function unifiDhcpOption43(controllerHost, informIp) {
   return { informUrl, optionValue };
 }
 
+function normalizeRouterHex(value) {
+  return String(value || '').trim().replace(/^0x/i, '').replace(/[^0-9a-f]/gi, '').toLowerCase();
+}
+
 async function configureUnifiDhcpAdoption(mikrotik, accessPoint, controllerHost) {
   const mac = normalizeMac(accessPoint.mac_address || accessPoint.mac);
   if (!mac) throw Object.assign(new Error('O AP nao possui MAC valido para configurar a adocao por DHCP'), { status: 400 });
@@ -914,14 +918,21 @@ async function configureUnifiDhcpAdoption(mikrotik, accessPoint, controllerHost)
   const option = parseKeyValueRows(optionResult.stdout)[0] || {};
   const lease = parseKeyValueRows(leaseResult.stdout)[0] || {};
   const leaseOptions = String(lease['dhcp-option'] || '').split(',').map(value => value.trim());
-  const actualRawValue = String(option['raw-value'] || option.value || '').replace(/^0x/i, '').toLowerCase();
-  const expectedRawValue = optionValue.replace(/^0x/i, '').toLowerCase();
-  if (!['yes', 'true'].includes(String(option.force || '').toLowerCase()) || !leaseOptions.includes(optionName) || actualRawValue !== expectedRawValue) {
-    throw Object.assign(new Error('O RouterOS nao confirmou a Option 43 completa (IP e URL de Inform) no lease do AP'), { status: 502 });
+  const actualRawValue = normalizeRouterHex(option['raw-value'] || option.value);
+  const expectedRawValue = normalizeRouterHex(optionValue);
+  if (!['yes', 'true'].includes(String(option.force || '').toLowerCase())) {
+    throw Object.assign(new Error('O RouterOS gravou a Option 43, mas nao confirmou force=yes'), { status: 502 });
+  }
+  if (!leaseOptions.includes(optionName)) {
+    throw Object.assign(new Error(`O RouterOS nao vinculou a Option 43 ${optionName} ao lease do AP`), { status: 502 });
+  }
+  if (actualRawValue !== expectedRawValue) {
+    throw Object.assign(new Error(`Option 43 divergente no RouterOS: esperado ${expectedRawValue}, recebido ${actualRawValue || 'vazio'}`), { status: 502 });
   }
   return {
     option_name: optionName,
     option_value: optionValue,
+    raw_value: actualRawValue,
     inform_url: informUrl,
     inform_ip: informIp,
     forced: true,
@@ -3911,7 +3922,7 @@ const server = http.createServer((req, res) => {
 });
 
 if (process.env.KORE_TEST_EXPORTS === 'true') {
-  module.exports = { parseUbiquitiDiscoveryPacket, unifiDhcpOption43 };
+  module.exports = { normalizeRouterHex, parseUbiquitiDiscoveryPacket, unifiDhcpOption43 };
 } else {
   ensureSshKey().then(() => {
     server.listen(PORT, '0.0.0.0', () => console.log(`Kore VPN API listening on ${PORT}`));
