@@ -1050,6 +1050,10 @@ async function unifiAccessPointAdoptionStatus(payload = {}) {
   let adoptionStatus = accessPoint.adoption_status || 'pending';
   if (controllerDevice?.adopted) adoptionStatus = 'adopted';
   else if (controllerDevice) adoptionStatus = 'ready-to-adopt';
+  else if (!informTraffic.seen && ['waiting-inform', 'dhcp-ready', 'inform-sent'].includes(adoptionStatus)) {
+    const requestedAt = Date.parse(accessPoint.adoption_requested_at || '');
+    if (Number.isFinite(requestedAt) && Date.now() - requestedAt >= 2 * 60 * 1000) adoptionStatus = 'no-inform';
+  }
   const updated = saveAccessPointAdoption(accessPoint, {
     managed: adoptionStatus === 'adopted',
     status: adoptionStatus === 'adopted' ? 'ok' : 'pending',
@@ -1061,6 +1065,7 @@ async function unifiAccessPointAdoptionStatus(payload = {}) {
   const messages = {
     adopted: 'AP adotado e gerenciado pela controladora.',
     'ready-to-adopt': 'O AP ja enviou o Inform e esta pronto para adocao na controladora.',
+    'no-inform': 'Tempo limite encerrado: o AP nao iniciou nenhum trafego para a porta Inform. A controladora e o MikroTik estao acessiveis; o firmware do equipamento nao reagiu a DHCP nem DNS.',
     'waiting-inform': informTraffic.seen
       ? 'O AP ja tentou acessar a porta Inform. Aguardando a controladora processar o equipamento.'
       : 'Adocao remota ativa por DHCP e DNS. Aguardando a primeira tentativa do AP na porta Inform.'
