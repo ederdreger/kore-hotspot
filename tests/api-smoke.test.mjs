@@ -146,7 +146,7 @@ test('coleta de AP informa quando nao existe controladora cadastrada', async () 
   assert.match(result.data.error, /Nenhuma controladora/i);
 });
 
-test('adocao UniFi exige senha SSH e nao persiste credenciais', async () => {
+test('modo alternativo SSH exige senha e nao persiste credenciais', async () => {
   const token = await loginAdmin();
   const headers = { 'Content-Type': 'application/json', 'X-Kore-Session': token };
   const created = await request('/api/entities/access_points', {
@@ -157,7 +157,7 @@ test('adocao UniFi exige senha SSH e nao persiste credenciais', async () => {
 
   const adoption = await request('/api/access-points/adopt', {
     method: 'POST', headers,
-    body: JSON.stringify({ ap_id: created.data.item.id, username: 'ubnt', password: '' })
+    body: JSON.stringify({ ap_id: created.data.item.id, mode: 'ssh', username: 'ubnt', password: '' })
   });
   assert.equal(adoption.response.status, 400);
   assert.match(adoption.data.error, /senha SSH/i);

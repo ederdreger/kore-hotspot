@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { X, MapPin, Wifi, Save, Send, Loader2, KeyRound } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { X, MapPin, Wifi, Save, Send, Loader2, CheckCircle2, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -24,16 +24,41 @@ const DEFAULT = {
   notes: '',
 };
 
-export default function APRegisterModal({ ap, onSave, onClose }) {
+function statusMessage(status) {
+  if (status === 'adopted') return 'AP adotado e gerenciado pela controladora.';
+  if (status === 'ready-to-adopt') return 'O AP enviou o Inform e esta pronto para confirmação na controladora.';
+  return 'Configuração pronta. Aguardando o AP renovar o DHCP e enviar o Inform.';
+}
+
+export default function APRegisterModal({ ap, onSave, onCheckAdoption, onClose }) {
   const [form, setForm] = useState(ap ? { ...DEFAULT, ...ap } : DEFAULT);
   const [errors, setErrors] = useState({});
-  const [adoption, setAdoption] = useState({ username: 'ubnt', password: '', port: 22 });
+  const [adoptionResult, setAdoptionResult] = useState(
+    ap?.adoption_status && ap.adoption_status !== 'pending'
+      ? { access_point: ap, adoption_status: ap.adoption_status, checks: ap.adoption_checks, controller_url: ap.controller_url, message: statusMessage(ap.adoption_status) }
+      : null
+  );
   const [submitting, setSubmitting] = useState('');
   const [submitError, setSubmitError] = useState('');
   const managed = !!form.managed;
   const canAdopt = !!ap && ap.source === 'unifi-local' && !managed;
 
+  useEffect(() => {
+    if (!adoptionResult || !onCheckAdoption || adoptionResult.adoption_status === 'adopted') return undefined;
+    const check = async () => {
+      try {
+        const result = await onCheckAdoption(ap.id || ap._id);
+        if (result) setAdoptionResult(current => ({ ...current, ...result, checks: result.checks || current?.checks, controller_url: result.controller_url || current?.controller_url }));
+      } catch {
+        // A preparacao ja foi concluida; uma falha temporaria de consulta nao a desfaz.
+      }
+    };
+    const timer = setInterval(check, 5000);
+    return () => clearInterval(timer);
+  }, [adoptionResult, onCheckAdoption, ap]);
+
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const adoptionStatus = adoptionResult?.adoption_status || adoptionResult?.access_point?.adoption_status || '';
 
   const channels = form.band === '5GHz' ? CHANNELS_5 : form.band === 'Dual-Band' ? [...CHANNELS_24, ...CHANNELS_5] : CHANNELS_24;
 
@@ -48,18 +73,15 @@ export default function APRegisterModal({ ap, onSave, onClose }) {
 
   const handleSave = async (applyAdoption = false) => {
     if (!validate()) return;
-    if (applyAdoption && !adoption.password) {
-      setErrors(current => ({ ...current, sshPassword: 'Senha SSH obrigatória para iniciar a adoção' }));
-      return;
-    }
     const address = `${form.street}${form.number ? ', ' + form.number : ''} — ${form.neighborhood}${form.city ? ', ' + form.city : ''}`;
     setSubmitting(applyAdoption ? 'adopt' : 'save');
     setSubmitError('');
     try {
-      await onSave(
+      const result = await onSave(
         { ...form, address, channel: Number(form.channel), maxClients: Number(form.maxClients), txPower: Number(form.txPower) },
-        applyAdoption ? { ...adoption, port: Number(adoption.port) } : null
+        applyAdoption ? { mode: 'vlan' } : null
       );
+      if (applyAdoption && result) setAdoptionResult(result);
     } catch (error) {
       setSubmitError(error.message || 'Não foi possível concluir a operação.');
     } finally {
@@ -238,26 +260,28 @@ export default function APRegisterModal({ ap, onSave, onClose }) {
           {canAdopt && (
             <div className="rounded-xl border border-primary/30 bg-primary/5 p-3 space-y-3">
               <p className="text-xs font-semibold text-primary uppercase tracking-wider flex items-center gap-1.5">
-                <KeyRound className="w-3 h-3" /> Adoção UniFi
+                <Wifi className="w-3 h-3" /> Adoção UniFi pela VLAN {form.management_vlan_id || ''}
               </p>
-              <p className="text-[11px] text-muted-foreground">
-                As credenciais são usadas somente para enviar o Inform ao AP e não serão armazenadas. Depois, conclua a adoção na controladora UniFi.
-              </p>
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <Label className="text-xs mb-1 block">Usuário SSH</Label>
-                  <Input value={adoption.username} onChange={e => setAdoption(value => ({ ...value, username: e.target.value }))} className="h-8 text-xs" />
+              {!adoptionResult ? (
+                <p className="text-[11px] text-muted-foreground">
+                  O Kore configurará no MikroTik o bypass do Hotspot e a DHCP Option 43 forçada somente para este AP, validará a porta Inform 8080 e acompanhará a controladora. Não é necessária senha SSH do equipamento.
+                </p>
+              ) : (
+                <div className="space-y-2 text-[11px]">
+                  <div className="grid grid-cols-2 gap-1.5 text-muted-foreground">
+                    {['Bypass do Hotspot', 'Option 43 forçada', 'Lease exclusivo', 'Inform porta 8080'].map(label => (
+                      <span key={label} className="flex items-center gap-1.5"><CheckCircle2 className="w-3 h-3 text-success" />{label}</span>
+                    ))}
+                  </div>
+                  <p className="flex items-start gap-1.5 text-foreground">
+                    {adoptionStatus === 'adopted' ? <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 text-success" /> : <RefreshCw className="w-3.5 h-3.5 mt-0.5 text-primary animate-spin" />}
+                    {adoptionResult.message}
+                  </p>
+                  {adoptionStatus === 'ready-to-adopt' && adoptionResult.controller_url && (
+                    <a href={adoptionResult.controller_url} target="_blank" rel="noreferrer" className="inline-flex text-primary hover:underline">Abrir controladora UniFi para confirmar</a>
+                  )}
                 </div>
-                <div>
-                  <Label className="text-xs mb-1 block">Porta</Label>
-                  <Input type="number" min={1} max={65535} value={adoption.port} onChange={e => setAdoption(value => ({ ...value, port: e.target.value }))} className="h-8 text-xs" />
-                </div>
-                <div>
-                  <Label className="text-xs mb-1 block">Senha SSH *</Label>
-                  <Input type="password" value={adoption.password} onChange={e => { setAdoption(value => ({ ...value, password: e.target.value })); setErrors(current => ({ ...current, sshPassword: '' })); }} className={`h-8 text-xs ${errors.sshPassword ? 'border-destructive' : ''}`} />
-                </div>
-              </div>
-              {errors.sshPassword && <p className="text-[10px] text-destructive">{errors.sshPassword}</p>}
+              )}
             </div>
           )}
         </div>
@@ -275,9 +299,9 @@ export default function APRegisterModal({ ap, onSave, onClose }) {
             {ap ? 'Salvar Alterações' : 'Cadastrar AP'}
           </Button>
           {canAdopt && (
-            <Button size="sm" onClick={() => handleSave(true)} disabled={!!submitting} className="gap-1.5">
+            <Button size="sm" onClick={() => handleSave(true)} disabled={!!submitting || !!adoptionResult} className="gap-1.5">
               {submitting === 'adopt' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-              Salvar e iniciar adoção
+              {adoptionResult ? 'Adoção em acompanhamento' : 'Preparar adoção pela VLAN'}
             </Button>
           )}
         </div>

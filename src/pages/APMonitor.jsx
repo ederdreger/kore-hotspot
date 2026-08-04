@@ -103,12 +103,12 @@ export default function APMonitor() {
       if (adoption) {
         const response = await spedynet.functions.invoke('accessPointAdopt', {
           ap_id: saved.id || saved._id,
-          username: adoption.username,
-          password: adoption.password,
-          port: adoption.port
+          mode: adoption.mode || 'vlan'
         });
         setAPs(prev => prev.map(item => item.id === saved.id ? response.data.access_point : item));
+        setEditingAP(response.data.access_point);
         toast.success(response.data.message || 'A adocao foi iniciada.');
+        return response.data;
       } else {
         toast.success(editingAP ? 'Access Point atualizado.' : 'Access Point cadastrado.');
       }
@@ -119,6 +119,14 @@ export default function APMonitor() {
       toast.error(error.message || 'Erro ao salvar Access Point');
       throw error;
     }
+  };
+
+  const handleCheckAdoption = async (apId) => {
+    const response = await spedynet.functions.invoke('accessPointAdoptionStatus', { ap_id: apId });
+    const updated = response.data.access_point;
+    setAPs(prev => prev.map(item => item.id === updated.id ? updated : item));
+    setEditingAP(current => current && current.id === updated.id ? updated : current);
+    return response.data;
   };
 
   const handleDelete = async (ap) => {
@@ -326,6 +334,7 @@ export default function APMonitor() {
         <APRegisterModal
           ap={editingAP}
           onSave={handleRegister}
+          onCheckAdoption={handleCheckAdoption}
           onClose={() => { setShowRegister(false); setEditingAP(null); }}
         />
       )}
