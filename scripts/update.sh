@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 APP_NAME="Kore-HotSpot"
-SCRIPT_VERSION="v0.2.48"
+SCRIPT_VERSION="v0.2.49"
 REPO_URL="${REPO_URL:-https://github.com/ederdreger/kore-hotspot.git}"
 REPO_SLUG="${REPO_SLUG:-ederdreger/kore-hotspot}"
 BRANCH="${BRANCH:-main}"
