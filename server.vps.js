@@ -870,6 +870,29 @@ async function pollAccessPoints(payload = {}) {
   return { success: errors.length === 0, access_points: accessPoints, errors, controllers_checked: targets.length + unifiTargets.length };
 }
 
+async function configureUnifiDhcpAdoption(mikrotik, accessPoint, controllerHost) {
+  const mac = normalizeMac(accessPoint.mac_address || accessPoint.mac);
+  if (!mac) throw Object.assign(new Error('O AP nao possui MAC valido para configurar a adocao por DHCP'), { status: 400 });
+  let informIp = net.isIP(controllerHost) === 4 ? controllerHost : '';
+  if (!informIp) informIp = await dns.resolve4(controllerHost).then(rows => rows[0] || '').catch(() => '');
+  if (net.isIP(informIp) !== 4) throw Object.assign(new Error('Nao foi possivel resolver o IPv4 da controladora para o DHCP Option 43'), { status: 502 });
+  const optionValue = `0x0104${informIp.split('.').map(part => Number(part).toString(16).padStart(2, '0')).join('')}`;
+  const optionName = `kore-unifi-${mac.replace(/:/g, '').toLowerCase()}`;
+  const script = [
+    `:local lease [/ip dhcp-server lease find where mac-address="${mac}"]`,
+    `:if ([:len $lease] = 0) do={ :error "Lease DHCP do AP nao encontrada" }`,
+    `:if ([:len [/ip dhcp-server lease find where mac-address="${mac}" dynamic=yes]] > 0) do={ /ip dhcp-server lease make-static $lease }`,
+    `:local option [/ip dhcp-server option find where name="${optionName}"]`,
+    `:if ([:len $option] = 0) do={ /ip dhcp-server option add name="${optionName}" code=43 value=${optionValue} } else={ /ip dhcp-server option set $option code=43 value=${optionValue} }`,
+    `:set lease [/ip dhcp-server lease find where mac-address="${mac}"]`,
+    `:local current [/ip dhcp-server lease get $lease dhcp-option]`,
+    `:if ([:typeof [:find ("," . $current . ",") (",${optionName},")]] = "nil") do={ :if ([:len $current] = 0) do={ /ip dhcp-server lease set $lease dhcp-option="${optionName}" } else={ /ip dhcp-server lease set $lease dhcp-option=($current . ",${optionName}") } }`,
+    `:put "dhcp-option-ready"`
+  ].join('; ');
+  await runMikrotikKeyCommand(mikrotik, script, 15000);
+  return { option_name: optionName, option_value: optionValue, inform_ip: informIp };
+}
+
 async function adoptUnifiAccessPoint(payload = {}) {
   const apId = String(payload.ap_id || payload.id || '').trim();
   const username = normalizeUser(payload.username || 'ubnt');
@@ -966,17 +989,37 @@ async function adoptUnifiAccessPoint(payload = {}) {
   } catch (error) {
     throw Object.assign(new Error(`Falha critica ao restaurar o encaminhamento SSH do MikroTik: ${error.message}`), { status: 500 });
   }
-  if (adoptionError) throw adoptionError;
+  let adoptionMethod = 'ssh';
+  let dhcpAdoption = null;
+  if (adoptionError) {
+    if (!/timed out|timeout|operation timed out/i.test(adoptionError.message)) throw adoptionError;
+    dhcpAdoption = await configureUnifiDhcpAdoption(mikrotik, accessPoint, host);
+    adoptionMethod = 'dhcp-option-43';
+  }
 
   const now = new Date().toISOString();
-  const updated = { ...accessPoint, status: 'pending', adoption_status: 'inform-sent', adoption_requested_at: now, inform_url: controller.inform_url, updated_date: now };
+  const updated = {
+    ...accessPoint,
+    status: 'pending',
+    adoption_status: adoptionMethod === 'ssh' ? 'inform-sent' : 'dhcp-ready',
+    adoption_method: adoptionMethod,
+    adoption_requested_at: now,
+    adoption_requires_restart: adoptionMethod === 'dhcp-option-43',
+    inform_url: controller.inform_url,
+    updated_date: now
+  };
   writeJson(ENTITY_FILES.access_points, accessPoints.map(item => String(item.id || item._id) === apId ? updated : item));
   return {
     success: true,
     access_point: updated,
     inform_url: controller.inform_url,
     controller_url: controller.ui_url,
-    message: 'Inform enviado. O AP deve aparecer na controladora para concluir a adocao.'
+    adoption_method: adoptionMethod,
+    requires_restart: adoptionMethod === 'dhcp-option-43',
+    dhcp_option: dhcpAdoption,
+    message: adoptionMethod === 'ssh'
+      ? 'Inform enviado. O AP deve aparecer na controladora para concluir a adocao.'
+      : 'DHCP Option 43 aplicado somente a este AP. Reinicie o equipamento para ele solicitar a adocao.'
   };
 }
 
