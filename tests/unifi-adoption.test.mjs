@@ -12,7 +12,7 @@ process.env.KORE_TEST_EXPORTS = 'true';
 process.env.KORE_DATA_DIR = path.join(directory, 'data');
 process.env.KORE_KEY_DIR = path.join(directory, 'keys');
 const require = createRequire(import.meta.url);
-const { normalizeRouterHex, unifiDhcpOption43, unifiDiscoveryRelayPlan } = require(serverCopy);
+const { normalizeRouterHex, unifiDhcpOption43, unifiDiscoveryRelayPlan, unifiInformRedirectPlan } = require(serverCopy);
 delete process.env.KORE_TEST_EXPORTS;
 
 test.after(async () => {
@@ -36,4 +36,12 @@ test('relay leva os anuncios UniFi da VLAN ate a controladora com retorno', () =
   assert.match(plan.script, /dst-address=233\.89\.188\.1 protocol=udp dst-port=10001 action=dst-nat to-addresses="190\.8\.175\.35"/);
   assert.match(plan.script, /chain=srcnat src-address="192\.168\.1\.245" dst-address="190\.8\.175\.35" protocol=udp dst-port=10001 action=masquerade/);
   assert.match(plan.script, /chain=forward src-address="192\.168\.1\.245" dst-address="190\.8\.175\.35" protocol=udp dst-port=10001 action=accept/);
+});
+
+test('Inform antigo do AP e interceptado e enviado a controladora atual', () => {
+  const plan = unifiInformRedirectPlan('192.168.1.245', '190.8.175.35', 'D8:B3:70:C0:7A:DB');
+  assert.match(plan.script, /chain=prerouting src-address="192\.168\.1\.245" dst-address=0\.0\.0\.0\/0 protocol=tcp dst-port=8080 action=passthrough/);
+  assert.match(plan.script, /chain=dstnat src-address="192\.168\.1\.245" protocol=tcp dst-port=8080 action=dst-nat to-addresses="190\.8\.175\.35"/);
+  assert.match(plan.script, /chain=srcnat src-address="192\.168\.1\.245" dst-address="190\.8\.175\.35" protocol=tcp dst-port=8080 action=masquerade/);
+  assert.match(plan.script, /chain=forward src-address="192\.168\.1\.245" dst-address="190\.8\.175\.35" protocol=tcp dst-port=8080 action=accept/);
 });

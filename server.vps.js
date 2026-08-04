@@ -966,7 +966,6 @@ async function configureUnifiDnsAdoption(mikrotik, accessPoint, controllerIp) {
   const suffix = mac.replace(/:/g, '').toLowerCase();
   const udpComment = `Kore UniFi DNS ${suffix} UDP`;
   const tcpComment = `Kore UniFi DNS ${suffix} TCP`;
-  const informComment = `Kore UniFi Inform ${suffix}`;
   const script = [
     '/ip dns set allow-remote-requests=yes',
     ':local records [/ip dns static find where name="unifi"]',
@@ -976,9 +975,7 @@ async function configureUnifiDnsAdoption(mikrotik, accessPoint, controllerIp) {
     `:local tcp [/ip firewall nat find where comment="${tcpComment}"]`,
     `:if ([:len $tcp] = 0) do={ /ip firewall nat add chain=dstnat src-address="${ip}" protocol=tcp dst-port=53 action=redirect to-ports=53 comment="${tcpComment}" disabled=no; :set tcp [/ip firewall nat find where comment="${tcpComment}"] } else={ /ip firewall nat set $tcp chain=dstnat src-address="${ip}" protocol=tcp dst-port=53 action=redirect to-ports=53 disabled=no }`,
     '/ip firewall nat move $tcp destination=0',
-    '/ip firewall nat move $udp destination=0',
-    `:local monitor [/ip firewall mangle find where comment="${informComment}"]`,
-    `:if ([:len $monitor] = 0) do={ /ip firewall mangle add chain=prerouting src-address="${ip}" dst-address="${controllerIp}" protocol=tcp dst-port=8080 action=passthrough comment="${informComment}" disabled=no } else={ /ip firewall mangle set $monitor chain=prerouting src-address="${ip}" dst-address="${controllerIp}" protocol=tcp dst-port=8080 action=passthrough disabled=no }`
+    '/ip firewall nat move $udp destination=0'
   ].join('; ');
   await runMikrotikKeyCommand(mikrotik, script, 20000);
   const [dnsResult, natResult] = await Promise.all([
@@ -992,7 +989,59 @@ async function configureUnifiDnsAdoption(mikrotik, accessPoint, controllerIp) {
   if (!dnsReady || !redirectProtocols.has('udp') || !redirectProtocols.has('tcp')) {
     throw Object.assign(new Error('O MikroTik nao confirmou o registro DNS unifi e os redirecionamentos exclusivos do AP'), { status: 502 });
   }
-  return { ready: true, hostname: 'unifi', address: controllerIp, dns_redirect: true, monitor_comment: informComment };
+  return { ready: true, hostname: 'unifi', address: controllerIp, dns_redirect: true };
+}
+
+function unifiInformRedirectPlan(apIp, controllerIp, mac) {
+  const suffix = mac.replace(/:/g, '').toLowerCase();
+  const monitorComment = `Kore UniFi Inform ${suffix}`;
+  const redirectComment = `Kore UniFi Inform Redirect ${suffix}`;
+  const sourceNatComment = `Kore UniFi Inform Source NAT ${suffix}`;
+  const filterComment = `Kore UniFi Inform Forward ${suffix}`;
+  return {
+    monitorComment,
+    redirectComment,
+    sourceNatComment,
+    filterComment,
+    script: [
+      `:local monitor [/ip firewall mangle find where comment="${monitorComment}"]`,
+      `:if ([:len $monitor] = 0) do={ /ip firewall mangle add chain=prerouting src-address="${apIp}" dst-address=0.0.0.0/0 protocol=tcp dst-port=8080 action=passthrough comment="${monitorComment}" disabled=no; :set monitor [/ip firewall mangle find where comment="${monitorComment}"] } else={ /ip firewall mangle set $monitor chain=prerouting src-address="${apIp}" dst-address=0.0.0.0/0 protocol=tcp dst-port=8080 action=passthrough disabled=no }`,
+      `:local redirect [/ip firewall nat find where comment="${redirectComment}"]`,
+      `:if ([:len $redirect] = 0) do={ /ip firewall nat add chain=dstnat src-address="${apIp}" protocol=tcp dst-port=8080 action=dst-nat to-addresses="${controllerIp}" to-ports=8080 comment="${redirectComment}" disabled=no; :set redirect [/ip firewall nat find where comment="${redirectComment}"] } else={ /ip firewall nat set $redirect chain=dstnat src-address="${apIp}" protocol=tcp dst-port=8080 action=dst-nat to-addresses="${controllerIp}" to-ports=8080 disabled=no }`,
+      `:local sourceNat [/ip firewall nat find where comment="${sourceNatComment}"]`,
+      `:if ([:len $sourceNat] = 0) do={ /ip firewall nat add chain=srcnat src-address="${apIp}" dst-address="${controllerIp}" protocol=tcp dst-port=8080 action=masquerade comment="${sourceNatComment}" disabled=no; :set sourceNat [/ip firewall nat find where comment="${sourceNatComment}"] } else={ /ip firewall nat set $sourceNat chain=srcnat src-address="${apIp}" dst-address="${controllerIp}" protocol=tcp dst-port=8080 action=masquerade disabled=no }`,
+      `:local forward [/ip firewall filter find where comment="${filterComment}"]`,
+      `:if ([:len $forward] = 0) do={ /ip firewall filter add chain=forward src-address="${apIp}" dst-address="${controllerIp}" protocol=tcp dst-port=8080 action=accept comment="${filterComment}" disabled=no; :set forward [/ip firewall filter find where comment="${filterComment}"] } else={ /ip firewall filter set $forward chain=forward src-address="${apIp}" dst-address="${controllerIp}" protocol=tcp dst-port=8080 action=accept disabled=no }`,
+      '/ip firewall mangle move $monitor destination=0',
+      '/ip firewall nat move $sourceNat destination=0',
+      '/ip firewall nat move $redirect destination=0',
+      '/ip firewall filter move $forward destination=0'
+    ].join('; ')
+  };
+}
+
+async function configureUnifiInformRedirect(mikrotik, accessPoint, controllerIp) {
+  const apIp = String(accessPoint.ip || '').trim();
+  const mac = normalizeMac(accessPoint.mac_address || accessPoint.mac);
+  if (net.isIP(apIp) !== 4 || net.isIP(controllerIp) !== 4 || !mac) {
+    throw Object.assign(new Error('Dados invalidos para redirecionar o Inform UniFi'), { status: 400 });
+  }
+  const plan = unifiInformRedirectPlan(apIp, controllerIp, mac);
+  await runMikrotikKeyCommand(mikrotik, plan.script, 20000);
+  const [mangleResult, natResult, filterResult] = await Promise.all([
+    runMikrotikKeyCommand(mikrotik, `/ip firewall mangle print detail without-paging where comment="${plan.monitorComment}"`),
+    runMikrotikKeyCommand(mikrotik, `/ip firewall nat print detail without-paging where comment~"${mac.replace(/:/g, '').toLowerCase()}"`),
+    runMikrotikKeyCommand(mikrotik, `/ip firewall filter print detail without-paging where comment="${plan.filterComment}"`)
+  ]);
+  const monitorReady = parseKeyValueRows(mangleResult.stdout).some(row => row.chain === 'prerouting' && row.protocol === 'tcp' && row['dst-port'] === '8080' && row.disabled !== 'true');
+  const natRows = parseKeyValueRows(natResult.stdout);
+  const redirectReady = natRows.some(row => row.chain === 'dstnat' && row.action === 'dst-nat' && row['to-addresses'] === controllerIp && row['dst-port'] === '8080' && row.disabled !== 'true');
+  const sourceNatReady = natRows.some(row => row.chain === 'srcnat' && row.action === 'masquerade' && row['dst-address'] === controllerIp && row['dst-port'] === '8080' && row.disabled !== 'true');
+  const forwardReady = parseKeyValueRows(filterResult.stdout).some(row => row.chain === 'forward' && row.action === 'accept' && row['dst-address'] === controllerIp && row['dst-port'] === '8080' && row.disabled !== 'true');
+  if (!monitorReady || !redirectReady || !sourceNatReady || !forwardReady) {
+    throw Object.assign(new Error('O RouterOS nao confirmou o redirecionamento forcado do Inform TCP 8080'), { status: 502 });
+  }
+  return { ready: true, controller_ip: controllerIp, port: 8080, captures_any_original_destination: true };
 }
 
 function unifiDiscoveryRelayPlan(apIp, controllerIp, mac) {
@@ -1121,6 +1170,10 @@ async function prepareUnifiVlanAdoption(mikrotik, accessPoint, controller, host)
     checks.dns_unifi = true;
     working = saveAccessPointAdoption(working, { adoption_checks: { ...checks } });
 
+    const informRedirect = await configureUnifiInformRedirect(mikrotik, working, dhcp.inform_ip);
+    checks.inform_redirect = true;
+    working = saveAccessPointAdoption(working, { adoption_checks: { ...checks } });
+
     const connectivity = await testMikrotikInformReachability(mikrotik, dhcp.inform_ip);
     if (!connectivity.reachable) throw Object.assign(new Error(`O MikroTik nao alcanca a controladora em ${dhcp.inform_ip}:8080`), { status: 502 });
     checks.inform_reachable = true;
@@ -1147,6 +1200,7 @@ async function prepareUnifiVlanAdoption(mikrotik, accessPoint, controller, host)
       hotspot_bypass: bypass,
       dhcp_option: dhcp,
       dns_adoption: dnsAdoption,
+      inform_redirect: informRedirect,
       connectivity,
       discovery_relay: discoveryRelay,
       discovery_traffic: discoveryTraffic,
@@ -3909,7 +3963,7 @@ const server = http.createServer((req, res) => {
 });
 
 if (process.env.KORE_TEST_EXPORTS === 'true') {
-  module.exports = { normalizeRouterHex, unifiDhcpOption43, unifiDiscoveryRelayPlan };
+  module.exports = { normalizeRouterHex, unifiDhcpOption43, unifiDiscoveryRelayPlan, unifiInformRedirectPlan };
 } else {
   ensureSshKey().then(() => {
     server.listen(PORT, '0.0.0.0', () => console.log(`Kore VPN API listening on ${PORT}`));
