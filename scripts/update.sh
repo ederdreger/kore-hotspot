@@ -363,7 +363,6 @@ configure_nginx_site() {
     cat > "$candidate" <<EOF
 server {
     listen 80 default_server;
-    listen 8080 default_server;
     server_name ${DOMAIN:-_};
     root ${WEB_DIR};
     index index.html;
@@ -383,8 +382,9 @@ server {
 }
 EOF
     if [ -n "$DOMAIN" ] && [ -s "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" ] && [ -s "/etc/letsencrypt/live/${DOMAIN}/privkey.pem" ]; then
-      # Porta 80 sempre deve levar ao HTTPS; 8080 permanece disponivel para diagnostico.
-      sed -i 's/    listen 80 default_server;//' "$candidate"
+      # Com SSL, substitui o bloco HTTP simples pelos blocos de redirecionamento
+      # e HTTPS. A porta 8080 permanece exclusiva do Inform UniFi.
+      : > "$candidate"
       cat >> "$candidate" <<EOF
 
 server {
