@@ -165,7 +165,6 @@ configure_nginx() {
   cat > /etc/nginx/sites-available/kore-hotspot <<EOF
 server {
     listen 80 default_server;
-    listen 8080 default_server;
     server_name _;
     root ${WEB_DIR};
     index index.html;
