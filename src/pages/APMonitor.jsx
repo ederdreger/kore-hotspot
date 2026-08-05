@@ -130,12 +130,16 @@ export default function APMonitor() {
   };
 
   const handleDelete = async (ap) => {
-    if (!window.confirm(`Excluir o Access Point ${ap.name}?`)) return;
+    const isLocalUnifi = ap.source === 'unifi-local' || String(ap.controller_id || '').startsWith('unifi-local:');
+    const confirmation = isLocalUnifi
+      ? `Excluir completamente o UniFi ${ap.name}? A controladora esquecerá o equipamento e o sistema removerá Option 43, lease DHCP, bypass e regras de adoção do MikroTik.`
+      : `Excluir o Access Point ${ap.name}?`;
+    if (!window.confirm(confirmation)) return;
     try {
       await spedynet.entities.AccessPoint.delete(ap.id);
       setAPs(prev => prev.filter(item => item.id !== ap.id));
       if (selectedAP?.id === ap.id) setSelectedAP(null);
-      toast.success('Access Point excluido.');
+      toast.success(isLocalUnifi ? 'UniFi removido completamente e liberado para nova adoção.' : 'Access Point excluido.');
     } catch (error) {
       toast.error(error.message || 'Erro ao excluir Access Point');
     }

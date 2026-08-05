@@ -12,7 +12,7 @@ process.env.KORE_TEST_EXPORTS = 'true';
 process.env.KORE_DATA_DIR = path.join(directory, 'data');
 process.env.KORE_KEY_DIR = path.join(directory, 'keys');
 const require = createRequire(import.meta.url);
-const { normalizeRouterHex, unifiDhcpOption43, unifiDiscoveryRelayPlan, unifiInformRedirectPlan, unifiActivityMonitorPlan } = require(serverCopy);
+const { normalizeRouterHex, unifiDhcpOption43, unifiDiscoveryRelayPlan, unifiInformRedirectPlan, unifiActivityMonitorPlan, unifiCleanupPlan, hotspotProfileUpsertCommand } = require(serverCopy);
 delete process.env.KORE_TEST_EXPORTS;
 
 test.after(async () => {
@@ -51,4 +51,20 @@ test('Inform antigo do AP e interceptado e enviado a controladora atual', () => 
   assert.match(plan.script, /chain=dstnat src-address="192\.168\.1\.245" protocol=tcp dst-port=8080 action=dst-nat to-addresses="190\.8\.175\.35"/);
   assert.match(plan.script, /chain=srcnat src-address="192\.168\.1\.245" dst-address="190\.8\.175\.35" protocol=tcp dst-port=8080 action=masquerade/);
   assert.match(plan.script, /chain=forward src-address="192\.168\.1\.245" dst-address="190\.8\.175\.35" protocol=tcp dst-port=8080 action=accept/);
+});
+
+test('exclusao UniFi limpa cache e regras especificas do equipamento', () => {
+  const plan = unifiCleanupPlan('D8:B3:70:C0:7A:DB');
+  assert.equal(plan.optionName, 'kore-unifi-d8b370c07adb');
+  assert.match(plan.script, /ip hotspot ip-binding remove/);
+  assert.match(plan.script, /ip dhcp-server lease remove/);
+  assert.match(plan.script, /ip dhcp-server option remove/);
+  assert.match(plan.script, /comment~"d8b370c07adb"/);
+});
+
+test('perfil Hotspot e atualizado sem remover usuarios ou sessoes existentes', () => {
+  const command = hotspotProfileUpsertCommand('kore-plano', '26M/51M');
+  assert.match(command, /user profile set/);
+  assert.match(command, /user profile add/);
+  assert.doesNotMatch(command, /user profile remove/);
 });
