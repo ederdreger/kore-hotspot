@@ -15,17 +15,19 @@ function resolveAppVersion() {
       if (version) return String(version);
     } catch {}
   }
-  return '1.2.74';
+  return '1.2.75';
 }
 
 const APP_VERSION = resolveAppVersion();
 const PORT = Number(process.env.PORT || 8081);
-const TOKEN = process.env.KORE_VPN_API_TOKEN || 'kore-vpn-api-2026';
-const DEFAULT_ADMIN_PASSWORD = process.env.KORE_ADMIN_PASSWORD || 'Admin12345';
+const BIND_HOST = process.env.KORE_BIND_HOST || '0.0.0.0';
+const INTERNAL_API_TOKEN = String(process.env.KORE_INTERNAL_API_TOKEN || process.env.KORE_VPN_API_TOKEN || '');
+const DEFAULT_ADMIN_PASSWORD = process.env.KORE_ADMIN_PASSWORD || `Kore${crypto.randomBytes(18).toString('base64url')}!`;
 const CHAP = process.env.KORE_CHAP_FILE || '/etc/ppp/chap-secrets';
 const KEY_DIR = process.env.KORE_KEY_DIR || '/opt/kore-hotspot-vpn-api/keys';
 const KEY_PATH = path.join(KEY_DIR, 'kore-api_rsa');
 const PUB_PATH = `${KEY_PATH}.pub`;
+const KNOWN_HOSTS_PATH = path.join(KEY_DIR, 'known_hosts');
 const DATA_KEY_PATH = path.join(KEY_DIR, 'data-encryption.key');
 const DATA_DIR = process.env.KORE_DATA_DIR || '/opt/kore-hotspot-vpn-api/data';
 const TENANTS_DIR = path.join(DATA_DIR, 'tenants');
@@ -42,6 +44,7 @@ const PROVIDER_COMMERCIAL_PLANS = {
 };
 const DEFAULT_TENANT_ID = String(process.env.KORE_DEFAULT_TENANT || 'default').trim().toLowerCase();
 const MULTI_TENANT = String(process.env.KORE_MULTI_TENANT || 'true') !== 'false';
+const REQUIRE_TENANT_SIGNATURE = String(process.env.KORE_REQUIRE_TENANT_SIGNATURE || 'false').toLowerCase() === 'true';
 const tenantStore = new AsyncLocalStorage();
 const CAPTIVE_DB = path.join(DATA_DIR, 'captive-prospects.json');
 const AP_PROFILES_FILE = path.join(DATA_DIR, 'ap-profiles.json');
@@ -58,20 +61,76 @@ const ENTITY_FILES = {
   payments: path.join(DATA_DIR, 'payments.json')
 };
 const DEFAULT_ADMINS = [
-  { email: 'demo@spedynet.com.br', full_name: 'Administrador Demo', role: 'super_admin' },
   { email: 'spedynet@spedynet.com.br', full_name: 'Administrador Spedynet', role: 'super_admin' }
 ];
 const SYSTEM_MODULES = ['providers'];
 const TENANT_ADMIN_PERMISSIONS = ['dashboard', 'clients', 'prospects', 'mikrotiks', 'vpn', 'plans', 'vouchers', 'campaigns', 'radius', 'ap-monitor', 'logs', 'users', 'settings'];
+const SENSITIVE_SETTING_KEYS = new Set(['radius_secret', 'radius_db_password', 'ixc_token', 'mp_access_token', 'smtp_password', 'vpn_ipsec_secret']);
 const radiusRateCache = new Map();
 const voucherTrafficCache = new Map();
+const requestRateCache = new Map();
+
+function requestIp(req) {
+  const direct = String(req.socket?.remoteAddress || '').replace(/^::ffff:/, '');
+  const fromProxy = direct === '127.0.0.1' || direct === '::1';
+  if (!fromProxy) return direct || 'unknown';
+  return String(req.headers['x-real-ip'] || req.headers['x-forwarded-for'] || direct)
+    .split(',')[0].trim().replace(/^::ffff:/, '') || 'unknown';
+}
+
+function rateKey(req, scope, identity = '') {
+  return `${currentTenant().id}:${scope}:${requestIp(req)}:${String(identity || '').trim().toLowerCase().slice(0, 160)}`;
+}
+
+function assertRateLimit(req, scope, { limit, windowMs, identity = '' }) {
+  const key = rateKey(req, scope, identity);
+  const now = Date.now();
+  const state = requestRateCache.get(key);
+  if (!state || state.resetAt <= now) return { key, count: 0, resetAt: now + windowMs, limit, windowMs };
+  if (state.count >= limit) {
+    const retryAfter = Math.max(1, Math.ceil((state.resetAt - now) / 1000));
+    throw Object.assign(new Error(`Muitas tentativas. Tente novamente em ${retryAfter} segundos.`), { status: 429, retryAfter });
+  }
+  return { key, ...state, limit, windowMs };
+}
+
+function recordRateAttempt(token) {
+  requestRateCache.set(token.key, {
+    count: Number(token.count || 0) + 1,
+    resetAt: token.resetAt || Date.now() + token.windowMs
+  });
+  if (requestRateCache.size > 10000) {
+    const now = Date.now();
+    for (const [key, state] of requestRateCache) if (state.resetAt <= now) requestRateCache.delete(key);
+  }
+}
+
+function clearRateLimit(token) {
+  if (token?.key) requestRateCache.delete(token.key);
+}
+
+function requestOriginAllowed(req) {
+  const origin = String(req.headers.origin || '').trim();
+  if (!origin) return '';
+  try {
+    const originUrl = new URL(origin);
+    const requestHost = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim().toLowerCase();
+    return originUrl.host.toLowerCase() === requestHost ? origin : '';
+  } catch {
+    return '';
+  }
+}
 
 function send(res, status, data, headers = {}) {
+  const corsOrigin = res.koreCorsOrigin || '';
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
-    'Access-Control-Allow-Origin': '*',
+    ...(corsOrigin ? { 'Access-Control-Allow-Origin': corsOrigin, Vary: 'Origin' } : {}),
     'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, X-Kore-Token, X-Kore-Tenant, X-Kore-Session, X-Admin-Session',
+    'Access-Control-Allow-Headers': 'Content-Type, X-Kore-Tenant, X-Kore-Tenant-Signature, X-Kore-Session, X-Admin-Session',
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'same-origin',
+    'Cache-Control': 'no-store',
     ...headers
   });
   res.end(typeof data === 'string' ? data : JSON.stringify(data));
@@ -86,11 +145,20 @@ function safeTenantId(value) {
   return normalized;
 }
 
+function tenantSignature(tenantId) {
+  return crypto.createHmac('sha256', dataEncryptionKey()).update(`tenant:${safeTenantId(tenantId)}`).digest('hex');
+}
+
+function validTenantSignature(tenantId, signature) {
+  const expected = Buffer.from(tenantSignature(tenantId));
+  const actual = Buffer.from(String(signature || ''));
+  return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+}
+
 function tenantFromRequest(req) {
   if (!MULTI_TENANT) return { id: DEFAULT_TENANT_ID, source: 'single' };
   const explicit = req.headers['x-kore-tenant'];
   const explicitTenant = explicit ? safeTenantId(explicit) : '';
-  if (explicitTenant && explicitTenant !== DEFAULT_TENANT_ID) return { id: explicitTenant, source: 'header' };
   const rawHost = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
   const host = rawHost.toLowerCase().split(':')[0];
   if (host) {
@@ -99,6 +167,12 @@ function tenantFromRequest(req) {
       const provider = providers.find(item => providerDomain(item) === host || safeTenantId(item.tenant_id || item.id) === safeTenantId(host));
       if (provider) return { id: safeTenantId(provider.tenant_id || provider.id), source: 'provider-domain', host };
     } catch {}
+  }
+  if (explicitTenant && explicitTenant !== DEFAULT_TENANT_ID) {
+    const signature = String(req.headers['x-kore-tenant-signature'] || '');
+    if (validTenantSignature(explicitTenant, signature)) return { id: explicitTenant, source: 'signed-header', host };
+    if (REQUIRE_TENANT_SIGNATURE) return { id: DEFAULT_TENANT_ID, source: 'rejected-header', host, rejectedTenant: explicitTenant };
+    return { id: explicitTenant, source: 'legacy-header', host };
   }
   return { id: explicitTenant || DEFAULT_TENANT_ID, source: explicitTenant ? 'header-default' : 'default-host', host };
 }
@@ -128,7 +202,8 @@ function migrateLegacyFile(source, target) {
 
 function hotspotLoginHtml() {
   const portal = `${getPublicBaseUrl()}/captive-portal`;
-  const portalQuery = `tenant=${encodeURIComponent(currentTenant().id || DEFAULT_TENANT_ID)}&mac=$(mac)&ip=$(ip)&username=$(username)&link-login=$(link-login-only)&link-orig=$(link-orig)&error=$(error)`;
+  const tenantId = currentTenant().id || DEFAULT_TENANT_ID;
+  const portalQuery = `tenant=${encodeURIComponent(tenantId)}&tenant_sig=${tenantSignature(tenantId)}&mac=$(mac)&ip=$(ip)&username=$(username)&link-login=$(link-login-only)&link-orig=$(link-orig)&error=$(error)`;
   return `<!doctype html>
 <html>
 <head>
@@ -153,13 +228,23 @@ function hotspotLoginHtml() {
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let body = '';
+    let bytes = 0;
+    let rejected = false;
     req.on('data', chunk => {
+      if (rejected) return;
+      bytes += chunk.length;
+      if (bytes > 1024 * 1024) {
+        rejected = true;
+        reject(Object.assign(new Error('Corpo da requisicao excede 1 MB'), { status: 413 }));
+        return;
+      }
       body += chunk;
-      if (body.length > 1024 * 1024) req.destroy();
     });
     req.on('end', () => {
-      try { resolve(body ? JSON.parse(body) : {}); } catch (error) { reject(error); }
+      if (rejected) return;
+      try { resolve(body ? JSON.parse(body) : {}); } catch { reject(Object.assign(new Error('JSON invalido'), { status: 400 })); }
     });
+    req.on('error', error => { if (!rejected) reject(error); });
   });
 }
 
@@ -203,6 +288,12 @@ async function ensureSshKey() {
   }
   fs.chmodSync(KEY_PATH, 0o600);
   fs.chmodSync(PUB_PATH, 0o644);
+  if (!fs.existsSync(KNOWN_HOSTS_PATH)) fs.writeFileSync(KNOWN_HOSTS_PATH, '', { mode: 0o600 });
+  fs.chmodSync(KNOWN_HOSTS_PATH, 0o600);
+}
+
+function sshTrustArgs() {
+  return ['-o', 'StrictHostKeyChecking=accept-new', '-o', `UserKnownHostsFile=${KNOWN_HOSTS_PATH}`];
 }
 
 function dataEncryptionKey() {
@@ -231,13 +322,61 @@ function decryptSecret(value) {
   return Buffer.concat([decipher.update(Buffer.from(encrypted, 'base64')), decipher.final()]).toString('utf8');
 }
 
+function internalServiceAuth(req) {
+  const direct = String(req.socket?.remoteAddress || '').replace(/^::ffff:/, '');
+  const supplied = String(req.headers['x-kore-internal-token'] || '');
+  if (!INTERNAL_API_TOKEN || !supplied || !['127.0.0.1', '::1'].includes(direct)) return false;
+  const expected = Buffer.from(INTERNAL_API_TOKEN);
+  const actual = Buffer.from(supplied);
+  return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+}
+
+function radiusPassword(record = {}) {
+  if (record.radius_password_encrypted) return decryptSecret(record.radius_password_encrypted);
+  return String(record.radius_password || record.password || '');
+}
+
+function protectRadiusRecord(record = {}, existing = {}) {
+  const password = String(record.radius_password || record.password || '');
+  const existingPassword = existing.radius_password || existing.password || '';
+  const encrypted = password ? encryptSecret(password) : (record.radius_password_encrypted || existing.radius_password_encrypted || (existingPassword ? encryptSecret(existingPassword) : ''));
+  const safe = { ...record };
+  delete safe.radius_password;
+  delete safe.password;
+  return { ...safe, ...(encrypted ? { radius_password_encrypted: encrypted } : {}) };
+}
+
+function publicRadiusRecord(record) {
+  if (!record) return record;
+  const { radius_password, radius_password_encrypted, password, ...safe } = record;
+  return { ...safe, radius_password_configured: !!(radius_password || radius_password_encrypted || password) };
+}
+
+function requestCookies(req) {
+  return Object.fromEntries(String(req.headers.cookie || '').split(';').map(part => {
+    const index = part.indexOf('=');
+    if (index < 0) return ['', ''];
+    return [part.slice(0, index).trim(), decodeURIComponent(part.slice(index + 1).trim())];
+  }).filter(([key]) => key));
+}
+
+function requestSessionToken(req) {
+  return req.headers['x-kore-session'] || req.headers['x-admin-session'] || requestCookies(req).kore_admin_session || '';
+}
+
+function adminSessionCookie(req, token, maxAge = 7 * 24 * 60 * 60) {
+  const secure = String(req.headers['x-forwarded-proto'] || '').toLowerCase() === 'https' || !!req.socket?.encrypted;
+  return `kore_admin_session=${encodeURIComponent(token || '')}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${secure ? '; Secure' : ''}`;
+}
+
 function validToken(req) {
-  const sessionToken = req.headers['x-kore-session'] || req.headers['x-admin-session'];
-  return !!getAdminSession(sessionToken);
+  return !!getAdminSession(requestSessionToken(req)) || internalServiceAuth(req);
 }
 
 function requestAdminSession(req) {
-  return getAdminSession(req.headers['x-kore-session'] || req.headers['x-admin-session']);
+  return getAdminSession(requestSessionToken(req)) || (internalServiceAuth(req) ? {
+    id: 'internal-service', role: 'super_admin', scope: 'system', permissions: ['*']
+  } : null);
 }
 
 function requireSystemAdmin(req) {
@@ -422,6 +561,30 @@ function rateToMbps(value) {
   return hasBitsSuffix ? number / 1000 / 1000 : number;
 }
 
+function permissionForRequest(url) {
+  const pathname = String(url || '').split('?')[0];
+  const entity = pathname.match(/^\/api\/entities\/([^/]+)/)?.[1];
+  if (entity) return ({
+    clients: 'clients', plans: 'plans', vouchers: 'vouchers', access_points: 'ap-monitor',
+    settings: 'settings', payments: 'clients'
+  })[entity] || '';
+  if (pathname.startsWith('/api/radius/')) return 'radius';
+  if (pathname.startsWith('/api/access-point') || pathname.startsWith('/api/access-points') || pathname.startsWith('/api/unifi/')) return 'ap-monitor';
+  if (pathname.startsWith('/api/captive/prospects')) return 'prospects';
+  if (pathname.startsWith('/api/ixc/') || pathname.startsWith('/api/clients/') || pathname.startsWith('/api/hotspot/')) return 'clients';
+  if (pathname.startsWith('/api/mikrotik/') || pathname === '/api/ssh-key') return 'mikrotiks';
+  if (pathname.startsWith('/api/vpn/')) return 'vpn';
+  return '';
+}
+
+function requirePermission(req, permission) {
+  if (!permission) return;
+  const session = requestAdminSession(req);
+  if (!session) throw Object.assign(new Error('Sessao expirada'), { status: 401 });
+  if (session.role === 'super_admin' || session.permissions?.includes('*') || session.permissions?.includes(permission)) return;
+  throw Object.assign(new Error('Acesso negado para este modulo'), { status: 403 });
+}
+
 function routerBytePair(value) {
   const [first = '0', second = '0'] = String(value || '').split('/');
   return [Number(first.replace(/[^0-9]/g, '')) || 0, Number(second.replace(/[^0-9]/g, '')) || 0];
@@ -551,12 +714,24 @@ async function radiusSqlSessions() {
 
 function getMikrotikDevices() {
   const settings = readJson(ENTITY_FILES.settings, []);
-  return settings
+  let changed = false;
+  const devices = settings
     .filter(item => item.category === 'mikrotik_device')
     .map(item => {
-      try { return { id: item.id || item._id, ...JSON.parse(item.value || '{}') }; } catch { return null; }
+      try {
+        const value = JSON.parse(item.value || '{}');
+        if (value.password && !item.device_password_encrypted) {
+          item.device_password_encrypted = encryptSecret(value.password);
+          delete value.password;
+          item.value = JSON.stringify(value);
+          changed = true;
+        }
+        return { id: item.id || item._id, ...value, password: item.device_password_encrypted ? decryptSecret(item.device_password_encrypted) : '' };
+      } catch { return null; }
     })
     .filter(item => item?.host);
+  if (changed) writeJson(ENTITY_FILES.settings, settings);
+  return devices;
 }
 
 function resolveMikrotikTarget(payload = {}, item = {}) {
@@ -586,8 +761,7 @@ async function runMikrotikKeyCommand(device, command, timeout = 15000) {
     '-o', 'PreferredAuthentications=publickey',
     '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa',
     '-o', 'HostkeyAlgorithms=+ssh-rsa',
-    '-o', 'StrictHostKeyChecking=no',
-    '-o', 'UserKnownHostsFile=/dev/null',
+    ...sshTrustArgs(),
     '-o', 'ConnectTimeout=8',
     '-p', String(device.port || '22'),
     `${device.user || 'kore-api'}@${device.host}`,
@@ -1570,16 +1744,14 @@ async function adoptUnifiAccessPoint(payload = {}) {
       '-o', 'PreferredAuthentications=publickey',
       '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa',
       '-o', 'HostkeyAlgorithms=+ssh-rsa',
-      '-o', 'StrictHostKeyChecking=no',
-      '-o', 'UserKnownHostsFile=/dev/null',
+      ...sshTrustArgs(),
       '-p', String(mikrotikPort),
       '-W', '%h:%p',
       `${mikrotikUser}@${mikrotikHost}`
     ].join(' ');
     await runWithEnv('sshpass', [
       '-e', 'ssh',
-      '-o', 'StrictHostKeyChecking=no',
-      '-o', 'UserKnownHostsFile=/dev/null',
+      ...sshTrustArgs(),
       '-o', 'ConnectTimeout=10',
       '-o', 'PreferredAuthentications=password,keyboard-interactive',
       '-o', 'PubkeyAuthentication=no',
@@ -2042,7 +2214,7 @@ async function mikrotikHotspotSessions() {
   const errors = [];
   await ensureSshKey();
   for (const device of devices.slice(0, 5)) {
-    const sshBase = ['-i', KEY_PATH, '-o', 'IdentitiesOnly=yes', '-o', 'PreferredAuthentications=publickey', '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa', '-o', 'HostkeyAlgorithms=+ssh-rsa', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=8', '-p', String(device.port || '22'), `${device.user || 'kore-api'}@${device.host}`];
+    const sshBase = ['-i', KEY_PATH, '-o', 'IdentitiesOnly=yes', '-o', 'PreferredAuthentications=publickey', '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa', '-o', 'HostkeyAlgorithms=+ssh-rsa', ...sshTrustArgs(), '-o', 'ConnectTimeout=8', '-p', String(device.port || '22'), `${device.user || 'kore-api'}@${device.host}`];
     let active;
     try {
       active = await run('ssh', [...sshBase, '/ip hotspot active print stats detail without-paging'], 12000);
@@ -2192,10 +2364,10 @@ async function mikrotikStatus({ host, port = '22', user = 'kore-api', password =
   let stdout;
   if (auth_method === 'password') {
     if (!password) throw new Error('senha SSH obrigatoria');
-    ({ stdout } = await run('sshpass', ['-p', String(password), 'ssh', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=8', '-o', 'PreferredAuthentications=password', '-o', 'PubkeyAuthentication=no', '-o', 'NumberOfPasswordPrompts=1', '-p', String(port || '22'), `${user || 'kore-api'}@${target}`, command], 15000));
+    ({ stdout } = await runWithEnv('sshpass', ['-e', 'ssh', ...sshTrustArgs(), '-o', 'ConnectTimeout=8', '-o', 'PreferredAuthentications=password', '-o', 'PubkeyAuthentication=no', '-o', 'NumberOfPasswordPrompts=1', '-p', String(port || '22'), `${user || 'kore-api'}@${target}`, command], { SSHPASS: String(password) }, 15000));
   } else {
     await ensureSshKey();
-    ({ stdout } = await run('ssh', ['-i', KEY_PATH, '-o', 'IdentitiesOnly=yes', '-o', 'PreferredAuthentications=publickey', '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa', '-o', 'HostkeyAlgorithms=+ssh-rsa', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=8', '-p', String(port || '22'), `${user || 'kore-api'}@${target}`, command], 15000));
+    ({ stdout } = await run('ssh', ['-i', KEY_PATH, '-o', 'IdentitiesOnly=yes', '-o', 'PreferredAuthentications=publickey', '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa', '-o', 'HostkeyAlgorithms=+ssh-rsa', ...sshTrustArgs(), '-o', 'ConnectTimeout=8', '-p', String(port || '22'), `${user || 'kore-api'}@${target}`, command], 15000));
   }
 
   const freeMemory = parseRouterNumber(parseRouterValue(stdout, 'free-memory'));
@@ -2410,7 +2582,7 @@ async function mikrotikSyncPlans({ host, port = '22', user = 'kore-api' }) {
 
   await ensureSshKey();
   const command = `${commands.join('; ')}; /ip hotspot user profile print detail where name~"kore-"`;
-  const { stdout } = await run('ssh', ['-i', KEY_PATH, '-o', 'LogLevel=ERROR', '-o', 'IdentitiesOnly=yes', '-o', 'PreferredAuthentications=publickey', '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa', '-o', 'HostkeyAlgorithms=+ssh-rsa', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=8', '-p', String(port || '22'), `${user || 'kore-api'}@${target}`, command], 20000);
+  const { stdout } = await run('ssh', ['-i', KEY_PATH, '-o', 'LogLevel=ERROR', '-o', 'IdentitiesOnly=yes', '-o', 'PreferredAuthentications=publickey', '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa', '-o', 'HostkeyAlgorithms=+ssh-rsa', ...sshTrustArgs(), '-o', 'ConnectTimeout=8', '-p', String(port || '22'), `${user || 'kore-api'}@${target}`, command], 20000);
   return { success: true, applied: commands.length, raw: stdout };
 }
 
@@ -2429,15 +2601,14 @@ function normalizeClientIp(value) {
 function readCaptiveDb() {
   const file = tenantFile(CAPTIVE_DB);
   migrateLegacyFile(CAPTIVE_DB, file);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  if (!fs.existsSync(file)) fs.writeFileSync(file, '[]');
+  secureDirectory(path.dirname(file));
+  if (!fs.existsSync(file)) atomicWrite(file, '[]');
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return []; }
 }
 
 function writeCaptiveDb(items) {
   const file = tenantFile(CAPTIVE_DB);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(items, null, 2));
+  atomicWrite(file, JSON.stringify(items, null, 2));
 }
 
 function saoPauloDateKey(value = new Date()) {
@@ -2480,7 +2651,40 @@ function captivePublicConfig(payload = {}) {
   );
   const mac = normalizeMac(payload.mac);
   const prospect = mac ? readCaptiveDb().find(item => normalizeMac(item.mac_address) === mac) : null;
-  return { settings, prospect: prospectAccessState(prospect) };
+  const state = prospectAccessState(prospect);
+  const publicProspect = state ? {
+    id: state.id || state._id,
+    name: state.name || '',
+    trial_active: state.trial_active,
+    free_access_available: state.free_access_available,
+    next_free_access_at: state.next_free_access_at,
+    trial_expires_at: state.trial_expires_at,
+    trial_access_date: state.trial_access_date
+  } : null;
+  return { settings, prospect: publicProspect };
+}
+
+async function captiveProspectLogin(payload = {}) {
+  const mac = normalizeMac(payload.mac);
+  const phone = normalizeDigits(payload.phone);
+  if (!mac || !phone) throw Object.assign(new Error('Informe o telefone no dispositivo conectado'), { status: 400 });
+  const prospect = readCaptiveDb().find(item => normalizeMac(item.mac_address) === mac && normalizeDigits(item.phone) === phone);
+  const state = prospectAccessState(prospect);
+  if (!prospect || !state?.trial_active) throw Object.assign(new Error('Acesso gratuito ativo nao encontrado para este dispositivo'), { status: 404 });
+  const remainingMinutes = Math.max(1, Math.ceil((Date.parse(prospect.trial_expires_at) - Date.now()) / 60000));
+  const mikrotik = resolveMikrotikTarget(payload, prospect);
+  const plan = readJson(ENTITY_FILES.plans, []).find(item => (item.id || item._id) === prospect.plan_id) || prospect;
+  const password = radiusPassword(prospect);
+  const authorization = await createHotspotUser({
+    ...mikrotik,
+    username: prospect.radius_username,
+    password,
+    mac,
+    ip: normalizeClientIp(payload.ip) || prospect.ip_address,
+    minutes: remainingMinutes,
+    plan
+  });
+  return { success: true, prospect: { id: prospect.id, name: prospect.name, trial_active: true, trial_expires_at: prospect.trial_expires_at }, authorization, login: { username: prospect.radius_username, password } };
 }
 
 function ensureCaptivePlanClient(payload = {}) {
@@ -2523,18 +2727,74 @@ function ensureCaptivePlanClient(payload = {}) {
   return { client };
 }
 
+function secureDirectory(directory) {
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  try { fs.chmodSync(directory, 0o700); } catch {}
+}
+
+function atomicWrite(file, content, mode = 0o600) {
+  secureDirectory(path.dirname(file));
+  const temporary = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`);
+  try {
+    fs.writeFileSync(temporary, content, { mode });
+    fs.chmodSync(temporary, mode);
+    fs.renameSync(temporary, file);
+    fs.chmodSync(file, mode);
+  } finally {
+    try { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); } catch {}
+  }
+}
+
+function secureRuntimeData() {
+  secureDirectory(DATA_DIR);
+  secureDirectory(TENANTS_DIR);
+  for (const entry of fs.readdirSync(DATA_DIR, { withFileTypes: true })) {
+    const target = path.join(DATA_DIR, entry.name);
+    try {
+      if (entry.isDirectory()) {
+        fs.chmodSync(target, 0o700);
+        if (entry.name === 'tenants') {
+          for (const tenant of fs.readdirSync(target, { withFileTypes: true })) {
+            if (!tenant.isDirectory()) continue;
+            const tenantDir = path.join(target, tenant.name);
+            fs.chmodSync(tenantDir, 0o700);
+            for (const file of fs.readdirSync(tenantDir, { withFileTypes: true })) {
+              if (file.isFile()) {
+                const filePath = path.join(tenantDir, file.name);
+                fs.chmodSync(filePath, 0o600);
+                migrateRadiusPasswordFile(filePath);
+              }
+            }
+          }
+        }
+      } else if (entry.isFile()) {
+        fs.chmodSync(target, 0o600);
+        migrateRadiusPasswordFile(target);
+      }
+    } catch {}
+  }
+}
+
+function migrateRadiusPasswordFile(file) {
+  if (!['clients.json', 'captive-prospects.json'].includes(path.basename(file))) return;
+  try {
+    const records = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (!Array.isArray(records) || !records.some(record => record?.radius_password || record?.password)) return;
+    atomicWrite(file, JSON.stringify(records.map(record => protectRadiusRecord(record, record)), null, 2));
+  } catch {}
+}
+
 function readJson(file, fallback = []) {
   const target = tenantFile(file);
   migrateLegacyFile(file, target);
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-  if (!fs.existsSync(target)) fs.writeFileSync(target, JSON.stringify(fallback, null, 2));
+  secureDirectory(path.dirname(target));
+  if (!fs.existsSync(target)) atomicWrite(target, JSON.stringify(fallback, null, 2));
   try { return JSON.parse(fs.readFileSync(target, 'utf8')); } catch { return fallback; }
 }
 
 function writeJson(file, value) {
   const target = tenantFile(file);
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.writeFileSync(target, JSON.stringify(value, null, 2));
+  atomicWrite(target, JSON.stringify(value, null, 2));
 }
 
 function ensureRuntimeSettings() {
@@ -2560,27 +2820,40 @@ function ensureRuntimeSettings() {
 }
 
 function readGlobalJson(file, fallback = []) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  if (!fs.existsSync(file)) fs.writeFileSync(file, JSON.stringify(fallback, null, 2));
+  secureDirectory(path.dirname(file));
+  if (!fs.existsSync(file)) atomicWrite(file, JSON.stringify(fallback, null, 2));
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; }
 }
 
 function writeGlobalJson(file, value) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(value, null, 2));
+  atomicWrite(file, JSON.stringify(value, null, 2));
 }
 
 function normalizeEmail(value) {
   return String(value || '').trim().toLowerCase();
 }
 
+function randomAdminPassword() {
+  return `Kore${crypto.randomBytes(18).toString('base64url')}!`;
+}
+
 function passwordHash(password, salt = crypto.randomBytes(16).toString('hex')) {
-  const hash = crypto.pbkdf2Sync(String(password || ''), salt, 120000, 32, 'sha256').toString('hex');
-  return `${salt}:${hash}`;
+  const hash = crypto.scryptSync(String(password || ''), salt, 32, { N: 65536, r: 8, p: 1, maxmem: 128 * 1024 * 1024 }).toString('hex');
+  return `scrypt$${salt}$${hash}`;
 }
 
 function verifyPassword(password, stored) {
   if (!stored) return false;
+  if (String(stored).startsWith('scrypt$')) {
+    const [, salt, expected] = String(stored).split('$');
+    if (!salt || !expected) return false;
+    const actual = crypto.scryptSync(String(password || ''), salt, 32, { N: 65536, r: 8, p: 1, maxmem: 128 * 1024 * 1024 }).toString('hex');
+    try {
+      return crypto.timingSafeEqual(Buffer.from(actual, 'hex'), Buffer.from(expected, 'hex'));
+    } catch {
+      return false;
+    }
+  }
   if (!String(stored).includes(':')) return stored === password;
   const [salt, expected] = String(stored).split(':');
   const actual = crypto.pbkdf2Sync(String(password || ''), salt, 120000, 32, 'sha256').toString('hex');
@@ -2606,6 +2879,11 @@ function ensureDefaultAdmins({ resetPassword = false, force = false } = {}) {
   if (!force && users.length > 0) {
     let changedExisting = false;
     for (const user of users) {
+      if (normalizeEmail(user.email) === 'demo@spedynet.com.br' && user.status !== 'inactive') {
+        user.status = 'inactive';
+        user.updated_date = new Date().toISOString();
+        changedExisting = true;
+      }
       if (!user.password_hash && user.password) {
         user.password_hash = passwordHash(user.password);
         delete user.password;
@@ -2669,10 +2947,11 @@ function ensureDefaultAdmins({ resetPassword = false, force = false } = {}) {
 function createAdminSession(user) {
   const sessions = readJson(ENTITY_FILES.admin_sessions, []);
   const id = `session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const token = crypto.randomBytes(32).toString('base64url');
   const session = {
     id,
     _id: id,
-    token: crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(24).toString('hex'),
+    token_hash: crypto.createHash('sha256').update(token).digest('hex'),
     admin_user_id: user.id || user._id,
     email: user.email,
     role: user.role,
@@ -2681,12 +2960,14 @@ function createAdminSession(user) {
     created_date: new Date().toISOString()
   };
   writeJson(ENTITY_FILES.admin_sessions, [session, ...sessions].slice(0, 5000));
-  return session;
+  return { ...session, token };
 }
 
 function getAdminSession(token) {
+  if (!token) return null;
   const sessions = readJson(ENTITY_FILES.admin_sessions, []);
-  const session = sessions.find(item => item.token === token);
+  const tokenHash = crypto.createHash('sha256').update(String(token)).digest('hex');
+  const session = sessions.find(item => item.token_hash === tokenHash || item.token === token);
   if (!session || new Date(session.expires_at) < new Date()) return null;
   return session;
 }
@@ -2702,6 +2983,12 @@ async function adminAuth(payload = {}) {
     if (!admin || admin.status === 'inactive' || !verifyPassword(payload.password, admin.password_hash || admin.password)) {
       throw Object.assign(new Error('E-mail ou senha invalidos'), { status: 401 });
     }
+    if (!String(admin.password_hash || '').startsWith('scrypt$')) {
+      admin.password_hash = passwordHash(payload.password);
+      delete admin.password;
+      admin.updated_date = new Date().toISOString();
+      writeJson(ENTITY_FILES.admins, users);
+    }
     const session = createAdminSession(admin);
     return { token: session.token, user: publicAdmin(admin) };
   }
@@ -2715,7 +3002,8 @@ async function adminAuth(payload = {}) {
 
   if (action === 'logout') {
     const sessions = readJson(ENTITY_FILES.admin_sessions, []);
-    writeJson(ENTITY_FILES.admin_sessions, sessions.filter(session => session.token !== payload.token));
+    const tokenHash = crypto.createHash('sha256').update(String(payload.token || '')).digest('hex');
+    writeJson(ENTITY_FILES.admin_sessions, sessions.filter(session => session.token_hash !== tokenHash && session.token !== payload.token));
     return { success: true };
   }
 
@@ -2743,6 +3031,7 @@ async function adminAuth(payload = {}) {
       throw Object.assign(new Error('Ja existe usuario com este e-mail'), { status: 409 });
     }
     if (!payload.password) throw Object.assign(new Error('Senha obrigatoria'), { status: 400 });
+    if (payload.role === 'super_admin' && session.role !== 'super_admin') throw Object.assign(new Error('Apenas super administrador pode criar outro super administrador'), { status: 403 });
     const permissions = payload.role === 'admin' ? ['*'] : (Array.isArray(payload.permissions) ? payload.permissions : []);
     const id = `admin_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const user = {
@@ -2765,6 +3054,7 @@ async function adminAuth(payload = {}) {
     const target = users.find(user => user.id === payload.userId || user._id === payload.userId);
     if (!target) throw Object.assign(new Error('Usuario nao encontrado'), { status: 404 });
     const nextRole = payload.role || target.role;
+    if (nextRole === 'super_admin' && session.role !== 'super_admin') throw Object.assign(new Error('Apenas super administrador pode conceder esta funcao'), { status: 403 });
     const nextPermissions = nextRole === 'admin' ? ['*'] : (Array.isArray(payload.permissions) ? payload.permissions : (target.permissions || []));
     const updated = users.map(user => {
       if (user.id !== payload.userId && user._id !== payload.userId) return user;
@@ -2839,7 +3129,53 @@ function publicPlan(plan) {
 
 function getSetting(key) {
   const settings = readJson(ENTITY_FILES.settings, []);
-  return settings.find(item => item.key === key)?.value || '';
+  const setting = settings.find(item => item.key === key);
+  if (!setting) return '';
+  if (setting.value_encrypted) return decryptSecret(setting.value_encrypted);
+  if (SENSITIVE_SETTING_KEYS.has(key) && setting.value) {
+    setting.value_encrypted = encryptSecret(setting.value);
+    setting.value = '';
+    writeJson(ENTITY_FILES.settings, settings);
+    return decryptSecret(setting.value_encrypted);
+  }
+  return setting.value || '';
+}
+
+function publicSetting(setting) {
+  if (setting?.category === 'mikrotik_device') {
+    const { device_password_encrypted, ...safe } = setting;
+    let value = {};
+    try { value = JSON.parse(safe.value || '{}'); } catch {}
+    const passwordConfigured = !!(device_password_encrypted || value.password);
+    delete value.password;
+    return { ...safe, value: JSON.stringify(value), device_password_configured: passwordConfigured };
+  }
+  if (!SENSITIVE_SETTING_KEYS.has(setting?.key)) return setting;
+  const { value_encrypted, ...safe } = setting;
+  return { ...safe, value: '', secret_configured: !!(value_encrypted || setting.value) };
+}
+
+function protectMikrotikSetting(payload, existing = {}) {
+  if (payload?.category !== 'mikrotik_device' && existing?.category !== 'mikrotik_device') return payload;
+  let value = {};
+  try { value = JSON.parse(payload.value || existing.value || '{}'); } catch { throw Object.assign(new Error('Configuracao do MikroTik invalida'), { status: 400 }); }
+  const password = String(value.password || '');
+  delete value.password;
+  return {
+    ...payload,
+    value: JSON.stringify(value),
+    device_password_encrypted: password ? encryptSecret(password) : existing.device_password_encrypted || ''
+  };
+}
+
+function protectSettingPayload(payload, existing = {}) {
+  if (!SENSITIVE_SETTING_KEYS.has(payload?.key || existing?.key)) return payload;
+  const value = String(payload.value || '');
+  return {
+    ...payload,
+    value: '',
+    value_encrypted: value ? encryptSecret(value) : (existing.value_encrypted || (existing.value ? encryptSecret(existing.value) : ''))
+  };
 }
 
 function summarizeIxcClient(cliente, cpf) {
@@ -3034,15 +3370,14 @@ function tenantJsonFile(tenantId, fileName) {
 
 function readTenantJson(tenantId, fileName, fallback = []) {
   const file = tenantJsonFile(tenantId, fileName);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  if (!fs.existsSync(file)) fs.writeFileSync(file, JSON.stringify(fallback, null, 2));
+  secureDirectory(path.dirname(file));
+  if (!fs.existsSync(file)) atomicWrite(file, JSON.stringify(fallback, null, 2));
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; }
 }
 
 function writeTenantJson(tenantId, fileName, value) {
   const file = tenantJsonFile(tenantId, fileName);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(value, null, 2));
+  atomicWrite(file, JSON.stringify(value, null, 2));
 }
 
 function ensureProviderAdmin(provider, options = {}) {
@@ -3054,21 +3389,23 @@ function ensureProviderAdmin(provider, options = {}) {
   const existing = users.find(user => normalizeEmail(user.email) === email);
   if (existing) {
     if (options.resetPassword) {
+      const password = options.password || randomAdminPassword();
       existing.full_name = provider.contact_name || provider.name || existing.full_name || email;
       existing.role = 'provider_admin';
       existing.status = 'active';
       existing.scope = 'tenant';
       existing.permissions = TENANT_ADMIN_PERMISSIONS;
-      existing.password_hash = passwordHash(DEFAULT_ADMIN_PASSWORD);
+      existing.password_hash = passwordHash(password);
       delete existing.password;
       existing.updated_date = new Date().toISOString();
       writeTenantJson(tenantId, 'admin-users.json', users);
-      return { email, password: DEFAULT_ADMIN_PASSWORD, created: false, reset: true };
+      return { email, password, created: false, reset: true };
     }
     return { email, password: null, created: false, reset: false };
   }
 
   const id = `admin_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const password = options.password || randomAdminPassword();
   const user = {
     id,
     _id: id,
@@ -3078,12 +3415,12 @@ function ensureProviderAdmin(provider, options = {}) {
     status: 'active',
     scope: 'tenant',
     permissions: TENANT_ADMIN_PERMISSIONS,
-    password_hash: passwordHash(DEFAULT_ADMIN_PASSWORD),
+    password_hash: passwordHash(password),
     created_date: new Date().toISOString(),
     updated_date: new Date().toISOString()
   };
   writeTenantJson(tenantId, 'admin-users.json', [user, ...users]);
-  return { email, password: DEFAULT_ADMIN_PASSWORD, created: true };
+  return { email, password, created: true };
 }
 
 function compactCertificateError(message) {
@@ -3147,7 +3484,7 @@ server {
     }
 
     location /api/ {
-        proxy_pass http://127.0.0.1:8081;
+        proxy_pass http://127.0.0.1:8082;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -3156,7 +3493,7 @@ server {
     }
 
     location /public/ {
-        proxy_pass http://127.0.0.1:8081;
+        proxy_pass http://127.0.0.1:8082;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -3213,7 +3550,7 @@ server {
     }
 
     location /api/ {
-        proxy_pass http://127.0.0.1:8081;
+        proxy_pass http://127.0.0.1:8082;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -3222,7 +3559,7 @@ server {
     }
 
     location /public/ {
-        proxy_pass http://127.0.0.1:8081;
+        proxy_pass http://127.0.0.1:8082;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -3438,15 +3775,23 @@ async function entityCrud(req) {
 
   if (req.method === 'GET') {
     if (parsed.entity === 'vouchers') return { items: await collectVoucherRuntime(items) };
+    if (parsed.entity === 'settings') return { items: items.map(publicSetting) };
+    if (parsed.entity === 'clients') return { items: items.map(publicRadiusRecord) };
     return { items };
   }
 
   if (req.method === 'POST') {
-    const body = await readBody(req);
+    let body = await readBody(req);
     if (parsed.entity === 'clients') assertTenantLicense({ action: 'create', resource: 'client' });
     if (parsed.entity === 'settings' && body.category === 'mikrotik_device') assertTenantLicense({ action: 'create', resource: 'mikrotik' });
     if (parsed.entity !== 'clients' && !(parsed.entity === 'settings' && body.category === 'mikrotik_device')) assertTenantLicense({ action: 'write', resource: parsed.entity });
     const id = body.id || body._id || `${parsed.entity}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    if (parsed.entity === 'settings') {
+      const existingSetting = items.find(item => item.id === id || item._id === id || item.key === body.key);
+      body = protectSettingPayload(body, existingSetting);
+      body = protectMikrotikSetting(body, existingSetting);
+    }
+    if (parsed.entity === 'clients') body = protectRadiusRecord(body, items.find(item => item.id === id || item._id === id));
     const item = {
       ...body,
       id,
@@ -3461,17 +3806,27 @@ async function entityCrud(req) {
       const mac = normalizeMac(item.mac_address || item.mac);
       writeJson(AP_IGNORED_FILE, readJson(AP_IGNORED_FILE, []).filter(entry => entry.id !== id && (!mac || normalizeMac(entry.mac) !== mac)));
     }
-    return { item };
+    return { item: parsed.entity === 'settings' ? publicSetting(item) : (parsed.entity === 'clients' ? publicRadiusRecord(item) : item) };
   }
 
   if (req.method === 'PUT' && parsed.id) {
-    const body = await readBody(req);
+    let body = await readBody(req);
     assertTenantLicense({ action: 'write', resource: parsed.entity });
+    if (parsed.entity === 'settings') {
+      const existingSetting = items.find(item => item.id === parsed.id || item._id === parsed.id);
+      body = protectSettingPayload({ ...body, key: body.key || existingSetting?.key }, existingSetting);
+      body = protectMikrotikSetting(body, existingSetting);
+    }
+    if (parsed.entity === 'clients') {
+      const existingClient = items.find(item => item.id === parsed.id || item._id === parsed.id);
+      body = protectRadiusRecord(body, existingClient);
+    }
     const updated = items.map(item => (
       item.id === parsed.id || item._id === parsed.id ? { ...item, ...body, updated_date: new Date().toISOString() } : item
     ));
     writeJson(file, updated);
-    return { item: updated.find(item => item.id === parsed.id || item._id === parsed.id) || null };
+    const updatedItem = updated.find(item => item.id === parsed.id || item._id === parsed.id) || null;
+    return { item: parsed.entity === 'settings' ? publicSetting(updatedItem) : (parsed.entity === 'clients' ? publicRadiusRecord(updatedItem) : updatedItem) };
   }
 
   if (req.method === 'DELETE' && parsed.id) {
@@ -3530,7 +3885,7 @@ async function ensureHotspotProfile({ host, port = '22', user = 'kore-api', plan
   if (!rate) return { profile, rate_limit: '' };
   const command = `${hotspotProfileUpsertCommand(profile, rate)}; /ip hotspot user profile print detail where name=${profile}`;
   await ensureSshKey();
-  const { stdout } = await runSshWithRetry(['-i', KEY_PATH, '-o', 'LogLevel=ERROR', '-o', 'IdentitiesOnly=yes', '-o', 'PreferredAuthentications=publickey', '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa', '-o', 'HostkeyAlgorithms=+ssh-rsa', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=8', '-p', String(port || '22'), `${user || 'kore-api'}@${host}`, command], 15000);
+  const { stdout } = await runSshWithRetry(['-i', KEY_PATH, '-o', 'LogLevel=ERROR', '-o', 'IdentitiesOnly=yes', '-o', 'PreferredAuthentications=publickey', '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa', '-o', 'HostkeyAlgorithms=+ssh-rsa', ...sshTrustArgs(), '-o', 'ConnectTimeout=8', '-p', String(port || '22'), `${user || 'kore-api'}@${host}`, command], 15000);
   return { profile, rate_limit: rate, raw: stdout };
 }
 
@@ -3539,7 +3894,7 @@ async function resolvePendingHotspotHost({ host, port = '22', user = 'kore-api',
   const requestedIp = normalizeClientIp(ip);
   if (requestedMac && requestedIp) return { mac: requestedMac, ip: requestedIp };
   await ensureSshKey();
-  const args = ['-i', KEY_PATH, '-o', 'LogLevel=ERROR', '-o', 'IdentitiesOnly=yes', '-o', 'PreferredAuthentications=publickey', '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa', '-o', 'HostkeyAlgorithms=+ssh-rsa', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=8', '-p', String(port || '22'), `${user || 'kore-api'}@${host}`, '/ip hotspot host print detail without-paging'];
+  const args = ['-i', KEY_PATH, '-o', 'LogLevel=ERROR', '-o', 'IdentitiesOnly=yes', '-o', 'PreferredAuthentications=publickey', '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa', '-o', 'HostkeyAlgorithms=+ssh-rsa', ...sshTrustArgs(), '-o', 'ConnectTimeout=8', '-p', String(port || '22'), `${user || 'kore-api'}@${host}`, '/ip hotspot host print detail without-paging'];
   const { stdout } = await runSshWithRetry(args, 15000);
   const hosts = parseKeyValueRows(stdout).filter(row => row.address || row['mac-address']);
   const exact = hosts.find(row =>
@@ -3582,7 +3937,7 @@ async function createHotspotUser({ host, port = '22', user = 'kore-api', usernam
   ].filter(Boolean).join('; ');
 
   await ensureSshKey();
-  const { stdout } = await runSshWithRetry(['-i', KEY_PATH, '-o', 'LogLevel=ERROR', '-o', 'IdentitiesOnly=yes', '-o', 'PreferredAuthentications=publickey', '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa', '-o', 'HostkeyAlgorithms=+ssh-rsa', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=8', '-p', String(port || '22'), `${user || 'kore-api'}@${host}`, command], 15000);
+  const { stdout } = await runSshWithRetry(['-i', KEY_PATH, '-o', 'LogLevel=ERROR', '-o', 'IdentitiesOnly=yes', '-o', 'PreferredAuthentications=publickey', '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa', '-o', 'HostkeyAlgorithms=+ssh-rsa', ...sshTrustArgs(), '-o', 'ConnectTimeout=8', '-p', String(port || '22'), `${user || 'kore-api'}@${host}`, command], 15000);
   return { authorized: true, active_login: !!cleanIp, mode: 'hotspot_user', host, username: login, password: pass, profile, mac: cleanMac, ip: cleanIp, minutes: ttlMinutes, expires: !permanent, scheduler: permanent ? null : schedulerName, ...profileResult, raw: stdout };
 }
 
@@ -3611,7 +3966,7 @@ async function authorizeHotspot({ host, port = '22', user = 'kore-api', mac, ip,
   const command = `:do { /ip hotspot ip-binding remove [find where comment="${comment}"] } on-error={}; :do { /queue simple remove [find where name="${queueName}"] } on-error={}; /ip hotspot ip-binding add ${fields}${queueCommand}; :do { /ip hotspot host remove [find where mac-address="${cleanMac}"] } on-error={}; :do { /ip hotspot active remove [find where mac-address="${cleanMac}"] } on-error={}${scheduler}; /ip hotspot ip-binding print detail where comment="${comment}"; /queue simple print detail where name="${queueName}"`;
 
   await ensureSshKey();
-  const { stdout } = await run('ssh', ['-i', KEY_PATH, '-o', 'IdentitiesOnly=yes', '-o', 'PreferredAuthentications=publickey', '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa', '-o', 'HostkeyAlgorithms=+ssh-rsa', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=8', '-p', String(port || '22'), `${user || 'kore-api'}@${host}`, command], 15000);
+  const { stdout } = await run('ssh', ['-i', KEY_PATH, '-o', 'IdentitiesOnly=yes', '-o', 'PreferredAuthentications=publickey', '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa', '-o', 'HostkeyAlgorithms=+ssh-rsa', ...sshTrustArgs(), '-o', 'ConnectTimeout=8', '-p', String(port || '22'), `${user || 'kore-api'}@${host}`, command], 15000);
   return { authorized: true, host, mac: cleanMac, ip: cleanIp, minutes: ttlMinutes, expires: !permanent, scheduler: permanent ? null : schedulerName, queue: rateLimit ? queueName : null, rate_limit: rateLimit, raw: stdout };
 }
 
@@ -3635,7 +3990,7 @@ async function removeHotspotAuthorization({ host, port = '22', user = 'kore-api'
   ].filter(Boolean).join('; ');
 
   await ensureSshKey();
-  const { stdout } = await run('ssh', ['-i', KEY_PATH, '-o', 'IdentitiesOnly=yes', '-o', 'PreferredAuthentications=publickey', '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa', '-o', 'HostkeyAlgorithms=+ssh-rsa', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=8', '-p', String(port || '22'), `${user || 'kore-api'}@${host}`, command], 15000);
+  const { stdout } = await run('ssh', ['-i', KEY_PATH, '-o', 'IdentitiesOnly=yes', '-o', 'PreferredAuthentications=publickey', '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa', '-o', 'HostkeyAlgorithms=+ssh-rsa', ...sshTrustArgs(), '-o', 'ConnectTimeout=8', '-p', String(port || '22'), `${user || 'kore-api'}@${host}`, command], 15000);
   return { removed: true, host, mac: cleanMac, ip: cleanIp, raw: stdout };
 }
 
@@ -3674,7 +4029,7 @@ async function cleanupMikrotikAccess(item = {}) {
     const host = device.host || device.vpn_remote_ip || device.remote_ip;
     if (!host) continue;
     try {
-      const { stdout } = await runSshWithRetry(['-i', KEY_PATH, '-o', 'LogLevel=ERROR', '-o', 'IdentitiesOnly=yes', '-o', 'PreferredAuthentications=publickey', '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa', '-o', 'HostkeyAlgorithms=+ssh-rsa', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=8', '-p', String(device.port || '22'), `${device.user || 'kore-api'}@${host}`, commands], 15000);
+      const { stdout } = await runSshWithRetry(['-i', KEY_PATH, '-o', 'LogLevel=ERROR', '-o', 'IdentitiesOnly=yes', '-o', 'PreferredAuthentications=publickey', '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa', '-o', 'HostkeyAlgorithms=+ssh-rsa', ...sshTrustArgs(), '-o', 'ConnectTimeout=8', '-p', String(device.port || '22'), `${device.user || 'kore-api'}@${host}`, commands], 15000);
       results.push({ host, stdout });
     } catch (error) {
       errors.push(`${device.name || host}: ${error.message}`);
@@ -3756,6 +4111,7 @@ async function captiveRegister(payload = {}) {
     throw Object.assign(new Error('O acesso gratuito de hoje ja foi utilizado. A conexao sera liberada novamente apos 00:00; agora use um voucher ou entre como cliente IXC.'), { status: 429 });
   }
 
+  const generatedPassword = randomPassword();
   const item = {
     id: `prospect_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     _id: `prospect_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -3776,7 +4132,7 @@ async function captiveRegister(payload = {}) {
     trial_duration_hours: Number((trialMinutes / 60).toFixed(2)),
     trial_expires_at: new Date(Date.now() + trialMinutes * 60000).toISOString(),
     radius_username: hotspotCredential(`trial-${Date.now()}`),
-    radius_password: randomPassword(),
+    radius_password_encrypted: encryptSecret(generatedPassword),
     mac_address: normalizeMac(payload.mac),
     ip_address: normalizeClientIp(payload.ip),
     link_orig: payload.link_orig || '',
@@ -3795,7 +4151,7 @@ async function captiveRegister(payload = {}) {
   const authorization = await createHotspotUser({
     ...mikrotik,
     username: item.radius_username,
-    password: item.radius_password,
+    password: generatedPassword,
     mac: item.mac_address,
     ip: item.ip_address,
     minutes: item.trial_duration_minutes,
@@ -3811,7 +4167,7 @@ async function captiveRegister(payload = {}) {
   // registration attempts retryable and avoids records in the wrong tenant.
   writeCaptiveDb([item, ...filtered.filter(existing => existing.id !== item.id && existing._id !== item._id)].slice(0, 1000));
 
-  return { success: true, prospect: item, authorization, login: { username: item.radius_username, password: item.radius_password } };
+  return { success: true, prospect: publicRadiusRecord(item), authorization, login: { username: item.radius_username, password: generatedPassword } };
 }
 
 async function deleteCaptiveProspect(id) {
@@ -3899,8 +4255,8 @@ async function captiveClientLogin(payload = {}) {
   }
 
   const loginUser = hotspotCredential(client.radius_username || client.username || client.cpf || client.email || `cliente-${Date.now()}`);
-  const loginPass = String(client.radius_password || client.password || randomPassword()).replace(/"/g, '');
-  client = { ...client, radius_username: loginUser, radius_password: loginPass, mac_address: normalizeMac(payload.mac) || client.mac_address || '', ip_address: normalizeClientIp(payload.ip) || client.ip_address || '', updated_date: new Date().toISOString() };
+  const loginPass = String(radiusPassword(client) || client.password || randomPassword()).replace(/"/g, '');
+  client = protectRadiusRecord({ ...client, radius_username: loginUser, radius_password: loginPass, mac_address: normalizeMac(payload.mac) || client.mac_address || '', ip_address: normalizeClientIp(payload.ip) || client.ip_address || '', updated_date: new Date().toISOString() }, client);
   upsertById(ENTITY_FILES.clients, client);
 
   const mikrotik = resolveMikrotikTarget(payload, client);
@@ -4001,8 +4357,8 @@ async function activateFreePlan(payload = {}) {
   upsertById(ENTITY_FILES.clients, client);
 
   const loginUser = hotspotCredential(client.radius_username || client.username || client.cpf || client.email || `cliente-${Date.now()}`);
-  const loginPass = String(client.radius_password || client.password || randomPassword()).replace(/"/g, '');
-  client = { ...client, radius_username: loginUser, radius_password: loginPass };
+  const loginPass = String(radiusPassword(client) || client.password || randomPassword()).replace(/"/g, '');
+  client = protectRadiusRecord({ ...client, radius_username: loginUser, radius_password: loginPass }, client);
   upsertById(ENTITY_FILES.clients, client);
 
   const mikrotik = resolveMikrotikTarget(payload, client);
@@ -4157,8 +4513,8 @@ async function provisionPaidPlan({ payment, mpPayment = null }) {
   upsertById(ENTITY_FILES.clients, client);
 
   const loginUser = hotspotCredential(client.radius_username || client.username || client.cpf || client.email || `cliente-${Date.now()}`);
-  const loginPass = String(client.radius_password || client.password || randomPassword()).replace(/"/g, '');
-  client = { ...client, radius_username: loginUser, radius_password: loginPass };
+  const loginPass = String(radiusPassword(client) || client.password || randomPassword()).replace(/"/g, '');
+  client = protectRadiusRecord({ ...client, radius_username: loginUser, radius_password: loginPass }, client);
   upsertById(ENTITY_FILES.clients, client);
 
   const mikrotik = resolveMikrotikTarget(payment, client);
@@ -4371,11 +4727,19 @@ async function ixcConsultaCliente(payload = {}) {
 
 async function handleRequest(req, res) {
   try {
+    res.koreCorsOrigin = requestOriginAllowed(req);
     ensureRuntimeSettings();
     if (req.method === 'OPTIONS') return send(res, 200, { ok: true });
+    if (currentTenant().rejectedTenant) return send(res, 403, { error: 'Contexto do provedor invalido ou expirado. Reconecte ao Wi-Fi para abrir o portal novamente.' });
     if (req.url === '/health') return send(res, 200, { ok: true, service: 'kore-vpn-api', version: APP_VERSION, tenant: currentTenant().id, multi_tenant: MULTI_TENANT });
     const [pathname, query = ''] = req.url.split('?');
-    if (req.method === 'POST' && pathname === '/api/payments/mercadopago/webhook') return send(res, 200, await mercadoPagoWebhook(await readBody(req), query));
+    if (req.method === 'POST' && pathname === '/api/payments/mercadopago/webhook') {
+      const body = await readBody(req);
+      const paymentId = body?.data?.id || body?.id || new URLSearchParams(query).get('data.id') || new URLSearchParams(query).get('id');
+      const limiter = assertRateLimit(req, 'mercadopago-webhook', { limit: 120, windowMs: 60 * 60 * 1000, identity: paymentId });
+      recordRateAttempt(limiter);
+      return send(res, 200, await mercadoPagoWebhook(body, query));
+    }
     if (req.method === 'GET' && req.url === '/public/hotspot-login.html') {
       return send(res, 200, hotspotLoginHtml(), { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
     }
@@ -4383,19 +4747,94 @@ async function handleRequest(req, res) {
       await ensureSshKey();
       return send(res, 200, fs.readFileSync(PUB_PATH, 'utf8'), { 'Content-Type': 'text/plain; charset=utf-8' });
     }
-    if (req.method === 'POST' && req.url === '/api/admin/auth') return send(res, 200, await adminAuth(await readBody(req)));
+    if (req.method === 'POST' && req.url === '/api/admin/auth') {
+      const body = await readBody(req);
+      if (body.action !== 'login') body.token = body.token || requestSessionToken(req);
+      if (body.action === 'login') {
+        const limiter = assertRateLimit(req, 'admin-login', { limit: 8, windowMs: 15 * 60 * 1000, identity: body.email });
+        try {
+          const result = await adminAuth(body);
+          clearRateLimit(limiter);
+          return send(res, 200, result, { 'Set-Cookie': adminSessionCookie(req, result.token) });
+        } catch (error) {
+          if (error.status === 401) recordRateAttempt(limiter);
+          throw error;
+        }
+      }
+      const result = await adminAuth(body);
+      return send(res, 200, result, body.action === 'logout' ? { 'Set-Cookie': adminSessionCookie(req, '', 0) } : {});
+    }
     if (req.method === 'POST' && req.url === '/api/captive/config') return send(res, 200, captivePublicConfig(await readBody(req)));
-    if (req.method === 'POST' && req.url === '/api/captive/plan-client') return send(res, 200, ensureCaptivePlanClient(await readBody(req)));
+    if (req.method === 'POST' && req.url === '/api/captive/plan-client') {
+      const body = await readBody(req);
+      const limiter = assertRateLimit(req, 'captive-plan-client', { limit: 10, windowMs: 60 * 60 * 1000, identity: body.cpf || body.phone || body.mac });
+      recordRateAttempt(limiter);
+      return send(res, 200, ensureCaptivePlanClient(body));
+    }
     if (req.method === 'GET' && req.url === '/api/captive/plans') {
       const plans = readJson(ENTITY_FILES.plans, []).map(publicPlan).filter(plan => plan.status === 'active');
       return send(res, 200, { plans });
     }
-    if (req.method === 'POST' && req.url === '/api/captive/register') return send(res, 200, await captiveRegister(await readBody(req)));
-    if (req.method === 'POST' && req.url === '/api/captive/client-login') { assertTenantLicense({ action: 'write', resource: 'client' }); return send(res, 200, await captiveClientLogin(await readBody(req))); }
-    if (req.method === 'POST' && req.url === '/api/captive/voucher-login') { assertTenantLicense({ action: 'write', resource: 'voucher' }); return send(res, 200, await captiveVoucherLogin(await readBody(req))); }
-    if (req.method === 'POST' && req.url === '/api/payments/pix') { assertTenantLicense({ action: 'write', resource: 'payment' }); return send(res, 200, await createPixPayment(await readBody(req))); }
-    if (req.method === 'POST' && req.url === '/api/payments/status') { assertTenantLicense({ action: 'write', resource: 'payment' }); return send(res, 200, await refreshPaymentStatus(await readBody(req))); }
+    if (req.method === 'POST' && req.url === '/api/captive/register') {
+      const body = await readBody(req);
+      const limiter = assertRateLimit(req, 'captive-register', { limit: 10, windowMs: 60 * 60 * 1000, identity: body.cpf || body.phone || body.mac });
+      recordRateAttempt(limiter);
+      return send(res, 200, await captiveRegister(body));
+    }
+    if (req.method === 'POST' && req.url === '/api/captive/client-login') {
+      const body = await readBody(req);
+      const limiter = assertRateLimit(req, 'captive-client-login', { limit: 10, windowMs: 15 * 60 * 1000, identity: body.identifier || body.cpf });
+      assertTenantLicense({ action: 'write', resource: 'client' });
+      try {
+        const result = await captiveClientLogin(body);
+        clearRateLimit(limiter);
+        return send(res, 200, result);
+      } catch (error) {
+        recordRateAttempt(limiter);
+        throw error;
+      }
+    }
+    if (req.method === 'POST' && req.url === '/api/captive/prospect-login') {
+      const body = await readBody(req);
+      const limiter = assertRateLimit(req, 'captive-prospect-login', { limit: 8, windowMs: 15 * 60 * 1000, identity: body.phone || body.mac });
+      try {
+        const result = await captiveProspectLogin(body);
+        clearRateLimit(limiter);
+        return send(res, 200, result);
+      } catch (error) {
+        recordRateAttempt(limiter);
+        throw error;
+      }
+    }
+    if (req.method === 'POST' && req.url === '/api/captive/voucher-login') {
+      const body = await readBody(req);
+      const limiter = assertRateLimit(req, 'captive-voucher-login', { limit: 8, windowMs: 15 * 60 * 1000, identity: body.code });
+      assertTenantLicense({ action: 'write', resource: 'voucher' });
+      try {
+        const result = await captiveVoucherLogin(body);
+        clearRateLimit(limiter);
+        return send(res, 200, result);
+      } catch (error) {
+        recordRateAttempt(limiter);
+        throw error;
+      }
+    }
+    if (req.method === 'POST' && req.url === '/api/payments/pix') {
+      const body = await readBody(req);
+      const limiter = assertRateLimit(req, 'payment-create', { limit: 10, windowMs: 15 * 60 * 1000, identity: body.client_id || body.cpf || body.phone });
+      recordRateAttempt(limiter);
+      assertTenantLicense({ action: 'write', resource: 'payment' });
+      return send(res, 200, await createPixPayment(body));
+    }
+    if (req.method === 'POST' && req.url === '/api/payments/status') {
+      const body = await readBody(req);
+      const limiter = assertRateLimit(req, 'payment-status', { limit: 60, windowMs: 15 * 60 * 1000, identity: body.id || body.payment_id });
+      recordRateAttempt(limiter);
+      assertTenantLicense({ action: 'write', resource: 'payment' });
+      return send(res, 200, await refreshPaymentStatus(body));
+    }
     if (!validToken(req)) return send(res, 401, { error: 'token invalido' });
+    requirePermission(req, permissionForRequest(req.url));
 
     if (req.method === 'GET' && req.url === '/api/tenant/current') {
       return send(res, 200, { tenant: currentTenant(), data_dir: currentDataDir(), multi_tenant: MULTI_TENANT, license: licenseState() });
@@ -4457,7 +4896,10 @@ async function handleRequest(req, res) {
 
     return send(res, 404, { error: 'rota nao encontrada' });
   } catch (error) {
-    return send(res, error.status || 500, { error: error.message });
+    let authenticated = false;
+    try { authenticated = !!requestAdminSession(req); } catch {}
+    const message = (error.status && error.status < 500) || authenticated ? error.message : 'Erro interno do servidor';
+    return send(res, error.status || 500, { error: message }, error.retryAfter ? { 'Retry-After': String(error.retryAfter) } : {});
   }
 }
 
@@ -4470,8 +4912,9 @@ const server = http.createServer((req, res) => {
 if (process.env.KORE_TEST_EXPORTS === 'true') {
   module.exports = { normalizeRouterHex, unifiDhcpOption43, unifiDiscoveryRelayPlan, unifiInformRedirectPlan, unifiActivityMonitorPlan, unifiCleanupPlan, hotspotProfileUpsertCommand, saoPauloDateKey, prospectAccessState, routerBytePair };
 } else {
+  secureRuntimeData();
   ensureSshKey().then(() => {
-    server.listen(PORT, '0.0.0.0', () => console.log(`Kore VPN API listening on ${PORT}`));
+    server.listen(PORT, BIND_HOST, () => console.log(`Kore VPN API listening on ${BIND_HOST}:${PORT}`));
   }).catch((error) => {
     console.error(error);
     process.exit(1);

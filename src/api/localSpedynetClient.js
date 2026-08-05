@@ -1,19 +1,14 @@
-const DEFAULT_PASSWORD = 'Admin12345';
 const CONFIGURED_API_URL = String(import.meta.env.VITE_KORE_API_URL || '').replace(/\/+$/, '');
 const FORCE_CONFIGURED_API_URL = String(import.meta.env.VITE_KORE_FORCE_API_URL || '').toLowerCase() === 'true';
 const VPN_API_URL = FORCE_CONFIGURED_API_URL ? CONFIGURED_API_URL : '';
-const VPN_API_TOKEN = import.meta.env.VITE_KORE_API_TOKEN || 'kore-vpn-api-2026';
 const CONFIGURED_TENANT_ID = String(import.meta.env.VITE_KORE_TENANT_ID || '').trim();
 const PORTAL_TENANT_ID = String(new URLSearchParams(window.location.search).get('tenant') || '').trim();
+const PORTAL_TENANT_SIGNATURE = String(new URLSearchParams(window.location.search).get('tenant_sig') || '').trim();
 const EXPLICIT_TENANT_ID = PORTAL_TENANT_ID || CONFIGURED_TENANT_ID;
 const SEND_TENANT_HEADER = !!EXPLICIT_TENANT_ID && EXPLICIT_TENANT_ID.toLowerCase() !== 'default';
 const KORE_TENANT_ID = SEND_TENANT_HEADER ? EXPLICIT_TENANT_ID : (window.location.hostname || 'default');
-const ADMIN_SESSION_KEY = 'kore_admin_session';
 const STORAGE_KEY = `kore_hotspot_local_db_${KORE_TENANT_ID}`;
-const DEFAULT_ADMINS = [
-  { email: 'demo@spedynet.com.br', full_name: 'Administrador Demo', role: 'admin' },
-  { email: 'spedynet@spedynet.com.br', full_name: 'Administrador Spedynet', role: 'admin' }
-];
+const DEFAULT_ADMINS = [];
 
 const ENTITY_DEFAULTS = {
   AdminUser: [],
@@ -52,7 +47,7 @@ const ENTITY_DEFAULTS = {
       id: 'setting_vpn_ipsec_secret',
       _id: 'setting_vpn_ipsec_secret',
       key: 'vpn_ipsec_secret',
-      value: 'korevpn123',
+      value: '',
       category: 'system',
       label: 'VPN IPsec Secret',
       created_date: new Date().toISOString(),
@@ -75,12 +70,10 @@ const REMOTE_ENTITY_MAP = {
 };
 
 function apiHeaders(extra = {}) {
-  const sessionToken = localStorage.getItem(ADMIN_SESSION_KEY) || '';
   return {
     ...extra,
-    'X-Kore-Token': VPN_API_TOKEN,
     ...(SEND_TENANT_HEADER ? { 'X-Kore-Tenant': KORE_TENANT_ID } : {}),
-    ...(sessionToken ? { 'X-Kore-Session': sessionToken } : {})
+    ...(SEND_TENANT_HEADER && PORTAL_TENANT_SIGNATURE ? { 'X-Kore-Tenant-Signature': PORTAL_TENANT_SIGNATURE } : {})
   };
 }
 
@@ -144,7 +137,7 @@ function readDb() {
         ...admin,
         status: 'active',
         permissions: ['*'],
-        password: DEFAULT_PASSWORD,
+        password: '',
         created_date: now(),
         updated_date: now()
       });
@@ -361,7 +354,7 @@ async function adminAuth(payload = {}) {
         status: 'active',
         role: 'admin',
         permissions: ['*'],
-        password: DEFAULT_PASSWORD,
+      password: '',
         created_date: now(),
         updated_date: now()
       };
@@ -369,7 +362,7 @@ async function adminAuth(payload = {}) {
     db.AdminUser = [...defaults, ...existing];
     db.AdminSession = [];
     writeDb(db);
-    return { success: true, email: DEFAULT_ADMINS.map((user) => user.email).join(' / '), password: DEFAULT_PASSWORD };
+    return { success: true, email: '', password: '' };
   }
 
   if (action === 'login') {
@@ -453,6 +446,7 @@ async function adminAuth(payload = {}) {
 async function remoteAdminAuth(payload = {}) {
   const response = await fetch(`${VPN_API_URL}/api/admin/auth`, {
     method: 'POST',
+    credentials: 'same-origin',
     headers: jsonHeaders(),
     body: JSON.stringify(payload)
   });
@@ -714,6 +708,17 @@ async function captiveClientLogin(payload = {}) {
   return data;
 }
 
+async function captiveProspectLogin(payload = {}) {
+  const response = await fetch(`${VPN_API_URL}/api/captive/prospect-login`, {
+    method: 'POST',
+    headers: jsonHeaders(),
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || 'Acesso gratuito ativo nao encontrado');
+  return data;
+}
+
 async function captiveVoucherLogin(payload = {}) {
   const response = await fetch(`${VPN_API_URL}/api/captive/voucher-login`, {
     method: 'POST',
@@ -846,6 +851,7 @@ async function invoke(functionName, payload) {
     captiveConfig,
     captivePlanClient,
     captiveClientLogin,
+    captiveProspectLogin,
     captiveVoucherLogin,
     ixcConsultaCliente,
     createPixPayment,

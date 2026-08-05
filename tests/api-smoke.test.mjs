@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { copyFile, mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
+import { copyFile, mkdtemp, mkdir, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -9,6 +9,7 @@ const port = 19081;
 const password = 'TesteSeguro123';
 let directory;
 let api;
+let tenantDataDir;
 
 async function loginAdmin() {
   const login = await request('/api/admin/auth', {
@@ -29,6 +30,7 @@ test.before(async () => {
   directory = await mkdtemp(path.join(tmpdir(), 'kore-api-test-'));
   const apiFile = path.join(directory, 'server.cjs');
   const dataDir = path.join(directory, 'data');
+  tenantDataDir = path.join(dataDir, 'tenants', 'default');
   const keyDir = path.join(directory, 'keys');
   await Promise.all([mkdir(dataDir), mkdir(keyDir), copyFile('server.vps.js', apiFile)]);
   api = spawn(process.execPath, [apiFile], {
@@ -39,7 +41,8 @@ test.before(async () => {
       KORE_KEY_DIR: keyDir,
       KORE_CHAP_FILE: path.join(directory, 'chap-secrets'),
       KORE_ADMIN_PASSWORD: password,
-      KORE_MULTI_TENANT: 'false'
+      KORE_MULTI_TENANT: 'true',
+      KORE_REQUIRE_TENANT_SIGNATURE: 'true'
     },
     stdio: 'ignore'
   });
@@ -136,7 +139,7 @@ test('cadastro captive falho nao deixa prospect residual', async () => {
   });
   assert.notEqual(attempt.response.status, 200);
 
-  const prospects = JSON.parse(await readFile(path.join(directory, 'data', 'captive-prospects.json'), 'utf8'));
+  const prospects = JSON.parse(await readFile(path.join(tenantDataDir, 'captive-prospects.json'), 'utf8'));
   assert.deepEqual(prospects, []);
 });
 
@@ -159,7 +162,7 @@ test('Access Points sao persistidos na API por tenant', async () => {
     method: 'DELETE', headers: { 'X-Kore-Session': token }
   });
   assert.equal(removed.response.status, 200);
-  const ignored = JSON.parse(await readFile(path.join(directory, 'data', 'access-points-ignored.json'), 'utf8'));
+  const ignored = JSON.parse(await readFile(path.join(tenantDataDir, 'access-points-ignored.json'), 'utf8'));
   assert.equal(ignored[0].id, created.data.item.id);
 });
 
@@ -182,7 +185,7 @@ test('UniFi local excluido pode ser redescoberto em um novo teste', async () => 
   assert.equal(created.response.status, 200);
   const removed = await request(`/api/entities/access_points/${created.data.item.id}`, { method: 'DELETE', headers });
   assert.equal(removed.response.status, 200);
-  const ignored = JSON.parse(await readFile(path.join(directory, 'data', 'access-points-ignored.json'), 'utf8'));
+  const ignored = JSON.parse(await readFile(path.join(tenantDataDir, 'access-points-ignored.json'), 'utf8'));
   assert.equal(ignored.some(item => item.id === created.data.item.id || item.mac === 'D8:B3:70:C0:7A:DB'), false);
 });
 
@@ -202,7 +205,7 @@ test('modo alternativo SSH exige senha e nao persiste credenciais', async () => 
   assert.equal(adoption.response.status, 400);
   assert.match(adoption.data.error, /senha SSH/i);
 
-  const stored = await readFile(path.join(directory, 'data', 'access-points.json'), 'utf8');
+  const stored = await readFile(path.join(tenantDataDir, 'access-points.json'), 'utf8');
   assert.equal(stored.includes('password'), false);
   assert.equal(stored.includes('sshPassword'), false);
 });
@@ -222,7 +225,7 @@ test('perfil Wi-Fi protege a senha e gera previa CAPsMAN sem segredo', async () 
   assert.equal(saved.data.profile.passphrase_configured, true);
   assert.equal(JSON.stringify(saved.data).includes(secret), false);
 
-  const stored = await readFile(path.join(directory, 'data', 'ap-profiles.json'), 'utf8');
+  const stored = await readFile(path.join(tenantDataDir, 'ap-profiles.json'), 'utf8');
   assert.equal(stored.includes(secret), false);
 
   const listed = await request('/api/access-point-profiles', {
@@ -272,7 +275,7 @@ test('integracao UniFi armazena a chave criptografada e devolve apenas metadados
   assert.equal(saved.data.integration.mikrotik_id, mikrotik.data.item.id);
   assert.equal(JSON.stringify(saved.data).includes(apiKey), false);
 
-  const stored = await readFile(path.join(directory, 'data', 'unifi-integrations.json'), 'utf8');
+  const stored = await readFile(path.join(tenantDataDir, 'unifi-integrations.json'), 'utf8');
   assert.equal(stored.includes(apiKey), false);
 
   const listed = await request('/api/unifi/integrations', {
@@ -327,5 +330,88 @@ test('login do MikroTik transporta o tenant ate o portal captive', async () => {
   const response = await fetch(`http://127.0.0.1:${port}/public/hotspot-login.html`);
   const html = await response.text();
   assert.equal(response.status, 200);
-  assert.match(html, /captive-portal\?tenant=default&mac=\$\(mac\)/);
+  assert.match(html, /captive-portal\?tenant=default&tenant_sig=[a-f0-9]{64}&mac=\$\(mac\)/);
+});
+
+test('header de tenant sem assinatura e rejeitado', async () => {
+  const { response, data } = await request('/api/captive/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Kore-Tenant': 'tenant-alvo' },
+    body: '{}'
+  });
+  assert.equal(response.status, 403);
+  assert.match(data.error, /Contexto do provedor invalido/i);
+});
+
+test('login grava cookie HttpOnly e nao persiste token da sessao em texto puro', async () => {
+  const login = await request('/api/admin/auth', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'login', email: 'spedynet@spedynet.com.br', password })
+  });
+  const cookie = login.response.headers.get('set-cookie');
+  assert.match(cookie, /kore_admin_session=.*HttpOnly.*SameSite=Strict/i);
+  const sessions = await readFile(path.join(tenantDataDir, 'admin-sessions.json'), 'utf8');
+  assert.doesNotMatch(sessions, new RegExp(login.data.token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  const validate = await request('/api/admin/auth', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie.split(';')[0] }, body: JSON.stringify({ action: 'validate' })
+  });
+  assert.equal(validate.response.status, 200);
+});
+
+test('permissoes de modulo tambem sao aplicadas na API', async () => {
+  const adminToken = await loginAdmin();
+  const email = 'limitado@example.com';
+  const created = await request('/api/admin/auth', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'createUser', token: adminToken, email, full_name: 'Limitado', password: 'LimitadoSeguro123!', role: 'user', permissions: ['plans'] })
+  });
+  assert.equal(created.response.status, 200);
+  const login = await request('/api/admin/auth', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'login', email, password: 'LimitadoSeguro123!' })
+  });
+  const denied = await request('/api/entities/clients', { headers: { 'X-Kore-Session': login.data.token } });
+  assert.equal(denied.response.status, 403);
+  const allowed = await request('/api/entities/plans', { headers: { 'X-Kore-Session': login.data.token } });
+  assert.equal(allowed.response.status, 200);
+});
+
+test('configuracoes secretas sao criptografadas e mascaradas', async () => {
+  const token = await loginAdmin();
+  const secret = 'token-ixc-super-secreto';
+  const created = await request('/api/entities/settings', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Kore-Session': token },
+    body: JSON.stringify({ id: 'setting_ixc_token', key: 'ixc_token', category: 'ixc', value: secret })
+  });
+  assert.equal(created.response.status, 200);
+  assert.equal(created.data.item.value, '');
+  assert.equal(created.data.item.secret_configured, true);
+  const stored = await readFile(path.join(tenantDataDir, 'settings.json'), 'utf8');
+  assert.doesNotMatch(stored, new RegExp(secret));
+  assert.match(stored, /value_encrypted/);
+});
+
+test('arquivos de dados usam permissoes restritas', { skip: process.platform === 'win32' }, async () => {
+  const dataMode = (await stat(tenantDataDir)).mode & 0o777;
+  const settingsMode = (await stat(path.join(tenantDataDir, 'settings.json'))).mode & 0o777;
+  assert.equal(dataMode, 0o700);
+  assert.equal(settingsMode, 0o600);
+});
+
+test('CORS nao autoriza origem externa', async () => {
+  const response = await fetch(`http://127.0.0.1:${port}/health`, { headers: { Origin: 'https://evil.example' } });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('access-control-allow-origin'), null);
+  assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+});
+
+test('login administrativo bloqueia forca bruta', async () => {
+  let last;
+  for (let attempt = 0; attempt < 9; attempt += 1) {
+    last = await request('/api/admin/auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'login', email: 'ataque@example.com', password: `errada-${attempt}` })
+    });
+  }
+  assert.equal(last.response.status, 429);
+  assert.ok(Number(last.response.headers.get('retry-after')) > 0);
 });

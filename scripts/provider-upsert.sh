@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-API_URL="${API_URL:-http://127.0.0.1:8081}"
+API_URL="${API_URL:-http://127.0.0.1:8082}"
 SERVICE="${SERVICE:-kore-vpn-api}"
 
-TOKEN="${API_TOKEN:-}"
+TOKEN="${KORE_INTERNAL_API_TOKEN:-${API_TOKEN:-}}"
 if [ -z "$TOKEN" ] && command -v systemctl >/dev/null 2>&1; then
-  TOKEN="$(systemctl show "$SERVICE" -p Environment --value 2>/dev/null | tr ' ' '\n' | sed -n 's/^KORE_VPN_API_TOKEN=//p' | tail -n1)"
+  TOKEN="$(systemctl show "$SERVICE" -p Environment --value 2>/dev/null | tr ' ' '\n' | sed -n -e 's/^KORE_INTERNAL_API_TOKEN=//p' -e 's/^KORE_VPN_API_TOKEN=//p' | tail -n1)"
 fi
-TOKEN="${TOKEN:-kore-vpn-api-2026}"
+[ -n "$TOKEN" ] || { printf 'Token interno ausente; configure KORE_INTERNAL_API_TOKEN.\n' >&2; exit 1; }
 
 NAME="${NAME:-${1:-}}"
 TENANT_ID="${TENANT_ID:-${2:-}}"
@@ -74,10 +74,10 @@ EOF
 )"
 
 response="$(curl -fsS -X PUT "${API_URL%/}/api/providers/${TENANT_ID}" \
-  -H "X-Kore-Token: ${TOKEN}" \
+  -H "X-Kore-Internal-Token: ${TOKEN}" \
   -H "Content-Type: application/json" \
   --data "$payload")"
 
 printf '%s\n' "$response"
 printf '\nProvedor salvo. Conferencia local:\n'
-curl -fsS "${API_URL%/}/api/providers" -H "X-Kore-Token: ${TOKEN}" | jq ".providers[] | select(.tenant_id == \"${TENANT_ID}\")"
+curl -fsS "${API_URL%/}/api/providers" -H "X-Kore-Internal-Token: ${TOKEN}" | jq ".providers[] | select(.tenant_id == \"${TENANT_ID}\")"
