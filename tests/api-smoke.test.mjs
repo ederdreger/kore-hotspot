@@ -322,3 +322,10 @@ test('configuracao minima do captive permanece publica', async () => {
   assert.equal(response.status, 200);
   assert.deepEqual(data.settings, {});
 });
+
+test('login do MikroTik transporta o tenant ate o portal captive', async () => {
+  const response = await fetch(`http://127.0.0.1:${port}/public/hotspot-login.html`);
+  const html = await response.text();
+  assert.equal(response.status, 200);
+  assert.match(html, /captive-portal\?tenant=default&mac=\$\(mac\)/);
+});
