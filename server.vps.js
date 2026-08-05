@@ -115,8 +115,7 @@ function migrateLegacyFile(source, target) {
 }
 
 function hotspotLoginHtml() {
-  const fallbackHost = PUBLIC_HOST ? `http://${PUBLIC_HOST}:8080` : 'http://127.0.0.1:8080';
-  const portal = `${process.env.KORE_PUBLIC_URL || fallbackHost}/captive-portal`;
+  const portal = `${getPublicBaseUrl()}/captive-portal`;
   return `<!doctype html>
 <html>
 <head>
@@ -2063,7 +2062,7 @@ async function repairMikrotikCaptivePortal(payload = {}) {
     ':foreach f in={"login.html";"rlogin.html";"redirect.html";"alogin.html"} do={',
     '  :local target ($fileDirectory . "/" . $f)',
     '  :do { /file remove [find where name=$target] } on-error={}',
-    `  /tool fetch url="${loginSourceUrl}" mode=http dst-path=$target keep-result=yes`,
+    `  /tool fetch url="${loginSourceUrl}" mode=http http-header-field="Host:${portalHost}" dst-path=$target keep-result=yes`,
     '}',
     ':if ([:len [/file find where name=($fileDirectory . "/login.html")]] = 0) do={ :error "login.html nao foi instalado no MikroTik" }',
     `:do { /ip hotspot walled-garden remove [find where comment="${gardenComment}"] } on-error={}`,
