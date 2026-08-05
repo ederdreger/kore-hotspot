@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { copyFile, mkdtemp, rm } from 'node:fs/promises';
+import { copyFile, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -41,6 +41,11 @@ test('data diaria respeita o fuso America Sao Paulo', () => {
 
 test('contador RouterOS separa upload e download', () => {
   assert.deepEqual(routerBytePair('12345/67890'), [12345, 67890]);
+});
+
+test('reparo captive instala tambem as paginas alternativas do RouterOS', async () => {
+  const source = await readFile('server.vps.js', 'utf8');
+  assert.match(source, /"flogin\.html";"error\.html";"status\.html";"logout\.html"/);
 });
 
 test('Option 43 UniFi usa o formato minimo por IPv4', () => {

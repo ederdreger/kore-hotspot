@@ -15,7 +15,7 @@ function resolveAppVersion() {
       if (version) return String(version);
     } catch {}
   }
-  return '1.2.73';
+  return '1.2.74';
 }
 
 const APP_VERSION = resolveAppVersion();
@@ -2284,7 +2284,7 @@ async function repairMikrotikCaptivePortal(payload = {}) {
     `:foreach staleDns in=[/ip dns static find where comment="Kore-HotSpot captive portal"] do={ :if ([/ip dns static get $staleDns name] != "${portalHost}") do={ /ip dns static remove $staleDns } }`,
     ':local fileDirectory "hotspot"',
     ':if ([:len [/file find where name~"^flash"]] > 0) do={ :set fileDirectory "flash/hotspot"; :if ([:len [/file find where name="flash/hotspot"]] = 0) do={ /file add name="/flash/hotspot" type=directory } } else={ :do { /file make-directory hotspot } on-error={} }',
-    ':foreach f in={"login.html";"rlogin.html";"redirect.html";"alogin.html"} do={',
+    ':foreach f in={"login.html";"rlogin.html";"redirect.html";"alogin.html";"flogin.html";"error.html";"status.html";"logout.html"} do={',
     '  :local target ($fileDirectory . "/" . $f)',
     '  :do { /file remove [find where name=$target] } on-error={}',
     `  /tool fetch url="${loginSourceUrl}" mode=http http-header-field="Host:${portalHost}" dst-path=$target keep-result=yes`,

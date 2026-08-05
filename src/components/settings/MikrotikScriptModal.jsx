@@ -219,7 +219,7 @@ ${profileScript || ':put "Nenhum perfil de velocidade cadastrado no sistema"'}
 /ip hotspot walled-garden ip add dst-address=${captivePortalHost} protocol=tcp dst-port=8080 action=accept comment="Kore-HotSpot captive portal 8080"
 /ip hotspot walled-garden ip add dst-address=${captivePortalHost} protocol=tcp dst-port=8081 action=accept comment="Kore-HotSpot captive portal API"
 :if ([:len [/file find where name="flash/hotspot"]] > 0) do={
-  :foreach f in={"login.html";"rlogin.html";"redirect.html";"alogin.html"} do={
+  :foreach f in={"login.html";"rlogin.html";"redirect.html";"alogin.html";"flogin.html";"error.html";"status.html";"logout.html"} do={
     :do { /file remove [find where name=("flash/hotspot/" . $f)] } on-error={}
     /tool fetch url="${hotspotLoginUrl}" mode=http http-header-field="Host:${portalHost}" dst-path=("flash/hotspot/" . $f) keep-result=yes
     :delay 1s
@@ -228,7 +228,7 @@ ${profileScript || ':put "Nenhum perfil de velocidade cadastrado no sistema"'}
   /ip hotspot profile set [find where name="${profileName}"] html-directory=flash/hotspot
   :put "Diretorio Hotspot: flash/hotspot"
 } else={
-  :foreach f in={"login.html";"rlogin.html";"redirect.html";"alogin.html"} do={
+  :foreach f in={"login.html";"rlogin.html";"redirect.html";"alogin.html";"flogin.html";"error.html";"status.html";"logout.html"} do={
     :do { /file remove [find where name=("hotspot/" . $f)] } on-error={}
     /tool fetch url="${hotspotLoginUrl}" mode=http http-header-field="Host:${portalHost}" dst-path=("hotspot/" . $f) keep-result=yes
     :delay 1s
