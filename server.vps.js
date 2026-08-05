@@ -2121,6 +2121,50 @@ async function repairMikrotikCaptivePortal(payload = {}) {
   };
 }
 
+async function diagnoseMikrotikCaptivePortal(payload = {}) {
+  const device = mikrotikDeviceById(String(payload.mikrotik_id || payload.id || ''));
+  if (!device) throw Object.assign(new Error('MikroTik nao encontrado'), { status: 404 });
+  const interfaceName = String(payload.interface_name || device.hotspot_interface || device.vlan_interface || '').trim();
+  if (!/^[a-zA-Z0-9_.:+@ -]{1,64}$/.test(interfaceName)) {
+    throw Object.assign(new Error('Interface do Hotspot invalida'), { status: 400 });
+  }
+  const portalBase = getPublicBaseUrl();
+  let portalHost = '';
+  try { portalHost = new URL(portalBase).hostname; } catch {}
+  const checks = {
+    interface: `/interface print detail without-paging where name="${interfaceName}"`,
+    addresses: `/ip address print detail without-paging where interface="${interfaceName}"`,
+    dhcp_server: `/ip dhcp-server print detail without-paging where interface="${interfaceName}"`,
+    dhcp_networks: '/ip dhcp-server network print detail without-paging',
+    dhcp_leases: '/ip dhcp-server lease print detail without-paging where status=bound',
+    hotspot_server: `/ip hotspot print stats detail without-paging where interface="${interfaceName}"`,
+    hotspot_profiles: '/ip hotspot profile print detail without-paging',
+    hotspot_hosts: '/ip hotspot host print detail without-paging',
+    hotspot_active: '/ip hotspot active print detail without-paging',
+    dns: '/ip dns print detail without-paging',
+    dns_static: portalHost ? `/ip dns static print detail without-paging where name="${portalHost}"` : '/ip dns static print detail without-paging',
+    firewall_input: '/ip firewall filter print stats detail without-paging where chain=input',
+    source_nat: '/ip firewall nat print stats detail without-paging where chain=srcnat',
+    default_routes: '/ip route print detail without-paging where dst-address=0.0.0.0/0',
+    resolve_test: ':do { :put ("resolved=" . [:resolve "neverssl.com"]) } on-error={ :put "resolved=ERROR" }',
+    internet_test: '/ping 1.1.1.1 count=3 interval=300ms',
+    portal_test: `:do { /tool fetch url="http://${routerAddress(PUBLIC_HOST || portalHost)}:8081/public/hotspot-login.html" keep-result=no; :put "portal-fetch=OK" } on-error={ :put "portal-fetch=ERROR" }`
+  };
+  const entries = await Promise.all(Object.entries(checks).map(async ([name, command]) => {
+    const result = await runMikrotikKeyCommand(device, command, 30000).catch(error => ({ stdout: '', stderr: error.message }));
+    return [name, { stdout: String(result.stdout || '').trim(), stderr: String(result.stderr || '').trim() }];
+  }));
+  return {
+    success: true,
+    read_only: true,
+    mikrotik: { id: device.id, name: device.name || device.host, host: device.host },
+    interface: interfaceName,
+    portal_base: portalBase,
+    diagnostics: Object.fromEntries(entries),
+    collected_at: new Date().toISOString()
+  };
+}
+
 async function mikrotikSyncPlans({ host, port = '22', user = 'kore-api' }) {
   const target = String(host || '').trim();
   if (!target) throw new Error('host obrigatorio');
@@ -4107,6 +4151,7 @@ async function handleRequest(req, res) {
     if (req.method === 'GET' && req.url === '/api/vpn/status') return send(res, 200, await vpnStatus());
     if (req.method === 'POST' && req.url === '/api/vpn/users') { assertTenantLicense({ action: 'write', resource: 'vpn' }); return send(res, 200, await ensureUser(await readBody(req))); }
     if (req.method === 'POST' && req.url === '/api/mikrotik/status') return send(res, 200, await mikrotikStatus(await readBody(req)));
+    if (req.method === 'POST' && req.url === '/api/mikrotik/captive-diagnostics') return send(res, 200, await diagnoseMikrotikCaptivePortal(await readBody(req)));
     if (req.method === 'POST' && req.url === '/api/mikrotik/captive-repair') { assertTenantLicense({ action: 'write', resource: 'mikrotik' }); return send(res, 200, await repairMikrotikCaptivePortal(await readBody(req))); }
     if (req.method === 'POST' && req.url === '/api/mikrotik/sync-plans') { assertTenantLicense({ action: 'write', resource: 'mikrotik' }); return send(res, 200, await mikrotikSyncPlans(await readBody(req))); }
 
