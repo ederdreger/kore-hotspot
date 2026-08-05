@@ -170,10 +170,12 @@ export default function CaptivePortal() {
       setSettings(config.settings || {});
 
       const known = config.prospect;
+      setActiveProspect(known || null);
       if (known?.trial_expires_at && new Date(known.trial_expires_at) <= new Date()) {
-        setActiveProspect(known);
-        setNotice('Seu periodo gratis terminou. Escolha um plano para continuar navegando.');
-        setStage('plans');
+        setNotice(known.free_access_available
+          ? 'Um novo acesso gratuito esta disponivel para hoje. Informe seu telefone para continuar.'
+          : 'O acesso gratuito de hoje terminou. Para navegar agora, use um voucher ou entre como cliente IXC. Um novo acesso gratuito sera liberado apos 00:00.');
+        setStage('choice');
       }
     }
     load();
@@ -223,10 +225,24 @@ export default function CaptivePortal() {
       }
 
       const prospect = findProspect(phone);
+      if (prospect?.trial_active && prospect.radius_username && prospect.radius_password) {
+        const login = { username: prospect.radius_username, password: prospect.radius_password };
+        setActiveProspect(prospect);
+        setHotspotLogin(login);
+        setStage('welcome');
+        loginToMikrotik(login, settings.captive_redirect_url || getPortalParams().linkOrig);
+        return;
+      }
       if (prospect?.trial_expires_at && new Date(prospect.trial_expires_at) <= new Date()) {
         setActiveProspect(prospect);
-        setNotice('Seu periodo gratis terminou. Escolha um plano para continuar navegando.');
-        setStage('plans');
+        if (prospect.free_access_available) {
+          setForm({ name: prospect.name || '', phone: prospect.phone || phone, cpf: prospect.cpf || '', cep: prospect.cep || '' });
+          setNotice('Novo acesso gratuito diario disponivel. Confirme seus dados para conectar.');
+          setStage('register');
+        } else {
+          setNotice('O acesso gratuito de hoje ja foi utilizado. Use um voucher ou entre como cliente IXC; o acesso gratuito volta apos 00:00.');
+          setStage('choice');
+        }
         return;
       }
 
@@ -293,7 +309,12 @@ export default function CaptivePortal() {
       setHotspotLogin(res.data?.login || res.data?.authorization);
       setStage('welcome');
     } catch (error) {
-      toast.error(error.message || 'Erro ao cadastrar.');
+      const message = error.message || 'Erro ao cadastrar.';
+      toast.error(message);
+      if (/acesso gratuito de hoje/i.test(message)) {
+        setNotice(message);
+        setStage('choice');
+      }
     } finally {
       setLoading(false);
     }
@@ -394,6 +415,11 @@ export default function CaptivePortal() {
 
   return (
     <Shell settings={settings}>
+      {notice && stage !== 'plans' && stage !== 'welcome' && (
+        <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm leading-5 text-amber-900">
+          {notice}
+        </div>
+      )}
       {stage === 'choice' && (
         <div className="space-y-5">
           <div className="text-center">

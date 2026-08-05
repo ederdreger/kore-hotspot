@@ -25,18 +25,27 @@ export default function Vouchers() {
   const [form, setForm] = useState({ plan_id: '', duration_minutes: '30', quantity: '1', notes: '' });
   const [saving, setSaving] = useState(false);
 
-  const load = async () => {
-    setLoading(true);
+  const load = async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     const [vs, ps] = await Promise.all([spedynet.entities.Voucher.list('-created_date', 200), spedynet.entities.Plan.filter({ status: 'active' })]);
     setVouchers(vs); setPlans(ps); setLoading(false);
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    const timer = setInterval(() => load({ silent: true }), 15000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const voucherStatus = (voucher) => voucher.status === 'used'
+    ? (voucher.usage_status || 'collecting')
+    : (voucher.usage_status || voucher.status);
 
   const filtered = vouchers.filter(v => {
     const q = search.toLowerCase();
     const matchSearch = !q || v.code?.toLowerCase().includes(q) || v.used_by_name?.toLowerCase().includes(q);
-    const matchStatus = statusFilter === 'all' || v.status === statusFilter;
+    const currentStatus = voucherStatus(v);
+    const matchStatus = statusFilter === 'all' || currentStatus === statusFilter;
     return matchSearch && matchStatus;
   });
 
@@ -85,14 +94,15 @@ export default function Vouchers() {
 
   const stats = [
     { label: 'Disponíveis', value: vouchers.filter(v => v.status === 'available').length, color: 'text-success' },
-    { label: 'Usados', value: vouchers.filter(v => v.status === 'used').length, color: 'text-muted-foreground' },
+    { label: 'Em uso agora', value: vouchers.filter(v => voucherStatus(v) === 'online').length, color: 'text-success' },
+    { label: 'Coletando', value: vouchers.filter(v => voucherStatus(v) === 'collecting').length, color: 'text-info' },
     { label: 'Expirados', value: vouchers.filter(v => v.status === 'expired').length, color: 'text-destructive' },
     { label: 'Total', value: vouchers.length, color: 'text-foreground' },
   ];
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         {stats.map((s, i) => (
           <div key={i} className="bg-card border border-border rounded-xl p-4">
             <p className={`text-2xl font-bold font-mono ${s.color}`}>{s.value}</p>
@@ -111,7 +121,9 @@ export default function Vouchers() {
           <SelectContent>
             <SelectItem value="all">Todos</SelectItem>
             <SelectItem value="available">Disponível</SelectItem>
-            <SelectItem value="used">Usado</SelectItem>
+            <SelectItem value="online">Em uso agora</SelectItem>
+            <SelectItem value="collecting">Coletando</SelectItem>
+            <SelectItem value="offline">Offline</SelectItem>
             <SelectItem value="expired">Expirado</SelectItem>
           </SelectContent>
         </Select>
@@ -156,7 +168,10 @@ export default function Vouchers() {
                     <div className="flex items-center gap-1 mt-0.5"><Clock className="w-3 h-3 text-muted-foreground" /><span className="text-xs text-muted-foreground font-mono">{v.duration_minutes}min</span></div>
                     {(v.download_mbps || v.upload_mbps) && <p className="text-[10px] text-muted-foreground font-mono">{v.download_mbps || 0}/{v.upload_mbps || 0} Mbps</p>}
                   </td>
-                  <td className="px-4 py-3"><StatusBadge status={v.status} /></td>
+                  <td className="px-4 py-3">
+                    <StatusBadge status={voucherStatus(v)} />
+                    {v.runtime_last_seen_at && <p className="mt-1 text-[10px] text-muted-foreground">presenÃ§a coletada</p>}
+                  </td>
                   <td className="px-4 py-3 hidden lg:table-cell">
                     {v.used_by_name ? (
                       <div>

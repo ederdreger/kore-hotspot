@@ -7,7 +7,18 @@ const net = require('net');
 const dns = require('dns').promises;
 const { AsyncLocalStorage } = require('async_hooks');
 
-const APP_VERSION = '0.2.70';
+function resolveAppVersion() {
+  if (process.env.KORE_APP_VERSION) return String(process.env.KORE_APP_VERSION).trim();
+  for (const packageFile of [path.join(__dirname, 'package.json'), '/opt/kore-hotspot-src/package.json']) {
+    try {
+      const version = JSON.parse(fs.readFileSync(packageFile, 'utf8'))?.version;
+      if (version) return String(version);
+    } catch {}
+  }
+  return '1.2.71';
+}
+
+const APP_VERSION = resolveAppVersion();
 const PORT = Number(process.env.PORT || 8081);
 const TOKEN = process.env.KORE_VPN_API_TOKEN || 'kore-vpn-api-2026';
 const DEFAULT_ADMIN_PASSWORD = process.env.KORE_ADMIN_PASSWORD || 'Admin12345';
@@ -53,6 +64,7 @@ const DEFAULT_ADMINS = [
 const SYSTEM_MODULES = ['providers'];
 const TENANT_ADMIN_PERMISSIONS = ['dashboard', 'clients', 'prospects', 'mikrotiks', 'vpn', 'plans', 'vouchers', 'campaigns', 'radius', 'ap-monitor', 'logs', 'users', 'settings'];
 const radiusRateCache = new Map();
+const voucherTrafficCache = new Map();
 
 function send(res, status, data, headers = {}) {
   res.writeHead(status, {
@@ -410,9 +422,73 @@ function rateToMbps(value) {
   return hasBitsSuffix ? number / 1000 / 1000 : number;
 }
 
+function routerBytePair(value) {
+  const [first = '0', second = '0'] = String(value || '').split('/');
+  return [Number(first.replace(/[^0-9]/g, '')) || 0, Number(second.replace(/[^0-9]/g, '')) || 0];
+}
+
+async function collectVoucherRuntime(vouchers = readJson(ENTITY_FILES.vouchers, [])) {
+  const now = Date.now();
+  const devices = getMikrotikDevices();
+  const bindings = [];
+  const active = [];
+  const arp = [];
+  const queues = [];
+  const schedulers = [];
+  await Promise.all(devices.slice(0, 5).map(async device => {
+    const commands = [
+      '/ip hotspot ip-binding print detail without-paging where comment~"Kore-HotSpot captive"',
+      '/ip hotspot active print detail without-paging',
+      '/ip arp print detail without-paging',
+      '/queue simple print stats detail without-paging where name~"kore-limit-"',
+      '/system scheduler print detail without-paging where name~"kore-expire-"'
+    ];
+    const results = await Promise.all(commands.map(command => runMikrotikKeyCommand(device, command, 12000).catch(() => ({ stdout: '' }))));
+    bindings.push(...parseKeyValueRows(results[0].stdout));
+    active.push(...parseKeyValueRows(results[1].stdout));
+    arp.push(...parseKeyValueRows(results[2].stdout));
+    queues.push(...parseKeyValueRows(results[3].stdout));
+    schedulers.push(...parseKeyValueRows(results[4].stdout));
+  }));
+
+  return vouchers.map(voucher => {
+    if (voucher.status === 'available' || voucher.status === 'reserved') return { ...voucher, usage_status: voucher.status };
+    const expiresAt = Date.parse(voucher.expires_at || '');
+    if (Number.isFinite(expiresAt) && expiresAt <= now) return { ...voucher, status: 'expired', usage_status: 'expired' };
+    const mac = normalizeMac(voucher.mac_address);
+    const ip = normalizeClientIp(voucher.ip_address);
+    const suffix = (mac || ip).replace(/[^A-Za-z0-9]/g, '');
+    const binding = bindings.find(row => (mac && normalizeMac(row['mac-address']) === mac) || (ip && normalizeClientIp(row.address) === ip));
+    const activeRow = active.find(row => (mac && normalizeMac(row['mac-address']) === mac) || (ip && normalizeClientIp(row.address) === ip));
+    const arpRow = arp.find(row => (mac && normalizeMac(row['mac-address']) === mac) || (ip && normalizeClientIp(row.address) === ip));
+    const queue = queues.find(row => row.name === `kore-limit-${suffix}` || (ip && String(row.target || '').split('/')[0] === ip));
+    const scheduler = schedulers.find(row => row.name === `kore-expire-${suffix}`);
+    const [uploadBytes, downloadBytes] = routerBytePair(queue?.bytes);
+    const cacheKey = `${currentTenant().id}:${voucher.id || voucher._id}`;
+    const previous = voucherTrafficCache.get(cacheKey);
+    const trafficChanged = !!previous && (uploadBytes > previous.uploadBytes || downloadBytes > previous.downloadBytes);
+    const previousSeenAt = previous?.lastSeenAt || 0;
+    const arpOnline = ['reachable', 'delay', 'probe', 'permanent'].includes(String(arpRow?.status || '').toLowerCase());
+    const online = !!activeRow || arpOnline || trafficChanged || (previousSeenAt && now - previousSeenAt < 90000);
+    const lastSeenAt = online ? now : previousSeenAt;
+    voucherTrafficCache.set(cacheKey, { uploadBytes, downloadBytes, lastSeenAt, time: now });
+    const provisioned = !!binding || !!scheduler;
+    return {
+      ...voucher,
+      usage_status: online ? 'online' : provisioned ? 'collecting' : 'offline',
+      runtime_online: online,
+      runtime_provisioned: provisioned,
+      runtime_last_seen_at: lastSeenAt ? new Date(lastSeenAt).toISOString() : '',
+      runtime_download_mb: mbFromBytes(downloadBytes),
+      runtime_upload_mb: mbFromBytes(uploadBytes)
+    };
+  });
+}
+
 function enrichRadiusSession(session) {
   const clients = readJson(ENTITY_FILES.clients, []);
   const prospects = readCaptiveDb();
+  const vouchers = readJson(ENTITY_FILES.vouchers, []);
   const plans = readJson(ENTITY_FILES.plans, []);
   const mac = normalizeMac(session.macAddress);
   const ip = normalizeClientIp(session.framedIp);
@@ -427,19 +503,25 @@ function enrichRadiusSession(session) {
     normalizeClientIp(item.ip_address) === ip ||
     normalizeText(item.radius_username) === user
   ) : null;
-  const account = client || prospect || null;
+  const voucherCode = user.startsWith('voucher-') ? user.slice('voucher-'.length).toUpperCase() : '';
+  const voucher = vouchers.find(item =>
+    (voucherCode && String(item.code || '').toUpperCase() === voucherCode) ||
+    (session.source === 'voucher' && ((mac && normalizeMac(item.mac_address) === mac) || (ip && normalizeClientIp(item.ip_address) === ip)))
+  );
+  const account = voucher || client || prospect || null;
   const plan = plans.find(item => (item.id || item._id) === account?.plan_id) ||
     plans.find(item => normalizeText(item.name) === normalizeText(account?.plan_name || session.planName));
   return {
     ...session,
-    fullName: account?.name || session.fullName || '-',
+    fullName: voucher?.used_by_name || account?.name || session.fullName || '-',
     planName: account?.plan_name || plan?.name || session.planName || '-',
     planId: account?.plan_id || plan?.id || plan?._id || session.planId || '',
     downloadLimit: Number(account?.download_mbps ?? plan?.download_mbps ?? session.downloadLimit ?? 0),
     uploadLimit: Number(account?.upload_mbps ?? plan?.upload_mbps ?? session.uploadLimit ?? 0),
     downloadRate: Number(session.downloadRate ?? 0),
     uploadRate: Number(session.uploadRate ?? 0),
-    quotaGb: Number(account?.quota_gb ?? plan?.quota_gb ?? session.quotaGb ?? 0)
+    quotaGb: Number(account?.quota_gb ?? plan?.quota_gb ?? session.quotaGb ?? 0),
+    accountType: voucher ? 'voucher' : client?.source === 'ixc' ? 'ixc' : prospect ? 'prospect' : client ? 'client' : session.accountType || 'unknown'
   };
 }
 
@@ -1998,12 +2080,41 @@ async function mikrotikHotspotSessions() {
 }
 
 async function radiusSessions() {
-  const [status, sql, mikrotikResult] = await Promise.all([
+  const [status, sql, mikrotikResult, voucherRuntime] = await Promise.all([
     radiusStatus().catch(error => ({ status: 'offline', error: error.message })),
     radiusSqlSessions().catch(() => []),
-    mikrotikHotspotSessions().catch(error => ({ sessions: [], errors: [error.message], devices_checked: 0 }))
+    mikrotikHotspotSessions().catch(error => ({ sessions: [], errors: [error.message], devices_checked: 0 })),
+    collectVoucherRuntime().catch(() => [])
   ]);
-  const mikrotik = mikrotikResult.sessions;
+  const mikrotik = [...mikrotikResult.sessions];
+  for (const voucher of voucherRuntime) {
+    if (!voucher.runtime_provisioned || voucher.usage_status === 'expired') continue;
+    const duplicate = mikrotik.some(session =>
+      (voucher.mac_address && normalizeMac(session.macAddress) === normalizeMac(voucher.mac_address)) ||
+      (voucher.ip_address && normalizeClientIp(session.framedIp) === normalizeClientIp(voucher.ip_address))
+    );
+    if (duplicate) continue;
+    const startedAt = Date.parse(voucher.used_at || voucher.updated_date || '');
+    mikrotik.push(enrichRadiusSession({
+      id: `voucher-${voucher.id || voucher._id}`,
+      username: `voucher-${voucher.code}`,
+      fullName: voucher.used_by_name || 'Visitante',
+      framedIp: voucher.ip_address || '-',
+      macAddress: normalizeMac(voucher.mac_address) || voucher.mac_address || '-',
+      nasIp: voucher.mikrotik_host || '-',
+      sessionTime: Number.isFinite(startedAt) ? secondsToUptime(Math.max(0, Math.floor((Date.now() - startedAt) / 1000))) : '-',
+      downloadMb: Number(voucher.runtime_download_mb || 0),
+      uploadMb: Number(voucher.runtime_upload_mb || 0),
+      downloadRate: 0,
+      uploadRate: 0,
+      quotaGb: Number(voucher.quota_gb || 0),
+      planName: voucher.plan_name || '-',
+      planId: voucher.plan_id || '',
+      status: voucher.runtime_online ? 'active' : 'collecting',
+      source: 'voucher',
+      startedAt: voucher.used_at || ''
+    }));
+  }
   const byKey = new Map();
   // O MikroTik confirma presenca. O radacct apenas enriquece a sessao, pois
   // registros sem Accounting-Stop podem permanecer abertos indevidamente.
@@ -2325,6 +2436,34 @@ function writeCaptiveDb(items) {
   fs.writeFileSync(file, JSON.stringify(items, null, 2));
 }
 
+function saoPauloDateKey(value = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(date);
+  const valueOf = type => parts.find(part => part.type === type)?.value || '';
+  return `${valueOf('year')}-${valueOf('month')}-${valueOf('day')}`;
+}
+
+function prospectAccessState(prospect, now = new Date()) {
+  if (!prospect) return null;
+  const today = saoPauloDateKey(now);
+  const lastAccessDate = prospect.trial_access_date || saoPauloDateKey(prospect.created_date);
+  const expiresAt = Date.parse(prospect.trial_expires_at || '');
+  const trialActive = Number.isFinite(expiresAt) && expiresAt > now.getTime();
+  const freeAccessAvailable = !trialActive && (!lastAccessDate || lastAccessDate !== today);
+  const [year, month, day] = today.split('-').map(Number);
+  const nextFreeAccessAt = new Date(Date.UTC(year, month - 1, day + 1, 3, 0, 0)).toISOString();
+  return {
+    ...prospect,
+    trial_active: trialActive,
+    free_access_available: freeAccessAvailable,
+    next_free_access_at: nextFreeAccessAt,
+    trial_access_date: lastAccessDate
+  };
+}
+
 function captivePublicConfig(payload = {}) {
   const allowedKeys = new Set([
     'captive_portal_title', 'captive_portal_subtitle', 'captive_portal_logo_url',
@@ -2337,7 +2476,7 @@ function captivePublicConfig(payload = {}) {
   );
   const mac = normalizeMac(payload.mac);
   const prospect = mac ? readCaptiveDb().find(item => normalizeMac(item.mac_address) === mac) : null;
-  return { settings, prospect: prospect || null };
+  return { settings, prospect: prospectAccessState(prospect) };
 }
 
 function ensureCaptivePlanClient(payload = {}) {
@@ -3293,7 +3432,10 @@ async function entityCrud(req) {
   const file = ENTITY_FILES[parsed.entity];
   const items = readJson(file, []);
 
-  if (req.method === 'GET') return { items };
+  if (req.method === 'GET') {
+    if (parsed.entity === 'vouchers') return { items: await collectVoucherRuntime(items) };
+    return { items };
+  }
 
   if (req.method === 'POST') {
     const body = await readBody(req);
@@ -3594,6 +3736,22 @@ async function captiveRegister(payload = {}) {
   const selectedPlan = plans.find(plan => (plan.id || plan._id) === String(payload.plan_id || '')) || plans.find(plan => plan.is_trial && plan.status === 'active');
   if (!selectedPlan) throw new Error('Nenhum plano de primeiro acesso cadastrado');
   const trialMinutes = Number(selectedPlan.trial_duration_minutes || selectedPlan.validity_hours * 60 || payload.minutes || 1);
+  const items = readCaptiveDb();
+  const requestedMac = normalizeMac(payload.mac);
+  const requestedPhone = normalizeDigits(payload.phone);
+  const existing = items.find(entry =>
+    (requestedMac && normalizeMac(entry.mac_address) === requestedMac) ||
+    (cleanCpf && normalizeDigits(entry.cpf) === cleanCpf) ||
+    (requestedPhone && normalizeDigits(entry.phone) === requestedPhone)
+  );
+  const existingState = prospectAccessState(existing);
+  if (existingState?.trial_active) {
+    throw Object.assign(new Error('Este acesso gratuito ja esta ativo neste dispositivo.'), { status: 409 });
+  }
+  if (existingState && !existingState.trial_active && !existingState.free_access_available) {
+    throw Object.assign(new Error('O acesso gratuito de hoje ja foi utilizado. A conexao sera liberada novamente apos 00:00; agora use um voucher ou entre como cliente IXC.'), { status: 429 });
+  }
+
   const item = {
     id: `prospect_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     _id: `prospect_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -3609,6 +3767,7 @@ async function captiveRegister(payload = {}) {
     status: 'new',
     source: 'captive_portal',
     trial_access: true,
+    trial_access_date: saoPauloDateKey(),
     trial_duration_minutes: trialMinutes,
     trial_duration_hours: Number((trialMinutes / 60).toFixed(2)),
     trial_expires_at: new Date(Date.now() + trialMinutes * 60000).toISOString(),
@@ -3621,7 +3780,6 @@ async function captiveRegister(payload = {}) {
     updated_date: created
   };
 
-  const items = readCaptiveDb();
   const filtered = items.filter(existing => {
     if (item.mac_address && existing.mac_address === item.mac_address) return false;
     if (item.cpf && existing.cpf === item.cpf) return false;
@@ -4306,7 +4464,7 @@ const server = http.createServer((req, res) => {
 });
 
 if (process.env.KORE_TEST_EXPORTS === 'true') {
-  module.exports = { normalizeRouterHex, unifiDhcpOption43, unifiDiscoveryRelayPlan, unifiInformRedirectPlan, unifiActivityMonitorPlan, unifiCleanupPlan, hotspotProfileUpsertCommand };
+  module.exports = { normalizeRouterHex, unifiDhcpOption43, unifiDiscoveryRelayPlan, unifiInformRedirectPlan, unifiActivityMonitorPlan, unifiCleanupPlan, hotspotProfileUpsertCommand, saoPauloDateKey, prospectAccessState, routerBytePair };
 } else {
   ensureSshKey().then(() => {
     server.listen(PORT, '0.0.0.0', () => console.log(`Kore VPN API listening on ${PORT}`));

@@ -69,7 +69,9 @@ export default function Sidebar({ open, onClose }) {
                     : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
                 )}
               >
-                <item.icon className={cn('w-4 h-4', active && 'text-primary')} />
+                <span className={cn('flex h-7 w-7 items-center justify-center rounded-lg transition-transform group-hover:scale-110', item.iconBgClass)}>
+                  <item.icon className={cn('w-4 h-4', item.iconClass)} />
+                </span>
                 <span>{item.label}</span>
                 {active && <ChevronRight className="w-3 h-3 ml-auto text-primary" />}
               </Link>
@@ -82,13 +84,13 @@ export default function Sidebar({ open, onClose }) {
             to="/captive-portal"
             className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-muted-foreground hover:text-primary hover:bg-primary/5 transition-all border border-dashed border-border hover:border-primary/30"
           >
-            <Wifi className="w-4 h-4" />
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-cyan-500/10"><Wifi className="w-4 h-4 text-cyan-500" /></span>
             <span>Captive Portal</span>
           </Link>
         </div>
 
         <div className="px-6 py-3 border-t border-border">
-          <p className="text-xs text-muted-foreground font-mono">v1.0.0 - Kore-HotSpot</p>
+          <p className="text-xs text-muted-foreground font-mono">v{__APP_VERSION__} - Kore-HotSpot</p>
         </div>
       </aside>
     </>

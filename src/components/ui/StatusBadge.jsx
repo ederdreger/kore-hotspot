@@ -22,6 +22,7 @@ const statusConfig = {
   warning: { label: 'Aviso', class: 'bg-warning/10 text-warning border-warning/30' },
   info: { label: 'Info', class: 'bg-info/10 text-info border-info/30' },
   online: { label: 'Online', class: 'bg-success/10 text-success border-success/30' },
+  collecting: { label: 'Coletando', class: 'bg-info/10 text-info border-info/30' },
   offline: { label: 'Offline', class: 'bg-muted text-muted-foreground border-border' },
 };
 

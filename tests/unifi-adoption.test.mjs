@@ -12,11 +12,35 @@ process.env.KORE_TEST_EXPORTS = 'true';
 process.env.KORE_DATA_DIR = path.join(directory, 'data');
 process.env.KORE_KEY_DIR = path.join(directory, 'keys');
 const require = createRequire(import.meta.url);
-const { normalizeRouterHex, unifiDhcpOption43, unifiDiscoveryRelayPlan, unifiInformRedirectPlan, unifiActivityMonitorPlan, unifiCleanupPlan, hotspotProfileUpsertCommand } = require(serverCopy);
+const { normalizeRouterHex, unifiDhcpOption43, unifiDiscoveryRelayPlan, unifiInformRedirectPlan, unifiActivityMonitorPlan, unifiCleanupPlan, hotspotProfileUpsertCommand, saoPauloDateKey, prospectAccessState, routerBytePair } = require(serverCopy);
 delete process.env.KORE_TEST_EXPORTS;
 
 test.after(async () => {
   await rm(directory, { recursive: true, force: true });
+});
+
+test('acesso de prospecto so renova na virada do dia em Sao Paulo', () => {
+  const prospect = {
+    created_date: '2026-08-05T13:00:00.000Z',
+    trial_access_date: '2026-08-05',
+    trial_expires_at: '2026-08-05T14:00:00.000Z'
+  };
+  const sameDay = prospectAccessState(prospect, new Date('2026-08-05T20:00:00.000Z'));
+  assert.equal(sameDay.trial_active, false);
+  assert.equal(sameDay.free_access_available, false);
+  assert.equal(sameDay.next_free_access_at, '2026-08-06T03:00:00.000Z');
+
+  const nextDay = prospectAccessState(prospect, new Date('2026-08-06T03:01:00.000Z'));
+  assert.equal(nextDay.free_access_available, true);
+});
+
+test('data diaria respeita o fuso America Sao Paulo', () => {
+  assert.equal(saoPauloDateKey(new Date('2026-08-06T02:59:59.000Z')), '2026-08-05');
+  assert.equal(saoPauloDateKey(new Date('2026-08-06T03:00:00.000Z')), '2026-08-06');
+});
+
+test('contador RouterOS separa upload e download', () => {
+  assert.deepEqual(routerBytePair('12345/67890'), [12345, 67890]);
 });
 
 test('Option 43 UniFi usa o formato minimo por IPv4', () => {

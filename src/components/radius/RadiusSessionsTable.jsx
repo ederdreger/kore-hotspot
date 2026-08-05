@@ -34,8 +34,16 @@ function RateIndicator({ down, up }) {
 
 const STATUS_LABELS = {
   active: 'Ativo',
+  collecting: 'Coletando',
   quota_exceeded: 'Bloqueado',
   warning: 'Alerta',
+};
+
+const ACCOUNT_LABELS = {
+  voucher: 'Voucher',
+  ixc: 'Cliente IXC',
+  prospect: 'Prospecto',
+  client: 'Cliente',
 };
 
 export default function RadiusSessionsTable({ sessions, loading, onDisconnect, onApplyProfile, onUnblock }) {
@@ -101,7 +109,7 @@ export default function RadiusSessionsTable({ sessions, loading, onDisconnect, o
               />
             </div>
             <div className="flex items-center gap-1 bg-secondary rounded-lg p-1">
-              {['all', 'active', 'quota_exceeded', 'warning'].map(s => (
+              {['all', 'active', 'collecting', 'quota_exceeded', 'warning'].map(s => (
                 <button
                   key={s}
                   onClick={() => setFilterStatus(s)}
@@ -149,6 +157,7 @@ export default function RadiusSessionsTable({ sessions, loading, onDisconnect, o
                   <td className="px-4 py-3">
                     <p className="font-mono font-medium text-foreground">{session.username}</p>
                     <p className="text-[10px] text-muted-foreground">{session.fullName}</p>
+                    {ACCOUNT_LABELS[session.accountType] && <p className="text-[9px] font-semibold uppercase tracking-wide text-primary">{ACCOUNT_LABELS[session.accountType]}</p>}
                   </td>
                   <td className="px-4 py-3">
                     <p className="font-mono text-info">{session.framedIp}</p>

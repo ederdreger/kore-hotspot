@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 APP_NAME="Kore-HotSpot"
-SCRIPT_VERSION="v0.2.70"
+SCRIPT_VERSION="v1.2.71"
 REPO_URL="${REPO_URL:-https://github.com/ederdreger/kore-hotspot.git}"
 REPO_SLUG="${REPO_SLUG:-ederdreger/kore-hotspot}"
 BRANCH="${BRANCH:-main}"
@@ -505,6 +505,10 @@ main() {
   detect_public_host
   install_vpn_packages
   prepare_source
+  if [ -f "$INSTALL_DIR/package.json" ]; then
+    SCRIPT_VERSION="v$(node -p "require('$INSTALL_DIR/package.json').version" 2>/dev/null || printf '1.2.71')"
+    log "Aplicando pacote ${SCRIPT_VERSION}"
+  fi
   install_updater_binary
   build_and_install
   migrate_public_endpoints

@@ -214,9 +214,9 @@ export default function APRegisterModal({ ap, onSave, onCheckAdoption, onClose }
                   value={form.band}
                   onChange={e => { set('band', e.target.value); set('channel', e.target.value === '5GHz' ? 36 : 6); }}
                   disabled={managed}
-                  className="w-full h-8 rounded-md border border-input bg-transparent px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                  className="w-full h-8 rounded-md border border-input bg-input px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-100 disabled:bg-secondary/70 disabled:text-foreground"
                 >
-                  {BANDS.map(b => <option key={b} value={b}>{b}</option>)}
+                  {BANDS.map(b => <option className="bg-popover text-popover-foreground" key={b} value={b}>{b}</option>)}
                 </select>
               </div>
               <div>
@@ -225,9 +225,9 @@ export default function APRegisterModal({ ap, onSave, onCheckAdoption, onClose }
                   value={form.channel}
                   onChange={e => set('channel', e.target.value)}
                   disabled={managed}
-                  className="w-full h-8 rounded-md border border-input bg-transparent px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                  className="w-full h-8 rounded-md border border-input bg-input px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-100 disabled:bg-secondary/70 disabled:text-foreground"
                 >
-                  {channels.map(c => <option key={c} value={c}>CH {c}</option>)}
+                  {channels.map(c => <option className="bg-popover text-popover-foreground" key={c} value={c}>CH {c}</option>)}
                 </select>
               </div>
               <div>
@@ -237,7 +237,7 @@ export default function APRegisterModal({ ap, onSave, onCheckAdoption, onClose }
                   value={form.txPower}
                   onChange={e => set('txPower', e.target.value)}
                   disabled={managed}
-                  className="h-8 text-xs"
+                  className="h-8 text-xs disabled:opacity-100 disabled:bg-secondary/70 disabled:text-foreground"
                 />
               </div>
               <div>

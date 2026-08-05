@@ -4,20 +4,20 @@ import {
 } from 'lucide-react';
 
 export const APP_MODULES = [
-  { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard' },
-  { key: 'providers', label: 'Provedores', icon: Building2, path: '/providers' },
-  { key: 'clients', label: 'Clientes', icon: Users, path: '/clients' },
-  { key: 'prospects', label: 'Prospectos', icon: UserSearch, path: '/prospects' },
-  { key: 'mikrotiks', label: 'Equipamentos', icon: Server, path: '/mikrotiks' },
-  { key: 'vpn', label: 'VPN L2TP', icon: Network, path: '/vpn' },
-  { key: 'plans', label: 'Planos', icon: Zap, path: '/plans' },
-  { key: 'vouchers', label: 'Vouchers', icon: Ticket, path: '/vouchers' },
-  { key: 'campaigns', label: 'Campanhas', icon: Megaphone, path: '/campaigns' },
-  { key: 'radius', label: 'RADIUS Monitor', icon: Radio, path: '/radius' },
-  { key: 'ap-monitor', label: 'Monitor de APs', icon: Signal, path: '/ap-monitor' },
-  { key: 'logs', label: 'Logs', icon: ScrollText, path: '/logs' },
-  { key: 'users', label: 'Usuarios', icon: UserCog, path: '/users' },
-  { key: 'settings', label: 'Configuracoes', icon: Settings, path: '/settings' },
+  { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard', iconClass: 'text-cyan-500', iconBgClass: 'bg-cyan-500/10' },
+  { key: 'providers', label: 'Provedores', icon: Building2, path: '/providers', iconClass: 'text-violet-500', iconBgClass: 'bg-violet-500/10' },
+  { key: 'clients', label: 'Clientes', icon: Users, path: '/clients', iconClass: 'text-blue-500', iconBgClass: 'bg-blue-500/10' },
+  { key: 'prospects', label: 'Prospectos', icon: UserSearch, path: '/prospects', iconClass: 'text-fuchsia-500', iconBgClass: 'bg-fuchsia-500/10' },
+  { key: 'mikrotiks', label: 'Equipamentos', icon: Server, path: '/mikrotiks', iconClass: 'text-orange-500', iconBgClass: 'bg-orange-500/10' },
+  { key: 'vpn', label: 'VPN L2TP', icon: Network, path: '/vpn', iconClass: 'text-indigo-500', iconBgClass: 'bg-indigo-500/10' },
+  { key: 'plans', label: 'Planos', icon: Zap, path: '/plans', iconClass: 'text-amber-500', iconBgClass: 'bg-amber-500/10' },
+  { key: 'vouchers', label: 'Vouchers', icon: Ticket, path: '/vouchers', iconClass: 'text-emerald-500', iconBgClass: 'bg-emerald-500/10' },
+  { key: 'campaigns', label: 'Campanhas', icon: Megaphone, path: '/campaigns', iconClass: 'text-rose-500', iconBgClass: 'bg-rose-500/10' },
+  { key: 'radius', label: 'RADIUS Monitor', icon: Radio, path: '/radius', iconClass: 'text-sky-500', iconBgClass: 'bg-sky-500/10' },
+  { key: 'ap-monitor', label: 'Monitor de APs', icon: Signal, path: '/ap-monitor', iconClass: 'text-teal-500', iconBgClass: 'bg-teal-500/10' },
+  { key: 'logs', label: 'Logs', icon: ScrollText, path: '/logs', iconClass: 'text-slate-500', iconBgClass: 'bg-slate-500/10' },
+  { key: 'users', label: 'Usuarios', icon: UserCog, path: '/users', iconClass: 'text-purple-500', iconBgClass: 'bg-purple-500/10' },
+  { key: 'settings', label: 'Configuracoes', icon: Settings, path: '/settings', iconClass: 'text-zinc-500', iconBgClass: 'bg-zinc-500/10' },
 ];
 
 export const SYSTEM_MODULES = ['providers'];
