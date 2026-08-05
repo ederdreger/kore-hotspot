@@ -7,7 +7,7 @@ const net = require('net');
 const dns = require('dns').promises;
 const { AsyncLocalStorage } = require('async_hooks');
 
-const APP_VERSION = '0.2.68';
+const APP_VERSION = '0.2.69';
 const PORT = Number(process.env.PORT || 8081);
 const TOKEN = process.env.KORE_VPN_API_TOKEN || 'kore-vpn-api-2026';
 const DEFAULT_ADMIN_PASSWORD = process.env.KORE_ADMIN_PASSWORD || 'Admin12345';
@@ -2013,10 +2013,6 @@ async function repairMikrotikCaptivePortal(payload = {}) {
   if (!/^[a-zA-Z0-9_.:+@ -]{1,64}$/.test(interfaceName)) {
     throw Object.assign(new Error('Interface do Hotspot invalida'), { status: 400 });
   }
-  const wanInterface = String(device.wan_interface || device.physical_interface || '').trim();
-  if (wanInterface && !/^[a-zA-Z0-9_.:+@ -]{1,64}$/.test(wanInterface)) {
-    throw Object.assign(new Error('Interface WAN invalida'), { status: 400 });
-  }
   const portalBase = getPublicBaseUrl();
   let portalUrl;
   try { portalUrl = new URL(portalBase); } catch { throw Object.assign(new Error('URL publica do captive portal invalida'), { status: 400 }); }
@@ -2026,14 +2022,11 @@ async function repairMikrotikCaptivePortal(payload = {}) {
   if (net.isIP(portalIp) !== 4) throw Object.assign(new Error('Nao foi possivel resolver o IPv4 do captive portal'), { status: 502 });
   const loginSourceHost = routerAddress(PUBLIC_HOST || portalIp);
   const loginSourceUrl = `http://${loginSourceHost}:8081/public/hotspot-login.html`;
-  const profileName = 'kore-hotspot-profile-v2';
+  const profileName = 'kore-hotspot-profile-v3';
   const serverName = 'kore-hotspot';
   const gardenComment = 'Kore-HotSpot captive portal automatico';
   const dnsUdpComment = 'Kore-HotSpot captive DNS UDP';
   const dnsTcpComment = 'Kore-HotSpot captive DNS TCP';
-  const dnsRedirectUdpComment = 'Kore-HotSpot captive DNS redirect UDP';
-  const dnsRedirectTcpComment = 'Kore-HotSpot captive DNS redirect TCP';
-  const natComment = 'Kore-HotSpot captive internet';
   const script = [
     `:local iface "${interfaceName}"`,
     ':if ([:len [/interface find where name=$iface]] = 0) do={ :error "Interface do Hotspot nao encontrada" }',
@@ -2050,7 +2043,7 @@ async function repairMikrotikCaptivePortal(payload = {}) {
     ':local pool [/ip dhcp-server get [:pick $dhcp 0] address-pool]',
     ':if ([:len $pool] = 0) do={ :error "DHCP da interface nao possui address-pool" }',
     `:local profile [/ip hotspot profile find where name="${profileName}"]`,
-    `:if ([:len $profile] = 0) do={ :if ([:len [/file find where name~"^flash"]] > 0) do={ /ip hotspot profile add name="${profileName}" hotspot-address=$gateway use-radius=yes radius-accounting=yes login-by=http-chap,http-pap,cookie html-directory="/flash/hotspot" } else={ /ip hotspot profile add name="${profileName}" hotspot-address=$gateway use-radius=yes radius-accounting=yes login-by=http-chap,http-pap,cookie html-directory=hotspot }; :set profile [/ip hotspot profile find where name="${profileName}"] } else={ /ip hotspot profile set $profile hotspot-address=$gateway use-radius=yes radius-accounting=yes login-by=http-chap,http-pap,cookie }`,
+    `:if ([:len $profile] = 0) do={ :if ([:len [/file find where name~"^flash"]] > 0) do={ /ip hotspot profile add name="${profileName}" hotspot-address=$gateway use-radius=yes radius-accounting=yes login-by=http-chap,http-pap,cookie html-directory="/flash/hotspot" } else={ /ip hotspot profile add name="${profileName}" hotspot-address=$gateway use-radius=yes radius-accounting=yes login-by=http-chap,http-pap,cookie html-directory=hotspot }; :set profile [/ip hotspot profile find where name="${profileName}"] }`,
     ':local hotspot [/ip hotspot find where interface=$iface]',
     `:if ([:len $hotspot] = 0) do={ /ip hotspot add name="${serverName}" interface=$iface address-pool=$pool profile="${profileName}" disabled=no; :set hotspot [/ip hotspot find where name="${serverName}"] } else={ /ip hotspot set [:pick $hotspot 0] address-pool=$pool profile="${profileName}" disabled=no; :set hotspot [:pick $hotspot 0] }`,
     '/ip dns set allow-remote-requests=yes',
@@ -2063,17 +2056,12 @@ async function repairMikrotikCaptivePortal(payload = {}) {
     `:if ([:len $dnsTcp] = 0) do={ /ip firewall filter add chain=input in-interface=$iface protocol=tcp dst-port=53 action=accept comment="${dnsTcpComment}" disabled=no; :set dnsTcp [/ip firewall filter find where comment="${dnsTcpComment}"] } else={ /ip firewall filter set $dnsTcp chain=input in-interface=$iface protocol=tcp dst-port=53 action=accept disabled=no }`,
     '/ip firewall filter move $dnsTcp destination=0',
     '/ip firewall filter move $dnsUdp destination=0',
-    `:do { :local dnsRedirectUdp [/ip firewall nat find where comment="${dnsRedirectUdpComment}"]; :if ([:len $dnsRedirectUdp] = 0) do={ /ip firewall nat add chain=dstnat src-address=$subnet protocol=udp dst-port=53 action=redirect to-ports=53 comment="${dnsRedirectUdpComment}" disabled=no; :set dnsRedirectUdp [/ip firewall nat find where comment="${dnsRedirectUdpComment}"] } else={ /ip firewall nat set $dnsRedirectUdp chain=dstnat src-address=$subnet protocol=udp dst-port=53 action=redirect to-ports=53 disabled=no }; /ip firewall nat move $dnsRedirectUdp destination=0 } on-error={ :put "captive-dns-redirect-udp=ERROR" }`,
-    `:do { :local dnsRedirectTcp [/ip firewall nat find where comment="${dnsRedirectTcpComment}"]; :if ([:len $dnsRedirectTcp] = 0) do={ /ip firewall nat add chain=dstnat src-address=$subnet protocol=tcp dst-port=53 action=redirect to-ports=53 comment="${dnsRedirectTcpComment}" disabled=no; :set dnsRedirectTcp [/ip firewall nat find where comment="${dnsRedirectTcpComment}"] } else={ /ip firewall nat set $dnsRedirectTcp chain=dstnat src-address=$subnet protocol=tcp dst-port=53 action=redirect to-ports=53 disabled=no }; /ip firewall nat move $dnsRedirectTcp destination=0 } on-error={ :put "captive-dns-redirect-tcp=ERROR" }`,
     `:local portalDns [/ip dns static find where name="${portalHost}"]`,
     `:if ([:len $portalDns] = 0) do={ /ip dns static add name="${portalHost}" type=A address=${portalIp} ttl=5m comment="Kore-HotSpot captive portal" disabled=no } else={ /ip dns static set [:pick $portalDns 0] type=A address=${portalIp} ttl=5m disabled=no }`,
-    ...(wanInterface ? [
-      `:if ([:len [/interface find where name="${wanInterface}"]] > 0) do={ :local internetNat [/ip firewall nat find where comment="${natComment}"]; :if ([:len $internetNat] = 0) do={ /ip firewall nat add chain=srcnat src-address=$subnet out-interface="${wanInterface}" action=masquerade comment="${natComment}" disabled=no } else={ /ip firewall nat set $internetNat chain=srcnat src-address=$subnet out-interface="${wanInterface}" action=masquerade disabled=no } }`
-    ] : []),
     `:do { /ip hotspot walled-garden remove [find where comment="${gardenComment}"] } on-error={}`,
     `:do { /ip hotspot walled-garden ip remove [find where comment="${gardenComment}"] } on-error={}`,
     `/ip hotspot walled-garden add dst-host="${portalHost}" action=allow comment="${gardenComment}" disabled=no`,
-    `/ip hotspot walled-garden ip add dst-address=${portalIp} protocol=tcp dst-port=80,443,8081 action=accept comment="${gardenComment}" disabled=no`,
+    `/ip hotspot walled-garden ip add dst-address=${portalIp} action=accept comment="${gardenComment}" disabled=no`,
     ':local fileDirectory "hotspot"',
     ':if ([:len [/file find where name~"^flash"]] > 0) do={ :set fileDirectory "flash/hotspot" } else={ :do { /file make-directory hotspot } on-error={} }',
     ':foreach f in={"login.html";"rlogin.html";"redirect.html";"alogin.html"} do={',
@@ -2090,13 +2078,12 @@ async function repairMikrotikCaptivePortal(payload = {}) {
     ':put "captive-repair-ready=yes"'
   ].join('; ');
   const applied = await runMikrotikKeyCommand(device, script, 60000);
-  const [hotspotResult, profileResult, gardenResult, fileResult, dnsFilterResult, dnsRedirectResult, dhcpNetworkResult] = await Promise.all([
+  const [hotspotResult, profileResult, gardenResult, fileResult, dnsFilterResult, dhcpNetworkResult] = await Promise.all([
     runMikrotikKeyCommand(device, `/ip hotspot print detail without-paging where interface="${interfaceName}"`),
     runMikrotikKeyCommand(device, `/ip hotspot profile print detail without-paging where name="${profileName}"`),
     runMikrotikKeyCommand(device, `/ip hotspot walled-garden ip print detail without-paging where comment="${gardenComment}"`),
     runMikrotikKeyCommand(device, '/file print detail without-paging where name~"hotspot/login.html"'),
     runMikrotikKeyCommand(device, '/ip firewall filter print detail without-paging where comment~"Kore-HotSpot captive DNS"'),
-    runMikrotikKeyCommand(device, '/ip firewall nat print detail without-paging where comment~"Kore-HotSpot captive DNS redirect"'),
     runMikrotikKeyCommand(device, '/ip dhcp-server network print detail without-paging')
   ]);
   const hotspot = parseKeyValueRows(hotspotResult.stdout)[0] || {};
@@ -2106,12 +2093,11 @@ async function repairMikrotikCaptivePortal(payload = {}) {
     ['hotspot/login.html', 'flash/hotspot/login.html'].includes(String(row.name || ''))
   ) || {};
   const dnsProtocols = new Set(parseKeyValueRows(dnsFilterResult.stdout).filter(row => row.action === 'accept' && row['dst-port'] === '53' && row.disabled !== 'true').map(row => row.protocol));
-  const dnsRedirectProtocols = new Set(parseKeyValueRows(dnsRedirectResult.stdout).filter(row => row.chain === 'dstnat' && row.action === 'redirect' && row['dst-port'] === '53' && row.disabled !== 'true').map(row => row.protocol));
   const dhcpDnsReady = parseKeyValueRows(dhcpNetworkResult.stdout).some(row => String(row['dns-server'] || '').split(',').includes(row.gateway));
   const gardenReady = [portalIp, `${portalIp}/32`].includes(String(garden['dst-address'] || ''));
   const normalizedHtmlDirectory = String(profile['html-directory'] || '').replace(/^\//, '');
   const htmlDirectoryReady = ['hotspot', 'flash/hotspot'].includes(normalizedHtmlDirectory);
-  const ready = hotspot.disabled !== 'true' && hotspot.interface === interfaceName && profile.name === profileName && htmlDirectoryReady && gardenReady && !!loginFile.name && dnsProtocols.has('udp') && dnsProtocols.has('tcp') && dnsRedirectProtocols.has('udp') && dnsRedirectProtocols.has('tcp') && dhcpDnsReady;
+  const ready = hotspot.disabled !== 'true' && hotspot.interface === interfaceName && profile.name === profileName && htmlDirectoryReady && gardenReady && !!loginFile.name && dnsProtocols.has('udp') && dnsProtocols.has('tcp') && dhcpDnsReady;
   if (!ready || !/captive-repair-ready=yes/i.test(applied.stdout)) {
     const missing = [];
     if (hotspot.disabled === 'true' || hotspot.interface !== interfaceName) missing.push('servidor Hotspot');
@@ -2120,7 +2106,6 @@ async function repairMikrotikCaptivePortal(payload = {}) {
     if (!gardenReady) missing.push('walled garden');
     if (!loginFile.name) missing.push('login.html');
     if (!dnsProtocols.has('udp') || !dnsProtocols.has('tcp')) missing.push('filtro DNS');
-    if (!dnsRedirectProtocols.has('udp') || !dnsRedirectProtocols.has('tcp')) missing.push('redirecionamento DNS');
     if (!dhcpDnsReady) missing.push('DNS do DHCP');
     if (!/captive-repair-ready=yes/i.test(applied.stdout)) missing.push('confirmacao do script');
     throw Object.assign(new Error(`O MikroTik nao confirmou: ${missing.join(', ')}`), { status: 502 });
