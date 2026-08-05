@@ -527,6 +527,17 @@ async function mikrotikSyncPlans(payload = {}) {
   return data;
 }
 
+async function mikrotikCaptiveRepair(payload = {}) {
+  const response = await fetch(`${VPN_API_URL}/api/mikrotik/captive-repair`, {
+    method: 'POST',
+    headers: jsonHeaders(),
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || 'Erro ao corrigir captive portal no MikroTik');
+  return data;
+}
+
 async function radiusStatus() {
   const response = await fetch(`${VPN_API_URL}/api/radius/status`, {
     headers: apiHeaders()
@@ -816,6 +827,7 @@ async function invoke(functionName, payload) {
     vpnStatus,
     mikrotikStatus,
     mikrotikSyncPlans,
+    mikrotikCaptiveRepair,
     mikrotikPerformance,
     accessPointDiscover,
     accessPointPoll,

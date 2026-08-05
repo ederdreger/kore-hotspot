@@ -2005,6 +2005,91 @@ async function mikrotikStatus({ host, port = '22', user = 'kore-api', password =
   };
 }
 
+async function repairMikrotikCaptivePortal(payload = {}) {
+  const device = mikrotikDeviceById(String(payload.mikrotik_id || payload.id || ''));
+  if (!device) throw Object.assign(new Error('MikroTik nao encontrado'), { status: 404 });
+  const interfaceName = String(payload.interface_name || device.hotspot_interface || device.vlan_interface || '').trim();
+  if (!/^[a-zA-Z0-9_.:+@ -]{1,64}$/.test(interfaceName)) {
+    throw Object.assign(new Error('Interface do Hotspot invalida'), { status: 400 });
+  }
+  const portalBase = getPublicBaseUrl();
+  let portalUrl;
+  try { portalUrl = new URL(portalBase); } catch { throw Object.assign(new Error('URL publica do captive portal invalida'), { status: 400 }); }
+  const portalHost = portalUrl.hostname;
+  let portalIp = net.isIP(portalHost) === 4 ? portalHost : '';
+  if (!portalIp) portalIp = await dns.resolve4(portalHost).then(rows => rows[0] || '').catch(() => '');
+  if (net.isIP(portalIp) !== 4) throw Object.assign(new Error('Nao foi possivel resolver o IPv4 do captive portal'), { status: 502 });
+  const loginSourceHost = routerAddress(PUBLIC_HOST || portalIp);
+  const loginSourceUrl = `http://${loginSourceHost}:8081/public/hotspot-login.html`;
+  const profileName = 'kore-hotspot-profile';
+  const serverName = 'kore-hotspot';
+  const gardenComment = 'Kore-HotSpot captive portal automatico';
+  const script = [
+    `:local iface "${interfaceName}"`,
+    ':if ([:len [/interface find where name=$iface]] = 0) do={ :error "Interface do Hotspot nao encontrada" }',
+    ':local addressEntry [/ip address find where interface=$iface disabled=no]',
+    ':if ([:len $addressEntry] = 0) do={ :error "Interface do Hotspot sem endereco IPv4" }',
+    ':local cidr [/ip address get [:pick $addressEntry 0] address]',
+    ':local slash [:find $cidr "/"]',
+    ':local gateway [:pick $cidr 0 $slash]',
+    ':local dhcp [/ip dhcp-server find where interface=$iface disabled=no]',
+    ':if ([:len $dhcp] = 0) do={ :error "Servidor DHCP ativo nao encontrado na interface" }',
+    ':local pool [/ip dhcp-server get [:pick $dhcp 0] address-pool]',
+    ':if ([:len $pool] = 0) do={ :error "DHCP da interface nao possui address-pool" }',
+    `:local profile [/ip hotspot profile find where name="${profileName}"]`,
+    `:if ([:len $profile] = 0) do={ /ip hotspot profile add name="${profileName}" hotspot-address=$gateway use-radius=yes radius-accounting=yes login-by=http-chap,http-pap,cookie html-directory=hotspot; :set profile [/ip hotspot profile find where name="${profileName}"] } else={ /ip hotspot profile set $profile hotspot-address=$gateway use-radius=yes radius-accounting=yes login-by=http-chap,http-pap,cookie }`,
+    ':local hotspot [/ip hotspot find where interface=$iface]',
+    `:if ([:len $hotspot] = 0) do={ /ip hotspot add name="${serverName}" interface=$iface address-pool=$pool profile="${profileName}" disabled=no; :set hotspot [/ip hotspot find where name="${serverName}"] } else={ /ip hotspot set [:pick $hotspot 0] address-pool=$pool profile="${profileName}" disabled=no; :set hotspot [:pick $hotspot 0] }`,
+    '/ip dns set allow-remote-requests=yes',
+    `:do { /ip hotspot walled-garden remove [find where comment="${gardenComment}"] } on-error={}`,
+    `:do { /ip hotspot walled-garden ip remove [find where comment="${gardenComment}"] } on-error={}`,
+    `/ip hotspot walled-garden add dst-host="${portalHost}" action=allow comment="${gardenComment}" disabled=no`,
+    `/ip hotspot walled-garden ip add dst-address=${portalIp} protocol=tcp dst-port=80,443,8081 action=accept comment="${gardenComment}" disabled=no`,
+    ':local directory "hotspot"',
+    ':if ([:len [/file find where name="flash/hotspot"]] > 0) do={ :set directory "flash/hotspot" } else={ :do { /file make-directory hotspot } on-error={} }',
+    ':foreach f in={"login.html";"rlogin.html";"redirect.html";"alogin.html"} do={',
+    '  :local target ($directory . "/" . $f)',
+    '  :do { /file remove [find where name=$target] } on-error={}',
+    `  /tool fetch url="${loginSourceUrl}" mode=http dst-path=$target keep-result=yes`,
+    '}',
+    ':if ([:len [/file find where name=($directory . "/login.html")]] = 0) do={ :error "login.html nao foi instalado no MikroTik" }',
+    '/ip hotspot profile set $profile html-directory=$directory',
+    ':put ("captive-interface=" . $iface)',
+    ':put ("captive-gateway=" . $gateway)',
+    ':put ("captive-pool=" . $pool)',
+    ':put ("captive-directory=" . $directory)',
+    ':put "captive-repair-ready=yes"'
+  ].join('; ');
+  const applied = await runMikrotikKeyCommand(device, script, 60000);
+  const [hotspotResult, profileResult, gardenResult, fileResult] = await Promise.all([
+    runMikrotikKeyCommand(device, `/ip hotspot print detail without-paging where interface="${interfaceName}"`),
+    runMikrotikKeyCommand(device, `/ip hotspot profile print detail without-paging where name="${profileName}"`),
+    runMikrotikKeyCommand(device, `/ip hotspot walled-garden ip print detail without-paging where comment="${gardenComment}"`),
+    runMikrotikKeyCommand(device, '/file print detail without-paging where name~"hotspot/login.html"')
+  ]);
+  const hotspot = parseKeyValueRows(hotspotResult.stdout)[0] || {};
+  const profile = parseKeyValueRows(profileResult.stdout)[0] || {};
+  const garden = parseKeyValueRows(gardenResult.stdout)[0] || {};
+  const loginFile = parseKeyValueRows(fileResult.stdout)[0] || {};
+  const ready = hotspot.disabled !== 'true' && hotspot.interface === interfaceName && profile.name === profileName && garden['dst-address'] === portalIp && !!loginFile.name;
+  if (!ready || !/captive-repair-ready=yes/i.test(applied.stdout)) {
+    throw Object.assign(new Error('O MikroTik nao confirmou todos os componentes do captive portal'), { status: 502 });
+  }
+  return {
+    success: true,
+    interface: interfaceName,
+    hotspot_server: hotspot.name || serverName,
+    profile: profileName,
+    address_pool: hotspot['address-pool'] || '',
+    html_directory: profile['html-directory'] || '',
+    login_file: loginFile.name,
+    portal_url: `${portalBase.replace(/\/$/, '')}/captive-portal`,
+    portal_ip: portalIp,
+    walled_garden: true,
+    message: 'Captive portal corrigido e validado no MikroTik.'
+  };
+}
+
 async function mikrotikSyncPlans({ host, port = '22', user = 'kore-api' }) {
   const target = String(host || '').trim();
   if (!target) throw new Error('host obrigatorio');
@@ -3991,6 +4076,7 @@ async function handleRequest(req, res) {
     if (req.method === 'GET' && req.url === '/api/vpn/status') return send(res, 200, await vpnStatus());
     if (req.method === 'POST' && req.url === '/api/vpn/users') { assertTenantLicense({ action: 'write', resource: 'vpn' }); return send(res, 200, await ensureUser(await readBody(req))); }
     if (req.method === 'POST' && req.url === '/api/mikrotik/status') return send(res, 200, await mikrotikStatus(await readBody(req)));
+    if (req.method === 'POST' && req.url === '/api/mikrotik/captive-repair') { assertTenantLicense({ action: 'write', resource: 'mikrotik' }); return send(res, 200, await repairMikrotikCaptivePortal(await readBody(req))); }
     if (req.method === 'POST' && req.url === '/api/mikrotik/sync-plans') { assertTenantLicense({ action: 'write', resource: 'mikrotik' }); return send(res, 200, await mikrotikSyncPlans(await readBody(req))); }
 
     return send(res, 404, { error: 'rota nao encontrada' });
