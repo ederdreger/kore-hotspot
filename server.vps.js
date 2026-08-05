@@ -7,7 +7,7 @@ const net = require('net');
 const dns = require('dns').promises;
 const { AsyncLocalStorage } = require('async_hooks');
 
-const APP_VERSION = '0.2.69';
+const APP_VERSION = '0.2.70';
 const PORT = Number(process.env.PORT || 8081);
 const TOKEN = process.env.KORE_VPN_API_TOKEN || 'kore-vpn-api-2026';
 const DEFAULT_ADMIN_PASSWORD = process.env.KORE_ADMIN_PASSWORD || 'Admin12345';
@@ -2058,18 +2058,17 @@ async function repairMikrotikCaptivePortal(payload = {}) {
     '/ip firewall filter move $dnsUdp destination=0',
     `:local portalDns [/ip dns static find where name="${portalHost}"]`,
     `:if ([:len $portalDns] = 0) do={ /ip dns static add name="${portalHost}" type=A address=${portalIp} ttl=5m comment="Kore-HotSpot captive portal" disabled=no } else={ /ip dns static set [:pick $portalDns 0] type=A address=${portalIp} ttl=5m disabled=no }`,
-    `:do { /ip hotspot walled-garden remove [find where comment="${gardenComment}"] } on-error={}`,
-    `:do { /ip hotspot walled-garden ip remove [find where comment="${gardenComment}"] } on-error={}`,
-    `/ip hotspot walled-garden add dst-host="${portalHost}" action=allow comment="${gardenComment}" disabled=no`,
-    `/ip hotspot walled-garden ip add dst-address=${portalIp} action=accept comment="${gardenComment}" disabled=no`,
     ':local fileDirectory "hotspot"',
-    ':if ([:len [/file find where name~"^flash"]] > 0) do={ :set fileDirectory "flash/hotspot" } else={ :do { /file make-directory hotspot } on-error={} }',
+    ':if ([:len [/file find where name~"^flash"]] > 0) do={ :set fileDirectory "flash/hotspot"; :if ([:len [/file find where name="flash/hotspot"]] = 0) do={ /file add name="/flash/hotspot" type=directory } } else={ :do { /file make-directory hotspot } on-error={} }',
     ':foreach f in={"login.html";"rlogin.html";"redirect.html";"alogin.html"} do={',
     '  :local target ($fileDirectory . "/" . $f)',
     '  :do { /file remove [find where name=$target] } on-error={}',
     `  /tool fetch url="${loginSourceUrl}" mode=http dst-path=$target keep-result=yes`,
     '}',
     ':if ([:len [/file find where name=($fileDirectory . "/login.html")]] = 0) do={ :error "login.html nao foi instalado no MikroTik" }',
+    `:do { /ip hotspot walled-garden remove [find where comment="${gardenComment}"] } on-error={}`,
+    `:do { /ip hotspot walled-garden ip remove [find where comment="${gardenComment}"] } on-error={}`,
+    `/ip hotspot walled-garden ip add dst-address=${portalIp} action=accept comment="${gardenComment}" disabled=no`,
     ':put ("captive-interface=" . $iface)',
     ':put ("captive-gateway=" . $gateway)',
     ':put ("captive-pool=" . $pool)',
