@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+umask 077
 
 APP_NAME="Kore-HotSpot"
-SCRIPT_VERSION="v1.2.74"
+SCRIPT_VERSION="v1.2.75"
 REPO_URL="${REPO_URL:-https://github.com/ederdreger/kore-hotspot.git}"
 REPO_SLUG="${REPO_SLUG:-ederdreger/kore-hotspot}"
 BRANCH="${BRANCH:-main}"
+RELEASE_CHANNEL="${RELEASE_CHANNEL:-latest}"
+ALLOW_UNSIGNED_SOURCE="${ALLOW_UNSIGNED_SOURCE:-false}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/kore-hotspot-src}"
 WEB_DIR="${WEB_DIR:-/opt/kore-hotspot}"
 API_DIR="${API_DIR:-/opt/kore-hotspot-vpn-api}"
@@ -19,7 +22,7 @@ ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
 SSH_PORT="${SSH_PORT:-}"
 VPN_LOCAL_IP="${VPN_LOCAL_IP:-10.255.255.1}"
 VPN_IP_RANGE="${VPN_IP_RANGE:-10.255.255.2-10.255.255.254}"
-VPN_IPSEC_SECRET="${VPN_IPSEC_SECRET:-korevpn123}"
+VPN_IPSEC_SECRET="${VPN_IPSEC_SECRET:-}"
 TENANT_ID="${TENANT_ID:-default}"
 MULTI_TENANT="${MULTI_TENANT:-true}"
 KORE_SAAS_MP_ACCESS_TOKEN="${KORE_SAAS_MP_ACCESS_TOKEN:-}"
@@ -30,6 +33,13 @@ API_URL=""
 
 log() { printf '\033[1;36m[%s]\033[0m %s\n' "$APP_NAME" "$*"; }
 fail() { printf '\033[1;31m[ERRO]\033[0m %s\n' "$*" >&2; exit 1; }
+
+validate_managed_path() {
+  local value="$1" label="$2"
+  [[ "$value" = /* ]] || fail "$label deve ser um caminho absoluto"
+  [[ "$value" != *'/../'* && "$value" != */.. && "$value" != *'/./'* ]] || fail "$label contem segmentos inseguros"
+  case "$value" in /|/opt|/usr|/var|/etc|/root|/home) fail "$label aponta para um diretorio amplo e inseguro: $value" ;; esac
+}
 
 require_root() {
   [ "$(id -u)" -eq 0 ] || fail "Execute como root: sudo bash scripts/install.sh"
@@ -88,14 +98,37 @@ install_packages() {
 
 prepare_source() {
   log "Baixando codigo fonte"
-  if [ -d "$INSTALL_DIR/.git" ]; then
-    git -C "$INSTALL_DIR" fetch --all --tags
-    git -C "$INSTALL_DIR" checkout "$BRANCH"
-    git -C "$INSTALL_DIR" pull --ff-only origin "$BRANCH"
+  local tmp metadata tag asset_name checksum_name tarball checksum_url release_api expected_checksum actual_checksum
+  tmp="$(mktemp -d)"
+  metadata="$tmp/release.json"
+  if [ "$RELEASE_CHANNEL" = "latest" ]; then
+    release_api="https://api.github.com/repos/${REPO_SLUG}/releases/latest"
   else
-    rm -rf "$INSTALL_DIR"
-    git clone --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
+    release_api="https://api.github.com/repos/${REPO_SLUG}/releases/tags/${RELEASE_CHANNEL}"
   fi
+  curl -fsSL "$release_api" -o "$metadata"
+  tag="$(jq -r '.tag_name // empty' "$metadata")"
+  asset_name="kore-hotspot-${tag}.tar.gz"
+  checksum_name="${asset_name}.sha256"
+  tarball="$(jq -r --arg name "$asset_name" '.assets[]? | select(.name == $name) | .browser_download_url' "$metadata" | head -n1)"
+  checksum_url="$(jq -r --arg name "$checksum_name" '.assets[]? | select(.name == $name) | .browser_download_url' "$metadata" | head -n1)"
+  if [ -n "$tarball" ] && [ -n "$checksum_url" ]; then
+    curl -fsSL -L "$tarball" -o "$tmp/source.tar.gz"
+    curl -fsSL -L "$checksum_url" -o "$tmp/source.tar.gz.sha256"
+    expected_checksum="$(awk 'NR == 1 { print $1 }' "$tmp/source.tar.gz.sha256")"
+    actual_checksum="$(sha256sum "$tmp/source.tar.gz" | awk '{ print $1 }')"
+    [[ "$expected_checksum" =~ ^[a-fA-F0-9]{64}$ && "$actual_checksum" = "$expected_checksum" ]] || fail "Checksum do pacote invalido"
+    rm -rf "$INSTALL_DIR"
+    mkdir -p "$INSTALL_DIR"
+    tar -xzf "$tmp/source.tar.gz" -C "$INSTALL_DIR" --strip-components=1
+    rm -rf "$tmp"
+    return
+  fi
+  rm -rf "$tmp"
+  [ "$ALLOW_UNSIGNED_SOURCE" = "true" ] || fail "Release ${tag:-desconhecida} sem pacote verificado. Instalacao interrompida."
+  log "AVISO: fonte sem checksum liberada explicitamente por ALLOW_UNSIGNED_SOURCE=true"
+  rm -rf "$INSTALL_DIR"
+  git clone --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
 }
 
 build_frontend() {
@@ -104,7 +137,6 @@ build_frontend() {
   cat > .env.production <<EOF
 VITE_KORE_API_URL=${API_URL}
 VITE_KORE_FORCE_API_URL=false
-VITE_KORE_API_TOKEN=${API_TOKEN}
 VITE_KORE_TENANT_ID=${TENANT_ID}
 VITE_KORE_BUILD_ID=$(date +%Y%m%d%H%M%S)
 EOF
@@ -124,15 +156,19 @@ install_backend() {
   cp "$INSTALL_DIR/server.vps.js" "$API_DIR/server.js"
   install -m 0750 "$INSTALL_DIR/scripts/unifi-local-adopt.sh" /usr/local/sbin/kore-unifi-adopt
   chown -R root:root "$API_DIR"
-  chmod 700 "$API_DIR/keys"
+  chmod 700 "$API_DIR/data" "$API_DIR/keys"
+  find "$API_DIR/data" -type d -exec chmod 0700 {} +
+  find "$API_DIR/data" -type f -exec chmod 0600 {} +
 
   cat > "$CONFIG_DIR/runtime.env" <<EOF
-PORT=8081
-KORE_VPN_API_TOKEN=${API_TOKEN}
+PORT=8082
+KORE_BIND_HOST=127.0.0.1
+KORE_INTERNAL_API_TOKEN=${API_TOKEN}
 KORE_ADMIN_PASSWORD=${ADMIN_PASSWORD}
 KORE_PUBLIC_URL=${PUBLIC_URL}
 KORE_DEFAULT_TENANT=${TENANT_ID}
 KORE_MULTI_TENANT=${MULTI_TENANT}
+KORE_REQUIRE_TENANT_SIGNATURE=true
 KORE_SAAS_MP_ACCESS_TOKEN=${KORE_SAAS_MP_ACCESS_TOKEN}
 KORE_WEB_DIR=${WEB_DIR}
 KORE_CERTBOT_EMAIL=${CERTBOT_EMAIL}
@@ -154,6 +190,15 @@ ExecStart=/usr/bin/node ${API_DIR}/server.js
 Restart=always
 RestartSec=3
 User=root
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictSUIDSGID=true
 
 [Install]
 WantedBy=multi-user.target
@@ -174,7 +219,7 @@ server {
     }
 
     location /api/ {
-        proxy_pass http://127.0.0.1:8081;
+        proxy_pass http://127.0.0.1:8082;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
@@ -183,11 +228,28 @@ server {
     }
 
     location /public/ {
-        proxy_pass http://127.0.0.1:8081;
+        proxy_pass http://127.0.0.1:8082;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+
+server {
+    listen 8081 default_server;
+    server_name _;
+
+    location = /public/hotspot-login.html {
+        proxy_pass http://127.0.0.1:8082;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location / {
+        return 404;
     }
 }
 EOF
@@ -444,6 +506,7 @@ VPN_IP_RANGE=${VPN_IP_RANGE}
 VPN_IPSEC_SECRET=${VPN_IPSEC_SECRET}
 TENANT_ID=${TENANT_ID}
 MULTI_TENANT=${MULTI_TENANT}
+REQUIRE_TENANT_SIGNATURE=true
 KORE_SAAS_MP_ACCESS_TOKEN=${KORE_SAAS_MP_ACCESS_TOKEN}
 RELEASE_CHANNEL=latest
 EOF
@@ -501,7 +564,6 @@ Painel:       ${PUBLIC_URL}
 Painel IP:    http://${PUBLIC_HOST}:8080
 API:          ${API_URL}
 API direta:   http://${PUBLIC_HOST}:8081
-Token API:    ${API_TOKEN}
 Atualizador:  /usr/local/bin/kore-hotspot-update
 SSL:          $([ -n "$DOMAIN" ] && echo "Let's Encrypt para ${DOMAIN}" || echo "nao configurado, informe DOMAIN=seu.dominio")
 Tenant:       ${TENANT_ID}
@@ -521,9 +583,14 @@ main() {
   log "Iniciando instalacao ${SCRIPT_VERSION}"
   require_root
   check_ubuntu
+  validate_managed_path "$INSTALL_DIR" INSTALL_DIR
+  validate_managed_path "$WEB_DIR" WEB_DIR
+  validate_managed_path "$API_DIR" API_DIR
+  validate_managed_path "$CONFIG_DIR" CONFIG_DIR
   detect_public_host
   API_TOKEN="${API_TOKEN:-$(openssl rand -hex 24)}"
   ADMIN_PASSWORD="${ADMIN_PASSWORD:-Kore$(openssl rand -hex 10)!}"
+  VPN_IPSEC_SECRET="${VPN_IPSEC_SECRET:-$(openssl rand -hex 24)}"
   install_packages
   prepare_source
   build_frontend

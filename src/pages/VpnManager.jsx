@@ -74,7 +74,7 @@ export default function VpnManager() {
 
       const secretRaw = await spedynet.entities.Setting.filter({ key: 'vpn_ipsec_secret' });
       if (secretRaw.length > 0) setIpsecSecret(secretRaw[0].value);
-      else setIpsecSecret('korevpn123'); // Default
+      else setIpsecSecret('');
 
       setFormData(f => ({ ...f, mikrotik_server_id: 'global_vps' }));
     } catch (e) {
@@ -243,7 +243,7 @@ export default function VpnManager() {
                     type="text" 
                     value={ipsecSecret}
                     onChange={(e) => setIpsecSecret(e.target.value)}
-                    placeholder="korevpn123"
+                    placeholder="Segredo IPsec configurado na instalacao"
                   />
                   <Button variant="secondary" onClick={handleSaveSecret}>Salvar</Button>
                 </div>

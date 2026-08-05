@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+umask 077
 
 APP_NAME="Kore-HotSpot"
-SCRIPT_VERSION="v1.2.74"
-REPO_URL="${REPO_URL:-https://github.com/ederdreger/kore-hotspot.git}"
+SCRIPT_VERSION="v1.2.75"
 REPO_SLUG="${REPO_SLUG:-ederdreger/kore-hotspot}"
-BRANCH="${BRANCH:-main}"
 RELEASE_CHANNEL="${RELEASE_CHANNEL:-latest}"
+ALLOW_UNSIGNED_RELEASE="${ALLOW_UNSIGNED_RELEASE:-false}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/kore-hotspot-src}"
 WEB_DIR="${WEB_DIR:-/opt/kore-hotspot}"
 API_DIR="${API_DIR:-/opt/kore-hotspot-vpn-api}"
@@ -16,18 +16,26 @@ DOMAIN="${DOMAIN:-}"
 CERTBOT_EMAIL="${CERTBOT_EMAIL:-}"
 PUBLIC_URL="${PUBLIC_URL:-}"
 API_URL="${API_URL:-}"
-API_TOKEN="${API_TOKEN:-kore-vpn-api-2026}"
+API_TOKEN="${API_TOKEN:-}"
 SSH_PORT="${SSH_PORT:-}"
 VPN_LOCAL_IP="${VPN_LOCAL_IP:-10.255.255.1}"
 VPN_IP_RANGE="${VPN_IP_RANGE:-10.255.255.2-10.255.255.254}"
-VPN_IPSEC_SECRET="${VPN_IPSEC_SECRET:-korevpn123}"
+VPN_IPSEC_SECRET="${VPN_IPSEC_SECRET:-}"
 TENANT_ID="${TENANT_ID:-default}"
 MULTI_TENANT="${MULTI_TENANT:-true}"
+REQUIRE_TENANT_SIGNATURE="${REQUIRE_TENANT_SIGNATURE:-false}"
 KORE_SAAS_MP_ACCESS_TOKEN="${KORE_SAAS_MP_ACCESS_TOKEN:-}"
 BACKUP_DIR="${BACKUP_DIR:-/opt/kore-hotspot-backups}"
 
 log() { printf '\033[1;36m[%s]\033[0m %s\n' "$APP_NAME" "$*"; }
 fail() { printf '\033[1;31m[ERRO]\033[0m %s\n' "$*" >&2; exit 1; }
+
+validate_managed_path() {
+  local value="$1" label="$2"
+  [[ "$value" = /* ]] || fail "$label deve ser um caminho absoluto"
+  [[ "$value" != *'/../'* && "$value" != */.. && "$value" != *'/./'* ]] || fail "$label contem segmentos inseguros"
+  case "$value" in /|/opt|/usr|/var|/etc|/root|/home) fail "$label aponta para um diretorio amplo e inseguro: $value" ;; esac
+}
 
 [ "$(id -u)" -eq 0 ] || fail "Execute como root."
 
@@ -51,9 +59,13 @@ detect_public_host() {
 }
 
 backup_data() {
+  local backup_file
   mkdir -p "$BACKUP_DIR"
+  chmod 700 "$BACKUP_DIR"
   if [ -d "$API_DIR/data" ]; then
-    tar -czf "$BACKUP_DIR/data-$(date +%Y%m%d-%H%M%S).tar.gz" -C "$API_DIR" data keys 2>/dev/null || true
+    backup_file="$BACKUP_DIR/data-$(date +%Y%m%d-%H%M%S).tar.gz"
+    tar -czf "$backup_file" -C "$API_DIR" data keys 2>/dev/null || true
+    [ ! -f "$backup_file" ] || chmod 600 "$backup_file"
   fi
 }
 
@@ -252,12 +264,31 @@ EOF
 }
 
 download_release() {
+  local tmp api metadata tag asset_name checksum_name tarball checksum_url expected_checksum actual_checksum
   tmp="$(mktemp -d)"
   if [ "$RELEASE_CHANNEL" = "latest" ]; then
     api="https://api.github.com/repos/${REPO_SLUG}/releases/latest"
-    tarball="$(curl -fsSL "$api" | jq -r '.tarball_url // empty')"
-    [ -n "$tarball" ] || return 1
-    curl -fsSL -L "$tarball" -o "$tmp/source.tar.gz"
+    metadata="$tmp/release.json"
+    curl -fsSL "$api" -o "$metadata"
+    tag="$(jq -r '.tag_name // empty' "$metadata")"
+    asset_name="kore-hotspot-${tag}.tar.gz"
+    checksum_name="${asset_name}.sha256"
+    tarball="$(jq -r --arg name "$asset_name" '.assets[]? | select(.name == $name) | .browser_download_url' "$metadata" | head -n1)"
+    checksum_url="$(jq -r --arg name "$checksum_name" '.assets[]? | select(.name == $name) | .browser_download_url' "$metadata" | head -n1)"
+    if [ -n "$tarball" ] && [ -n "$checksum_url" ]; then
+      curl -fsSL -L "$tarball" -o "$tmp/source.tar.gz"
+      curl -fsSL -L "$checksum_url" -o "$tmp/source.tar.gz.sha256"
+      expected_checksum="$(awk 'NR == 1 { print $1 }' "$tmp/source.tar.gz.sha256")"
+      actual_checksum="$(sha256sum "$tmp/source.tar.gz" | awk '{ print $1 }')"
+      [[ "$expected_checksum" =~ ^[a-fA-F0-9]{64}$ && "$actual_checksum" = "$expected_checksum" ]] || fail "Checksum do pacote invalido"
+    elif [ "$ALLOW_UNSIGNED_RELEASE" = "true" ]; then
+      log "AVISO: release sem checksum; liberada explicitamente por ALLOW_UNSIGNED_RELEASE=true" >&2
+      tarball="$(jq -r '.tarball_url // empty' "$metadata")"
+      [ -n "$tarball" ] || return 1
+      curl -fsSL -L "$tarball" -o "$tmp/source.tar.gz"
+    else
+      fail "Release ${tag:-desconhecida} sem pacote e checksum oficiais. Atualizacao interrompida."
+    fi
     mkdir -p "$tmp/source"
     tar -xzf "$tmp/source.tar.gz" -C "$tmp/source" --strip-components=1
     echo "$tmp/source"
@@ -267,21 +298,11 @@ download_release() {
 }
 
 prepare_source() {
-  if source_dir="$(download_release)"; then
-    rm -rf "$INSTALL_DIR"
-    mkdir -p "$INSTALL_DIR"
-    cp -a "$source_dir/." "$INSTALL_DIR/"
-    return
-  fi
-
-  if [ -d "$INSTALL_DIR/.git" ]; then
-    git -C "$INSTALL_DIR" fetch --all --tags
-    git -C "$INSTALL_DIR" checkout "$BRANCH"
-    git -C "$INSTALL_DIR" pull --ff-only origin "$BRANCH"
-  else
-    rm -rf "$INSTALL_DIR"
-    git clone --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
-  fi
+  local source_dir
+  source_dir="$(download_release)" || fail "Nao foi possivel obter um release verificado"
+  rm -rf "$INSTALL_DIR"
+  mkdir -p "$INSTALL_DIR"
+  cp -a "$source_dir/." "$INSTALL_DIR/"
 }
 
 build_and_install() {
@@ -295,7 +316,6 @@ build_and_install() {
   cat > .env.production <<EOF
 VITE_KORE_API_URL=${API_URL}
 VITE_KORE_FORCE_API_URL=false
-VITE_KORE_API_TOKEN=${API_TOKEN}
 VITE_KORE_TENANT_ID=${TENANT_ID}
 VITE_KORE_BUILD_ID=$(date +%Y%m%d%H%M%S)
 EOF
@@ -327,6 +347,10 @@ EOF
     chmod +x /usr/local/bin/kore-unifi-install
   fi
   chown -R root:root "$WEB_DIR" "$API_DIR"
+  chmod 700 "$API_DIR/data" "$API_DIR/keys"
+  find "$API_DIR/data" -type d -exec chmod 0700 {} +
+  find "$API_DIR/data" -type f -exec chmod 0600 {} +
+  find "$CONFIG_DIR" -maxdepth 1 -type f -name '*.env' -exec chmod 0600 {} +
 }
 
 install_updater_binary() {
@@ -372,7 +396,7 @@ server {
     }
 
     location /api/ {
-        proxy_pass http://127.0.0.1:8081;
+        proxy_pass http://127.0.0.1:8082;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
@@ -381,7 +405,7 @@ server {
     }
 
     location /public/ {
-        proxy_pass http://127.0.0.1:8081;
+        proxy_pass http://127.0.0.1:8082;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -419,7 +443,7 @@ server {
     }
 
     location /api/ {
-        proxy_pass http://127.0.0.1:8081;
+        proxy_pass http://127.0.0.1:8082;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
@@ -428,7 +452,7 @@ server {
     }
 
     location /public/ {
-        proxy_pass http://127.0.0.1:8081;
+        proxy_pass http://127.0.0.1:8082;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -437,6 +461,25 @@ server {
 }
 EOF
     fi
+    cat >> "$candidate" <<EOF
+
+server {
+    listen 8081 default_server;
+    server_name _;
+
+    location = /public/hotspot-login.html {
+        proxy_pass http://127.0.0.1:8082;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location / {
+        return 404;
+    }
+}
+EOF
     cp "$candidate" "$target"
     rm -f "$candidate"
     rm -f /etc/nginx/sites-enabled/default
@@ -466,11 +509,27 @@ configure_api_environment() {
   mkdir -p /etc/systemd/system/kore-vpn-api.service.d
   cat > /etc/systemd/system/kore-vpn-api.service.d/20-kore-env.conf <<EOF
 [Service]
+Environment=PORT=8082
+Environment=KORE_BIND_HOST=127.0.0.1
 Environment=KORE_WEB_DIR=${WEB_DIR}
 Environment=KORE_CERTBOT_EMAIL=${CERTBOT_EMAIL:-admin@spedynet.com.br}
 Environment=KORE_PUBLIC_HOST=${PUBLIC_HOST}
+Environment=KORE_REQUIRE_TENANT_SIGNATURE=${REQUIRE_TENANT_SIGNATURE}
 Environment=KORE_SAAS_MP_ACCESS_TOKEN=${KORE_SAAS_MP_ACCESS_TOKEN}
 EOF
+  cat > /etc/systemd/system/kore-vpn-api.service.d/30-security.conf <<'EOF'
+[Service]
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictSUIDSGID=true
+EOF
+  chmod 600 "${CONFIG_DIR}"/*.env 2>/dev/null || true
 }
 
 restart_services() {
@@ -482,7 +541,7 @@ restart_services() {
 verify_or_rollback() {
   local _
   for _ in $(seq 1 15); do
-    if curl -fsS --max-time 3 http://127.0.0.1:8081/health | jq -e '.ok == true' >/dev/null 2>&1; then
+    if curl -fsS --max-time 3 http://127.0.0.1:8082/health | jq -e '.ok == true' >/dev/null 2>&1; then
       API_DIR="$API_DIR" WEB_DIR="$WEB_DIR" /usr/local/bin/kore-hotspot-doctor
       rm -f "$API_DIR/server.js.rollback"
       return 0
@@ -501,12 +560,19 @@ verify_or_rollback() {
 main() {
   log "Iniciando atualizacao ${SCRIPT_VERSION}"
   load_install_config
+  validate_managed_path "$INSTALL_DIR" INSTALL_DIR
+  validate_managed_path "$WEB_DIR" WEB_DIR
+  validate_managed_path "$API_DIR" API_DIR
+  validate_managed_path "$CONFIG_DIR" CONFIG_DIR
+  validate_managed_path "$BACKUP_DIR" BACKUP_DIR
+  API_TOKEN="${API_TOKEN:-$(openssl rand -hex 24)}"
+  [ -n "$VPN_IPSEC_SECRET" ] || fail "VPN_IPSEC_SECRET ausente em ${CONFIG_DIR}/install.env. A atualizacao foi interrompida para nao alterar a VPN."
   backup_data
   detect_public_host
   install_vpn_packages
   prepare_source
   if [ -f "$INSTALL_DIR/package.json" ]; then
-    SCRIPT_VERSION="v$(node -p "require('$INSTALL_DIR/package.json').version" 2>/dev/null || printf '1.2.74')"
+    SCRIPT_VERSION="v$(node -p "require('$INSTALL_DIR/package.json').version" 2>/dev/null || printf '1.2.75')"
     log "Aplicando pacote ${SCRIPT_VERSION}"
   fi
   install_updater_binary

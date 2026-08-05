@@ -191,16 +191,6 @@ export default function CaptivePortal() {
     ) ? activeClient : null;
   };
 
-  const findProspect = (value) => {
-    const d = digits(value);
-    const params = getPortalParams();
-    const mac = normalizeMac(params.mac);
-    return activeProspect && (
-      (d && digits(activeProspect.phone) === d) ||
-      (mac && normalizeMac(activeProspect.mac_address) === mac)
-    ) ? activeProspect : null;
-  };
-
   const startByPhone = async (event) => {
     event.preventDefault();
     if (!digits(phone)) return;
@@ -224,10 +214,12 @@ export default function CaptivePortal() {
         return;
       }
 
-      const prospect = findProspect(phone);
-      if (prospect?.trial_active && prospect.radius_username && prospect.radius_password) {
-        const login = { username: prospect.radius_username, password: prospect.radius_password };
-        setActiveProspect(prospect);
+      const prospect = activeProspect;
+      if (prospect?.trial_active) {
+        const params = getPortalParams();
+        const res = await spedynet.functions.invoke('captiveProspectLogin', { phone, mac: params.mac, ip: params.ip });
+        const login = res.data?.login || res.data?.authorization;
+        setActiveProspect(res.data?.prospect || prospect);
         setHotspotLogin(login);
         setStage('welcome');
         loginToMikrotik(login, settings.captive_redirect_url || getPortalParams().linkOrig);

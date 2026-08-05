@@ -1,0 +1,31 @@
+name: Pacote verificado do release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  pacote:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          persist-credentials: false
+      - name: Gerar pacote e checksum
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -Eeuo pipefail
+          package="kore-hotspot-${RELEASE_TAG}.tar.gz"
+          tar --exclude=.git --transform "s#^\./#kore-hotspot-${RELEASE_TAG}/#" -czf "${RUNNER_TEMP}/${package}" .
+          mv "${RUNNER_TEMP}/${package}" "$package"
+          sha256sum "$package" > "${package}.sha256"
+      - name: Publicar artefatos
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$RELEASE_TAG" "kore-hotspot-${RELEASE_TAG}.tar.gz" "kore-hotspot-${RELEASE_TAG}.tar.gz.sha256" --clobber
