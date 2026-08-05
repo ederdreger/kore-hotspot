@@ -2012,6 +2012,10 @@ async function repairMikrotikCaptivePortal(payload = {}) {
   if (!/^[a-zA-Z0-9_.:+@ -]{1,64}$/.test(interfaceName)) {
     throw Object.assign(new Error('Interface do Hotspot invalida'), { status: 400 });
   }
+  const wanInterface = String(device.wan_interface || device.physical_interface || '').trim();
+  if (wanInterface && !/^[a-zA-Z0-9_.:+@ -]{1,64}$/.test(wanInterface)) {
+    throw Object.assign(new Error('Interface WAN invalida'), { status: 400 });
+  }
   const portalBase = getPublicBaseUrl();
   let portalUrl;
   try { portalUrl = new URL(portalBase); } catch { throw Object.assign(new Error('URL publica do captive portal invalida'), { status: 400 }); }
@@ -2024,6 +2028,9 @@ async function repairMikrotikCaptivePortal(payload = {}) {
   const profileName = 'kore-hotspot-profile';
   const serverName = 'kore-hotspot';
   const gardenComment = 'Kore-HotSpot captive portal automatico';
+  const dnsUdpComment = 'Kore-HotSpot captive DNS UDP';
+  const dnsTcpComment = 'Kore-HotSpot captive DNS TCP';
+  const natComment = 'Kore-HotSpot captive internet';
   const script = [
     `:local iface "${interfaceName}"`,
     ':if ([:len [/interface find where name=$iface]] = 0) do={ :error "Interface do Hotspot nao encontrada" }',
@@ -2032,6 +2039,9 @@ async function repairMikrotikCaptivePortal(payload = {}) {
     ':local cidr [/ip address get [:pick $addressEntry 0] address]',
     ':local slash [:find $cidr "/"]',
     ':local gateway [:pick $cidr 0 $slash]',
+    ':local prefix [:pick $cidr ($slash + 1) [:len $cidr]]',
+    ':local network [/ip address get [:pick $addressEntry 0] network]',
+    ':local subnet ($network . "/" . $prefix)',
     ':local dhcp [/ip dhcp-server find where interface=$iface disabled=no]',
     ':if ([:len $dhcp] = 0) do={ :error "Servidor DHCP ativo nao encontrado na interface" }',
     ':local pool [/ip dhcp-server get [:pick $dhcp 0] address-pool]',
@@ -2041,6 +2051,20 @@ async function repairMikrotikCaptivePortal(payload = {}) {
     ':local hotspot [/ip hotspot find where interface=$iface]',
     `:if ([:len $hotspot] = 0) do={ /ip hotspot add name="${serverName}" interface=$iface address-pool=$pool profile="${profileName}" disabled=no; :set hotspot [/ip hotspot find where name="${serverName}"] } else={ /ip hotspot set [:pick $hotspot 0] address-pool=$pool profile="${profileName}" disabled=no; :set hotspot [:pick $hotspot 0] }`,
     '/ip dns set allow-remote-requests=yes',
+    ':if ([:len [/ip dns get servers]] = 0) do={ /ip dns set servers=1.1.1.1,8.8.8.8 }',
+    ':local dhcpNetwork [/ip dhcp-server network find where address=$subnet]',
+    ':if ([:len $dhcpNetwork] = 0) do={ /ip dhcp-server network add address=$subnet gateway=$gateway dns-server=$gateway comment="Kore-HotSpot captive DHCP"; :set dhcpNetwork [/ip dhcp-server network find where address=$subnet] } else={ /ip dhcp-server network set [:pick $dhcpNetwork 0] gateway=$gateway dns-server=$gateway }',
+    `:local dnsUdp [/ip firewall filter find where comment="${dnsUdpComment}"]`,
+    `:if ([:len $dnsUdp] = 0) do={ /ip firewall filter add chain=input in-interface=$iface protocol=udp dst-port=53 action=accept comment="${dnsUdpComment}" disabled=no; :set dnsUdp [/ip firewall filter find where comment="${dnsUdpComment}"] } else={ /ip firewall filter set $dnsUdp chain=input in-interface=$iface protocol=udp dst-port=53 action=accept disabled=no }`,
+    `:local dnsTcp [/ip firewall filter find where comment="${dnsTcpComment}"]`,
+    `:if ([:len $dnsTcp] = 0) do={ /ip firewall filter add chain=input in-interface=$iface protocol=tcp dst-port=53 action=accept comment="${dnsTcpComment}" disabled=no; :set dnsTcp [/ip firewall filter find where comment="${dnsTcpComment}"] } else={ /ip firewall filter set $dnsTcp chain=input in-interface=$iface protocol=tcp dst-port=53 action=accept disabled=no }`,
+    '/ip firewall filter move $dnsTcp destination=0',
+    '/ip firewall filter move $dnsUdp destination=0',
+    `:local portalDns [/ip dns static find where name="${portalHost}"]`,
+    `:if ([:len $portalDns] = 0) do={ /ip dns static add name="${portalHost}" type=A address=${portalIp} ttl=5m comment="Kore-HotSpot captive portal" disabled=no } else={ /ip dns static set [:pick $portalDns 0] type=A address=${portalIp} ttl=5m disabled=no }`,
+    ...(wanInterface ? [
+      `:if ([:len [/interface find where name="${wanInterface}"]] > 0) do={ :local internetNat [/ip firewall nat find where comment="${natComment}"]; :if ([:len $internetNat] = 0) do={ /ip firewall nat add chain=srcnat src-address=$subnet out-interface="${wanInterface}" action=masquerade comment="${natComment}" disabled=no } else={ /ip firewall nat set $internetNat chain=srcnat src-address=$subnet out-interface="${wanInterface}" action=masquerade disabled=no } }`
+    ] : []),
     `:do { /ip hotspot walled-garden remove [find where comment="${gardenComment}"] } on-error={}`,
     `:do { /ip hotspot walled-garden ip remove [find where comment="${gardenComment}"] } on-error={}`,
     `/ip hotspot walled-garden add dst-host="${portalHost}" action=allow comment="${gardenComment}" disabled=no`,
@@ -2057,22 +2081,27 @@ async function repairMikrotikCaptivePortal(payload = {}) {
     ':put ("captive-interface=" . $iface)',
     ':put ("captive-gateway=" . $gateway)',
     ':put ("captive-pool=" . $pool)',
+    ':put ("captive-subnet=" . $subnet)',
     ':put ("captive-directory=" . $directory)',
     ':put "captive-repair-ready=yes"'
   ].join('; ');
   const applied = await runMikrotikKeyCommand(device, script, 60000);
-  const [hotspotResult, profileResult, gardenResult, fileResult] = await Promise.all([
+  const [hotspotResult, profileResult, gardenResult, fileResult, dnsFilterResult, dhcpNetworkResult] = await Promise.all([
     runMikrotikKeyCommand(device, `/ip hotspot print detail without-paging where interface="${interfaceName}"`),
     runMikrotikKeyCommand(device, `/ip hotspot profile print detail without-paging where name="${profileName}"`),
     runMikrotikKeyCommand(device, `/ip hotspot walled-garden ip print detail without-paging where comment="${gardenComment}"`),
-    runMikrotikKeyCommand(device, '/file print detail without-paging where name~"hotspot/login.html"')
+    runMikrotikKeyCommand(device, '/file print detail without-paging where name~"hotspot/login.html"'),
+    runMikrotikKeyCommand(device, '/ip firewall filter print detail without-paging where comment~"Kore-HotSpot captive DNS"'),
+    runMikrotikKeyCommand(device, '/ip dhcp-server network print detail without-paging where comment~"Kore-HotSpot"')
   ]);
   const hotspot = parseKeyValueRows(hotspotResult.stdout)[0] || {};
   const profile = parseKeyValueRows(profileResult.stdout)[0] || {};
   const garden = parseKeyValueRows(gardenResult.stdout)[0] || {};
   const loginFile = parseKeyValueRows(fileResult.stdout)[0] || {};
+  const dnsProtocols = new Set(parseKeyValueRows(dnsFilterResult.stdout).filter(row => row.action === 'accept' && row['dst-port'] === '53' && row.disabled !== 'true').map(row => row.protocol));
+  const dhcpDnsReady = parseKeyValueRows(dhcpNetworkResult.stdout).some(row => String(row['dns-server'] || '').split(',').includes(row.gateway));
   const gardenReady = [portalIp, `${portalIp}/32`].includes(String(garden['dst-address'] || ''));
-  const ready = hotspot.disabled !== 'true' && hotspot.interface === interfaceName && profile.name === profileName && gardenReady && !!loginFile.name;
+  const ready = hotspot.disabled !== 'true' && hotspot.interface === interfaceName && profile.name === profileName && gardenReady && !!loginFile.name && dnsProtocols.has('udp') && dnsProtocols.has('tcp') && dhcpDnsReady;
   if (!ready || !/captive-repair-ready=yes/i.test(applied.stdout)) {
     throw Object.assign(new Error('O MikroTik nao confirmou todos os componentes do captive portal'), { status: 502 });
   }
@@ -2087,6 +2116,7 @@ async function repairMikrotikCaptivePortal(payload = {}) {
     portal_url: `${portalBase.replace(/\/$/, '')}/captive-portal`,
     portal_ip: portalIp,
     walled_garden: true,
+    dns_ready: true,
     message: 'Captive portal corrigido e validado no MikroTik.'
   };
 }
