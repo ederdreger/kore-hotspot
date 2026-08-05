@@ -661,9 +661,11 @@ async function localUnifiSnapshot() {
   const expression = [
     'var devices=[];',
     'db.device.find({}).forEach(function(d){devices.push({mac:String(d.mac||""),name:String(d.name||""),ip:String(d.ip||""),model:String(d.model||""),version:String(d.version||""),adopted:!!d.adopted,state:String(d.state||""),inform_url:String(d.inform_url||"")})});',
+    'var pending=[];',
+    'db.config_meta.find({mac:{$exists:true}}).forEach(function(d){pending.push({mac:String(d.mac||""),name:String(d.name||""),ip:String(d.ip||""),model:String(d.model||""),adopted:false,pending:true,state:"PENDING",site_id:String(d.site_id||"")})});',
     'var ssids=[];',
     'db.wlanconf.find({enabled:true}).forEach(function(w){var name=String(w.name||"");if(name&&name.indexOf("element-")!==0)ssids.push(name)});',
-    'print(JSON.stringify({devices:devices,ssids:ssids}));'
+    'print(JSON.stringify({devices:devices,pending:pending,ssids:ssids}));'
   ].join('');
   try {
     const result = await run('mongo', ['--quiet', '--port', '27117', 'ace', '--eval', expression], 5000);
@@ -671,11 +673,23 @@ async function localUnifiSnapshot() {
     const snapshot = JSON.parse(line || '{}');
     return {
       devices: Array.isArray(snapshot.devices) ? snapshot.devices : [],
+      pending: Array.isArray(snapshot.pending) ? snapshot.pending : [],
       ssids: Array.isArray(snapshot.ssids) ? snapshot.ssids : []
     };
   } catch {
-    return { devices: [], ssids: [] };
+    return { devices: [], pending: [], ssids: [] };
   }
+}
+
+async function adoptLocalUnifiController(mac) {
+  const normalizedMac = normalizeMac(mac).toLowerCase();
+  if (!normalizedMac) throw Object.assign(new Error('MAC UniFi invalido para adocao local'), { status: 400 });
+  const result = await run('/usr/local/sbin/kore-unifi-adopt', [normalizedMac], 55000);
+  const line = result.stdout.split(/\r?\n/).map(value => value.trim()).filter(Boolean).pop();
+  let adoption;
+  try { adoption = JSON.parse(line || '{}'); } catch { adoption = null; }
+  if (!adoption?.success) throw Object.assign(new Error(adoption?.error || 'A controladora UniFi nao confirmou a adocao'), { status: 502 });
+  return adoption;
 }
 
 function unifiDiscoveryOptions(value = {}) {
@@ -1266,7 +1280,8 @@ async function unifiAccessPointAdoptionStatus(payload = {}) {
   if (!accessPoint) throw Object.assign(new Error('Access Point nao encontrado'), { status: 404 });
   const mac = normalizeMac(accessPoint.mac_address || accessPoint.mac);
   const snapshot = await localUnifiSnapshot();
-  const controllerDevice = snapshot.devices.find(item => normalizeMac(item.mac) === mac);
+  const controllerDevice = snapshot.devices.find(item => normalizeMac(item.mac) === mac) ||
+    snapshot.pending.find(item => normalizeMac(item.mac) === mac);
   const controllerId = String(accessPoint.controller_id || '').replace(/^unifi-local:/, '');
   const mikrotik = mikrotikDeviceById(controllerId);
   const [informTraffic, discoveryTraffic, activityTraffic] = mikrotik
@@ -1293,7 +1308,8 @@ async function unifiAccessPointAdoptionStatus(payload = {}) {
   });
   const messages = {
     adopted: 'AP adotado e gerenciado pela controladora.',
-    'ready-to-adopt': 'O AP ja enviou o Inform e esta pronto para adocao na controladora.',
+    adopting: 'A controladora aceitou a adocao e esta provisionando o AP.',
+    'ready-to-adopt': 'O AP ja enviou o Inform e esta pronto para adocao automatica pela controladora.',
     failed: accessPoint.adoption_error || 'A preparacao remota falhou em uma das verificacoes.',
     'device-silent': 'O MAC foi encontrado somente no lease DHCP salvo. Durante dois minutos o MikroTik nao recebeu nenhum pacote atual desse equipamento; nao existe AP ativo para adotar nesse IP neste momento.',
     'no-inform': discoveryTraffic.seen
@@ -1335,7 +1351,42 @@ async function adoptUnifiAccessPoint(payload = {}) {
   const controllerId = String(accessPoint.controller_id || '').replace(/^unifi-local:/, '');
   const mikrotik = mikrotikDeviceById(controllerId);
   if (!mikrotik) throw Object.assign(new Error('MikroTik associado ao AP nao encontrado'), { status: 400 });
-  if (mode === 'vlan') return prepareUnifiVlanAdoption(mikrotik, accessPoint, controller, host);
+  if (mode === 'vlan') {
+    const snapshot = await localUnifiSnapshot();
+    const accessPointMac = normalizeMac(accessPoint.mac_address || accessPoint.mac);
+    const controllerDevice = snapshot.devices.find(item => normalizeMac(item.mac) === accessPointMac);
+    const controllerPending = snapshot.pending.find(item => normalizeMac(item.mac) === accessPointMac);
+    if (controllerDevice?.adopted) {
+      const updated = saveAccessPointAdoption(accessPoint, {
+        managed: true,
+        status: 'ok',
+        adoption_status: 'adopted',
+        controller_device_state: controllerDevice.state || 'adopted',
+        adoption_error: ''
+      });
+      return { success: true, access_point: updated, adoption_status: 'adopted', controller_device: controllerDevice, message: 'AP ja esta adotado e gerenciado pela controladora.' };
+    }
+    if (controllerPending || controllerDevice) {
+      const controllerAdoption = await adoptLocalUnifiController(accessPointMac);
+      const adoptionStatus = controllerAdoption.adopted ? 'adopted' : 'adopting';
+      const updated = saveAccessPointAdoption(accessPoint, {
+        managed: !!controllerAdoption.adopted,
+        status: controllerAdoption.adopted ? 'ok' : 'pending',
+        adoption_status: adoptionStatus,
+        controller_device_state: controllerAdoption.adopted ? 'adopted' : 'adopting',
+        controller_seen_at: new Date().toISOString(),
+        adoption_error: ''
+      });
+      return {
+        success: true,
+        access_point: updated,
+        adoption_status: adoptionStatus,
+        controller_adoption: controllerAdoption,
+        message: controllerAdoption.adopted ? 'AP adotado automaticamente pela controladora.' : 'A controladora aceitou a adocao e esta provisionando o AP.'
+      };
+    }
+    return prepareUnifiVlanAdoption(mikrotik, accessPoint, controller, host);
+  }
 
   const sshpassAvailable = await run('which', ['sshpass'], 3000).then(() => true).catch(() => false);
   if (!sshpassAvailable) throw Object.assign(new Error('Componente de adocao SSH ausente na VPS. Execute: apt-get install -y sshpass'), { status: 503 });

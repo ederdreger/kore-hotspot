@@ -313,6 +313,9 @@ EOF
   mkdir -p "$API_DIR/data" "$API_DIR/keys"
   [ -f "$API_DIR/server.js" ] && cp "$API_DIR/server.js" "$API_DIR/server.js.rollback"
   cp "$INSTALL_DIR/server.vps.js" "$API_DIR/server.js"
+  if [ -f "$INSTALL_DIR/scripts/unifi-local-adopt.sh" ]; then
+    install -m 0750 "$INSTALL_DIR/scripts/unifi-local-adopt.sh" /usr/local/sbin/kore-unifi-adopt
+  fi
   if [ -f "$INSTALL_DIR/scripts/provider-upsert.sh" ]; then
     cp "$INSTALL_DIR/scripts/provider-upsert.sh" /usr/local/bin/kore-provider-upsert
     chmod +x /usr/local/bin/kore-provider-upsert

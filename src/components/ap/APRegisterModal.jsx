@@ -26,7 +26,7 @@ const DEFAULT = {
 
 function statusMessage(status) {
   if (status === 'adopted') return 'AP adotado e gerenciado pela controladora.';
-  if (status === 'ready-to-adopt') return 'O AP enviou o Inform e esta pronto para confirmação na controladora.';
+  if (status === 'ready-to-adopt') return 'O AP enviou o Inform e esta pronto para adoção automática pela controladora.';
   if (status === 'no-inform') return 'Tempo limite encerrado: o AP não iniciou conexão com a controladora.';
   if (status === 'device-silent') return 'O MikroTik possui um lease salvo, mas não recebeu tráfego atual desse equipamento.';
   if (status === 'failed') return 'A preparação remota falhou em uma das verificações.';
@@ -321,9 +321,9 @@ export default function APRegisterModal({ ap, onSave, onCheckAdoption, onClose }
             {ap ? 'Salvar Alterações' : 'Cadastrar AP'}
           </Button>
           {canAdopt && (
-            <Button size="sm" onClick={() => handleSave(true)} disabled={!!submitting || ['adopted', 'ready-to-adopt'].includes(adoptionStatus)} className="gap-1.5">
+            <Button size="sm" onClick={() => handleSave(true)} disabled={!!submitting || adoptionStatus === 'adopted'} className="gap-1.5">
               {submitting === 'adopt' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-              {['adopted', 'ready-to-adopt'].includes(adoptionStatus) ? 'Adoção em acompanhamento' : adoptionResult ? 'Reexecutar adoção remota' : 'Executar adoção remota'}
+              {adoptionStatus === 'adopted' ? 'AP adotado' : adoptionStatus === 'ready-to-adopt' ? 'Concluir adoção no controlador' : adoptionResult ? 'Reexecutar adoção remota' : 'Executar adoção remota'}
             </Button>
           )}
         </div>
