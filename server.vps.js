@@ -2071,7 +2071,8 @@ async function repairMikrotikCaptivePortal(payload = {}) {
   const profile = parseKeyValueRows(profileResult.stdout)[0] || {};
   const garden = parseKeyValueRows(gardenResult.stdout)[0] || {};
   const loginFile = parseKeyValueRows(fileResult.stdout)[0] || {};
-  const ready = hotspot.disabled !== 'true' && hotspot.interface === interfaceName && profile.name === profileName && garden['dst-address'] === portalIp && !!loginFile.name;
+  const gardenReady = [portalIp, `${portalIp}/32`].includes(String(garden['dst-address'] || ''));
+  const ready = hotspot.disabled !== 'true' && hotspot.interface === interfaceName && profile.name === profileName && gardenReady && !!loginFile.name;
   if (!ready || !/captive-repair-ready=yes/i.test(applied.stdout)) {
     throw Object.assign(new Error('O MikroTik nao confirmou todos os componentes do captive portal'), { status: 502 });
   }
