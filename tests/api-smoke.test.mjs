@@ -114,6 +114,32 @@ test('voucher nao e consumido quando o MikroTik nao pode autorizar', async () =>
   assert.equal(voucher.status, 'available');
 });
 
+test('cadastro captive falho nao deixa prospect residual', async () => {
+  const token = await loginAdmin();
+  const plan = await request('/api/entities/plans', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Kore-Session': token },
+    body: JSON.stringify({ name: 'Primeiro acesso', status: 'active', is_trial: true, trial_duration_minutes: 60 })
+  });
+  assert.equal(plan.response.status, 200);
+
+  const attempt = await request('/api/captive/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: 'Cliente sem roteador',
+      cpf: '12345678901',
+      mac: '4A:89:E1:D9:CE:FA',
+      ip: '192.168.1.18',
+      plan_id: plan.data.item.id
+    })
+  });
+  assert.notEqual(attempt.response.status, 200);
+
+  const prospects = JSON.parse(await readFile(path.join(directory, 'data', 'captive-prospects.json'), 'utf8'));
+  assert.deepEqual(prospects, []);
+});
+
 test('Access Points sao persistidos na API por tenant', async () => {
   const token = await loginAdmin();
   const created = await request('/api/entities/access_points', {

@@ -309,6 +309,8 @@ EOF
   rm -rf "${WEB_DIR}.old"
   [ -d "$WEB_DIR" ] && mv "$WEB_DIR" "${WEB_DIR}.old"
   mv "${WEB_DIR}.new" "$WEB_DIR"
+  find "$WEB_DIR" -type d -exec chmod 0755 {} +
+  find "$WEB_DIR" -type f -exec chmod 0644 {} +
 
   mkdir -p "$API_DIR/data" "$API_DIR/keys"
   [ -f "$API_DIR/server.js" ] && cp "$API_DIR/server.js" "$API_DIR/server.js.rollback"
