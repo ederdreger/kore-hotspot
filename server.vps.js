@@ -7,7 +7,7 @@ const net = require('net');
 const dns = require('dns').promises;
 const { AsyncLocalStorage } = require('async_hooks');
 
-const APP_VERSION = '0.2.67';
+const APP_VERSION = '0.2.68';
 const PORT = Number(process.env.PORT || 8081);
 const TOKEN = process.env.KORE_VPN_API_TOKEN || 'kore-vpn-api-2026';
 const DEFAULT_ADMIN_PASSWORD = process.env.KORE_ADMIN_PASSWORD || 'Admin12345';
@@ -2063,12 +2063,8 @@ async function repairMikrotikCaptivePortal(payload = {}) {
     `:if ([:len $dnsTcp] = 0) do={ /ip firewall filter add chain=input in-interface=$iface protocol=tcp dst-port=53 action=accept comment="${dnsTcpComment}" disabled=no; :set dnsTcp [/ip firewall filter find where comment="${dnsTcpComment}"] } else={ /ip firewall filter set $dnsTcp chain=input in-interface=$iface protocol=tcp dst-port=53 action=accept disabled=no }`,
     '/ip firewall filter move $dnsTcp destination=0',
     '/ip firewall filter move $dnsUdp destination=0',
-    `:local dnsRedirectUdp [/ip firewall nat find where comment="${dnsRedirectUdpComment}"]`,
-    `:if ([:len $dnsRedirectUdp] = 0) do={ /ip firewall nat add chain=dstnat in-interface=$iface protocol=udp dst-port=53 action=redirect to-ports=53 comment="${dnsRedirectUdpComment}" disabled=no; :set dnsRedirectUdp [/ip firewall nat find where comment="${dnsRedirectUdpComment}"] } else={ /ip firewall nat set $dnsRedirectUdp chain=dstnat in-interface=$iface protocol=udp dst-port=53 action=redirect to-ports=53 disabled=no }`,
-    `:local dnsRedirectTcp [/ip firewall nat find where comment="${dnsRedirectTcpComment}"]`,
-    `:if ([:len $dnsRedirectTcp] = 0) do={ /ip firewall nat add chain=dstnat in-interface=$iface protocol=tcp dst-port=53 action=redirect to-ports=53 comment="${dnsRedirectTcpComment}" disabled=no; :set dnsRedirectTcp [/ip firewall nat find where comment="${dnsRedirectTcpComment}"] } else={ /ip firewall nat set $dnsRedirectTcp chain=dstnat in-interface=$iface protocol=tcp dst-port=53 action=redirect to-ports=53 disabled=no }`,
-    '/ip firewall nat move $dnsRedirectTcp destination=0',
-    '/ip firewall nat move $dnsRedirectUdp destination=0',
+    `:do { :local dnsRedirectUdp [/ip firewall nat find where comment="${dnsRedirectUdpComment}"]; :if ([:len $dnsRedirectUdp] = 0) do={ /ip firewall nat add chain=dstnat src-address=$subnet protocol=udp dst-port=53 action=redirect to-ports=53 comment="${dnsRedirectUdpComment}" disabled=no; :set dnsRedirectUdp [/ip firewall nat find where comment="${dnsRedirectUdpComment}"] } else={ /ip firewall nat set $dnsRedirectUdp chain=dstnat src-address=$subnet protocol=udp dst-port=53 action=redirect to-ports=53 disabled=no }; /ip firewall nat move $dnsRedirectUdp destination=0 } on-error={ :put "captive-dns-redirect-udp=ERROR" }`,
+    `:do { :local dnsRedirectTcp [/ip firewall nat find where comment="${dnsRedirectTcpComment}"]; :if ([:len $dnsRedirectTcp] = 0) do={ /ip firewall nat add chain=dstnat src-address=$subnet protocol=tcp dst-port=53 action=redirect to-ports=53 comment="${dnsRedirectTcpComment}" disabled=no; :set dnsRedirectTcp [/ip firewall nat find where comment="${dnsRedirectTcpComment}"] } else={ /ip firewall nat set $dnsRedirectTcp chain=dstnat src-address=$subnet protocol=tcp dst-port=53 action=redirect to-ports=53 disabled=no }; /ip firewall nat move $dnsRedirectTcp destination=0 } on-error={ :put "captive-dns-redirect-tcp=ERROR" }`,
     `:local portalDns [/ip dns static find where name="${portalHost}"]`,
     `:if ([:len $portalDns] = 0) do={ /ip dns static add name="${portalHost}" type=A address=${portalIp} ttl=5m comment="Kore-HotSpot captive portal" disabled=no } else={ /ip dns static set [:pick $portalDns 0] type=A address=${portalIp} ttl=5m disabled=no }`,
     ...(wanInterface ? [
@@ -2100,7 +2096,7 @@ async function repairMikrotikCaptivePortal(payload = {}) {
     runMikrotikKeyCommand(device, `/ip hotspot walled-garden ip print detail without-paging where comment="${gardenComment}"`),
     runMikrotikKeyCommand(device, '/file print detail without-paging where name~"hotspot/login.html"'),
     runMikrotikKeyCommand(device, '/ip firewall filter print detail without-paging where comment~"Kore-HotSpot captive DNS"'),
-    runMikrotikKeyCommand(device, '/ip firewall nat print detail without-paging where chain=dstnat'),
+    runMikrotikKeyCommand(device, '/ip firewall nat print detail without-paging where comment~"Kore-HotSpot captive DNS redirect"'),
     runMikrotikKeyCommand(device, '/ip dhcp-server network print detail without-paging')
   ]);
   const hotspot = parseKeyValueRows(hotspotResult.stdout)[0] || {};
