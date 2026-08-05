@@ -116,22 +116,23 @@ function migrateLegacyFile(source, target) {
 
 function hotspotLoginHtml() {
   const portal = `${getPublicBaseUrl()}/captive-portal`;
+  const portalQuery = `tenant=${encodeURIComponent(currentTenant().id || DEFAULT_TENANT_ID)}&mac=$(mac)&ip=$(ip)&username=$(username)&link-login=$(link-login-only)&link-orig=$(link-orig)&error=$(error)`;
   return `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Kore-HotSpot</title>
-  <meta http-equiv="refresh" content="0; url=${portal}?mac=$(mac)&ip=$(ip)&username=$(username)&link-login=$(link-login-only)&link-orig=$(link-orig)&error=$(error)">
+  <meta http-equiv="refresh" content="0; url=${portal}?${portalQuery}">
   <script>
-    window.location.replace('${portal}?mac=$(mac)&ip=$(ip)&username=$(username)&link-login=$(link-login-only)&link-orig=$(link-orig)&error=$(error)');
+    window.location.replace('${portal}?${portalQuery}');
   </script>
 </head>
 <body style="margin:0;background:#0b111d;color:#e5eefc;font-family:Arial,sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;text-align:center">
   <main>
     <h1>Kore-HotSpot</h1>
     <p>Redirecionando para o portal...</p>
-    <p><a style="color:#17d9f5" href="${portal}?mac=$(mac)&ip=$(ip)&username=$(username)&link-login=$(link-login-only)&link-orig=$(link-orig)&error=$(error)">Abrir portal</a></p>
+    <p><a style="color:#17d9f5" href="${portal}?${portalQuery}">Abrir portal</a></p>
   </main>
 </body>
 </html>`;
@@ -2952,6 +2953,14 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    location /public/ {
+        proxy_pass http://127.0.0.1:8081;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
     location / {
         try_files $uri $uri/ /index.html;
     }
@@ -3004,6 +3013,14 @@ server {
     location /api/ {
         proxy_pass http://127.0.0.1:8081;
         proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /public/ {
+        proxy_pass http://127.0.0.1:8081;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
