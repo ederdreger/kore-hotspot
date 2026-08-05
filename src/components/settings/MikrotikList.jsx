@@ -4,7 +4,7 @@ import { useAuth } from '@/lib/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Plus, Pencil, Trash2, Server, Eye, EyeOff, CheckCircle, RefreshCw, X, Terminal, Activity } from 'lucide-react';
+import { Plus, Pencil, Trash2, Server, Eye, EyeOff, CheckCircle, RefreshCw, X, Terminal, Activity, LogIn } from 'lucide-react';
 import { toast } from 'sonner';
 import MikrotikScriptModal from './MikrotikScriptModal';
 import MikrotikStatusModal from './MikrotikStatusModal';
@@ -43,6 +43,7 @@ export default function MikrotikList() {
   const [showPass, setShowPass] = useState(false);
   const [scriptMt, setScriptMt] = useState(null);
   const [statusMt, setStatusMt] = useState(null);
+  const [repairingCaptive, setRepairingCaptive] = useState('');
   const [radiusSettings, setRadiusSettings] = useState({});
   const [vpnAccounts, setVpnAccounts] = useState([]);
 
@@ -180,6 +181,22 @@ export default function MikrotikList() {
     load();
   };
 
+  const handleCaptiveRepair = async (mt) => {
+    const id = mt._id || mt.id;
+    setRepairingCaptive(id);
+    try {
+      const response = await spedynet.functions.invoke('mikrotikCaptiveRepair', {
+        mikrotik_id: id,
+        interface_name: mt.hotspot_interface || mt.vlan_interface
+      });
+      toast.success(response.data?.message || 'Captive portal corrigido no MikroTik.');
+    } catch (error) {
+      toast.error(error.message || 'Falha ao corrigir captive portal.');
+    } finally {
+      setRepairingCaptive('');
+    }
+  };
+
   const fields = [
     { key: 'name', label: 'Nome / Identificação', placeholder: 'Ex: Praça Central AP01' },
     { key: 'host', label: 'IP do MikroTik ou Cloud DDNS', placeholder: '192.168.88.1 ou xxx.sn.mynetname.net' },
@@ -251,6 +268,15 @@ export default function MikrotikList() {
                 >
                   <Terminal className="w-3.5 h-3.5" />
                   Script
+                </button>
+                <button
+                  onClick={() => handleCaptiveRepair(mt)}
+                  disabled={repairingCaptive === (mt._id || mt.id)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-info/10 hover:bg-info/20 text-info transition-colors text-xs font-medium disabled:opacity-50"
+                  title="Auditar e corrigir o redirecionamento do captive portal"
+                >
+                  {repairingCaptive === (mt._id || mt.id) ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <LogIn className="w-3.5 h-3.5" />}
+                  Corrigir portal
                 </button>
                 <button onClick={() => openEdit(mt)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-primary transition-colors" title="Editar">
                   <Pencil className="w-3.5 h-3.5" />
