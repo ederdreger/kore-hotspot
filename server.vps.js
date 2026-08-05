@@ -3548,7 +3548,6 @@ async function captiveRegister(payload = {}) {
     return true;
   });
   filtered.unshift(item);
-  writeCaptiveDb(filtered.slice(0, 1000));
 
   const mikrotik = resolveMikrotikTarget(payload, item);
   const authorization = await createHotspotUser({
@@ -3565,8 +3564,10 @@ async function captiveRegister(payload = {}) {
     item.mac_address = authorization.mac || item.mac_address;
     item.ip_address = authorization.ip || item.ip_address;
     item.updated_date = new Date().toISOString();
-    writeCaptiveDb([item, ...filtered.filter(existing => existing.id !== item.id && existing._id !== item._id)].slice(0, 1000));
   }
+  // Persist only after RouterOS confirms the access grant. This keeps failed
+  // registration attempts retryable and avoids records in the wrong tenant.
+  writeCaptiveDb([item, ...filtered.filter(existing => existing.id !== item.id && existing._id !== item._id)].slice(0, 1000));
 
   return { success: true, prospect: item, authorization, login: { username: item.radius_username, password: item.radius_password } };
 }

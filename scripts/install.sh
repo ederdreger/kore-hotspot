@@ -114,6 +114,8 @@ EOF
   mkdir -p "$WEB_DIR"
   cp -a dist/. "$WEB_DIR/"
   chown -R root:root "$WEB_DIR"
+  find "$WEB_DIR" -type d -exec chmod 0755 {} +
+  find "$WEB_DIR" -type f -exec chmod 0644 {} +
 }
 
 install_backend() {
