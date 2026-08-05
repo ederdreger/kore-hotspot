@@ -120,6 +120,7 @@ install_backend() {
   log "Instalando API local"
   mkdir -p "$API_DIR/data" "$API_DIR/keys" "$CONFIG_DIR"
   cp "$INSTALL_DIR/server.vps.js" "$API_DIR/server.js"
+  install -m 0750 "$INSTALL_DIR/scripts/unifi-local-adopt.sh" /usr/local/sbin/kore-unifi-adopt
   chown -R root:root "$API_DIR"
   chmod 700 "$API_DIR/keys"
 
