@@ -15,7 +15,7 @@ function resolveAppVersion() {
       if (version) return String(version);
     } catch {}
   }
-  return '1.2.75';
+  return '1.2.76';
 }
 
 const APP_VERSION = resolveAppVersion();

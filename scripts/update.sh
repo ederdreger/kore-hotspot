@@ -3,7 +3,7 @@ set -Eeuo pipefail
 umask 077
 
 APP_NAME="Kore-HotSpot"
-SCRIPT_VERSION="v1.2.75"
+SCRIPT_VERSION="v1.2.76"
 REPO_SLUG="${REPO_SLUG:-ederdreger/kore-hotspot}"
 RELEASE_CHANNEL="${RELEASE_CHANNEL:-latest}"
 ALLOW_UNSIGNED_RELEASE="${ALLOW_UNSIGNED_RELEASE:-false}"
@@ -38,6 +38,26 @@ validate_managed_path() {
 }
 
 [ "$(id -u)" -eq 0 ] || fail "Execute como root."
+
+load_update_environment() {
+  local config_file="${CONFIG_DIR}/update.env" line key value
+  [ -f "$config_file" ] || return 0
+  [ "$(stat -c '%u' "$config_file")" -eq 0 ] || fail "$config_file deve pertencer ao root"
+  if find "$config_file" -maxdepth 0 -perm /022 -print -quit | grep -q .; then
+    fail "$config_file nao pode ser gravavel por grupo ou outros usuarios"
+  fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|'#'*) continue ;; *=*) ;; *) continue ;; esac
+    key="${line%%=*}"
+    value="${line#*=}"
+    case "$key" in
+      REPO_URL|REPO_SLUG|BRANCH|INSTALL_DIR|WEB_DIR|API_DIR|PUBLIC_HOST|DOMAIN|CERTBOT_EMAIL|ENABLE_SSL|PUBLIC_URL|API_URL|API_TOKEN|ADMIN_PASSWORD|SSH_PORT|VPN_LOCAL_IP|VPN_IP_RANGE|VPN_IPSEC_SECRET|TENANT_ID|MULTI_TENANT|REQUIRE_TENANT_SIGNATURE|KORE_SAAS_MP_ACCESS_TOKEN|RELEASE_CHANNEL|ALLOW_UNSIGNED_RELEASE|BACKUP_DIR)
+        printf -v "$key" '%s' "$value"
+        export "${key?}"
+        ;;
+    esac
+  done < "$config_file"
+}
 
 load_install_config() {
   local config_file="${CONFIG_DIR}/install.env"
@@ -559,6 +579,7 @@ verify_or_rollback() {
 
 main() {
   log "Iniciando atualizacao ${SCRIPT_VERSION}"
+  load_update_environment
   load_install_config
   validate_managed_path "$INSTALL_DIR" INSTALL_DIR
   validate_managed_path "$WEB_DIR" WEB_DIR
@@ -572,7 +593,7 @@ main() {
   install_vpn_packages
   prepare_source
   if [ -f "$INSTALL_DIR/package.json" ]; then
-    SCRIPT_VERSION="v$(node -p "require('$INSTALL_DIR/package.json').version" 2>/dev/null || printf '1.2.75')"
+    SCRIPT_VERSION="v$(node -p "require('$INSTALL_DIR/package.json').version" 2>/dev/null || printf '1.2.76')"
     log "Aplicando pacote ${SCRIPT_VERSION}"
   fi
   install_updater_binary
