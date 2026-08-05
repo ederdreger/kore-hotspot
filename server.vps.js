@@ -2030,6 +2030,8 @@ async function repairMikrotikCaptivePortal(payload = {}) {
   const gardenComment = 'Kore-HotSpot captive portal automatico';
   const dnsUdpComment = 'Kore-HotSpot captive DNS UDP';
   const dnsTcpComment = 'Kore-HotSpot captive DNS TCP';
+  const dnsRedirectUdpComment = 'Kore-HotSpot captive DNS redirect UDP';
+  const dnsRedirectTcpComment = 'Kore-HotSpot captive DNS redirect TCP';
   const natComment = 'Kore-HotSpot captive internet';
   const script = [
     `:local iface "${interfaceName}"`,
@@ -2060,6 +2062,12 @@ async function repairMikrotikCaptivePortal(payload = {}) {
     `:if ([:len $dnsTcp] = 0) do={ /ip firewall filter add chain=input in-interface=$iface protocol=tcp dst-port=53 action=accept comment="${dnsTcpComment}" disabled=no; :set dnsTcp [/ip firewall filter find where comment="${dnsTcpComment}"] } else={ /ip firewall filter set $dnsTcp chain=input in-interface=$iface protocol=tcp dst-port=53 action=accept disabled=no }`,
     '/ip firewall filter move $dnsTcp destination=0',
     '/ip firewall filter move $dnsUdp destination=0',
+    `:local dnsRedirectUdp [/ip firewall nat find where comment="${dnsRedirectUdpComment}"]`,
+    `:if ([:len $dnsRedirectUdp] = 0) do={ /ip firewall nat add chain=dstnat in-interface=$iface protocol=udp dst-port=53 action=redirect to-ports=53 comment="${dnsRedirectUdpComment}" disabled=no; :set dnsRedirectUdp [/ip firewall nat find where comment="${dnsRedirectUdpComment}"] } else={ /ip firewall nat set $dnsRedirectUdp chain=dstnat in-interface=$iface protocol=udp dst-port=53 action=redirect to-ports=53 disabled=no }`,
+    `:local dnsRedirectTcp [/ip firewall nat find where comment="${dnsRedirectTcpComment}"]`,
+    `:if ([:len $dnsRedirectTcp] = 0) do={ /ip firewall nat add chain=dstnat in-interface=$iface protocol=tcp dst-port=53 action=redirect to-ports=53 comment="${dnsRedirectTcpComment}" disabled=no; :set dnsRedirectTcp [/ip firewall nat find where comment="${dnsRedirectTcpComment}"] } else={ /ip firewall nat set $dnsRedirectTcp chain=dstnat in-interface=$iface protocol=tcp dst-port=53 action=redirect to-ports=53 disabled=no }`,
+    '/ip firewall nat move $dnsRedirectTcp destination=0',
+    '/ip firewall nat move $dnsRedirectUdp destination=0',
     `:local portalDns [/ip dns static find where name="${portalHost}"]`,
     `:if ([:len $portalDns] = 0) do={ /ip dns static add name="${portalHost}" type=A address=${portalIp} ttl=5m comment="Kore-HotSpot captive portal" disabled=no } else={ /ip dns static set [:pick $portalDns 0] type=A address=${portalIp} ttl=5m disabled=no }`,
     ...(wanInterface ? [
@@ -2070,13 +2078,14 @@ async function repairMikrotikCaptivePortal(payload = {}) {
     `/ip hotspot walled-garden add dst-host="${portalHost}" action=allow comment="${gardenComment}" disabled=no`,
     `/ip hotspot walled-garden ip add dst-address=${portalIp} protocol=tcp dst-port=80,443,8081 action=accept comment="${gardenComment}" disabled=no`,
     ':local directory "hotspot"',
-    ':if ([:len [/file find where name="flash/hotspot"]] > 0) do={ :set directory "flash/hotspot" } else={ :do { /file make-directory hotspot } on-error={} }',
+    ':local fileDirectory "hotspot"',
+    ':if ([:len [/file find where name~"^flash"]] > 0) do={ :set fileDirectory "flash/hotspot" } else={ :do { /file make-directory hotspot } on-error={} }',
     ':foreach f in={"login.html";"rlogin.html";"redirect.html";"alogin.html"} do={',
-    '  :local target ($directory . "/" . $f)',
+    '  :local target ($fileDirectory . "/" . $f)',
     '  :do { /file remove [find where name=$target] } on-error={}',
     `  /tool fetch url="${loginSourceUrl}" mode=http dst-path=$target keep-result=yes`,
     '}',
-    ':if ([:len [/file find where name=($directory . "/login.html")]] = 0) do={ :error "login.html nao foi instalado no MikroTik" }',
+    ':if ([:len [/file find where name=($fileDirectory . "/login.html")]] = 0) do={ :error "login.html nao foi instalado no MikroTik" }',
     '/ip hotspot profile set $profile html-directory=$directory',
     ':put ("captive-interface=" . $iface)',
     ':put ("captive-gateway=" . $gateway)',
@@ -2086,22 +2095,26 @@ async function repairMikrotikCaptivePortal(payload = {}) {
     ':put "captive-repair-ready=yes"'
   ].join('; ');
   const applied = await runMikrotikKeyCommand(device, script, 60000);
-  const [hotspotResult, profileResult, gardenResult, fileResult, dnsFilterResult, dhcpNetworkResult] = await Promise.all([
+  const [hotspotResult, profileResult, gardenResult, fileResult, dnsFilterResult, dnsRedirectResult, dhcpNetworkResult] = await Promise.all([
     runMikrotikKeyCommand(device, `/ip hotspot print detail without-paging where interface="${interfaceName}"`),
     runMikrotikKeyCommand(device, `/ip hotspot profile print detail without-paging where name="${profileName}"`),
     runMikrotikKeyCommand(device, `/ip hotspot walled-garden ip print detail without-paging where comment="${gardenComment}"`),
     runMikrotikKeyCommand(device, '/file print detail without-paging where name~"hotspot/login.html"'),
     runMikrotikKeyCommand(device, '/ip firewall filter print detail without-paging where comment~"Kore-HotSpot captive DNS"'),
-    runMikrotikKeyCommand(device, '/ip dhcp-server network print detail without-paging where comment~"Kore-HotSpot"')
+    runMikrotikKeyCommand(device, '/ip firewall nat print detail without-paging where comment~"Kore-HotSpot captive DNS redirect"'),
+    runMikrotikKeyCommand(device, '/ip dhcp-server network print detail without-paging')
   ]);
   const hotspot = parseKeyValueRows(hotspotResult.stdout)[0] || {};
   const profile = parseKeyValueRows(profileResult.stdout)[0] || {};
   const garden = parseKeyValueRows(gardenResult.stdout)[0] || {};
-  const loginFile = parseKeyValueRows(fileResult.stdout)[0] || {};
+  const loginFile = parseKeyValueRows(fileResult.stdout).find(row =>
+    ['hotspot/login.html', 'flash/hotspot/login.html'].includes(String(row.name || ''))
+  ) || {};
   const dnsProtocols = new Set(parseKeyValueRows(dnsFilterResult.stdout).filter(row => row.action === 'accept' && row['dst-port'] === '53' && row.disabled !== 'true').map(row => row.protocol));
+  const dnsRedirectProtocols = new Set(parseKeyValueRows(dnsRedirectResult.stdout).filter(row => row.chain === 'dstnat' && row.action === 'redirect' && row['dst-port'] === '53' && row.disabled !== 'true').map(row => row.protocol));
   const dhcpDnsReady = parseKeyValueRows(dhcpNetworkResult.stdout).some(row => String(row['dns-server'] || '').split(',').includes(row.gateway));
   const gardenReady = [portalIp, `${portalIp}/32`].includes(String(garden['dst-address'] || ''));
-  const ready = hotspot.disabled !== 'true' && hotspot.interface === interfaceName && profile.name === profileName && gardenReady && !!loginFile.name && dnsProtocols.has('udp') && dnsProtocols.has('tcp') && dhcpDnsReady;
+  const ready = hotspot.disabled !== 'true' && hotspot.interface === interfaceName && profile.name === profileName && !String(profile['html-directory'] || '').includes('flash/flash') && gardenReady && !!loginFile.name && dnsProtocols.has('udp') && dnsProtocols.has('tcp') && dnsRedirectProtocols.has('udp') && dnsRedirectProtocols.has('tcp') && dhcpDnsReady;
   if (!ready || !/captive-repair-ready=yes/i.test(applied.stdout)) {
     throw Object.assign(new Error('O MikroTik nao confirmou todos os componentes do captive portal'), { status: 502 });
   }
@@ -2137,7 +2150,7 @@ async function diagnoseMikrotikCaptivePortal(payload = {}) {
     dhcp_server: `/ip dhcp-server print detail without-paging where interface="${interfaceName}"`,
     dhcp_networks: '/ip dhcp-server network print detail without-paging',
     dhcp_leases: '/ip dhcp-server lease print detail without-paging where status=bound',
-    hotspot_server: `/ip hotspot print stats detail without-paging where interface="${interfaceName}"`,
+    hotspot_server: `/ip hotspot print detail without-paging where interface="${interfaceName}"`,
     hotspot_profiles: '/ip hotspot profile print detail without-paging',
     hotspot_hosts: '/ip hotspot host print detail without-paging',
     hotspot_active: '/ip hotspot active print detail without-paging',
