@@ -79,8 +79,8 @@ function Brand({ logoUrl, title = 'Kore-HotSpot' }) {
       {logoUrl ? (
         <img src={logoUrl} alt={title} className="max-h-8 max-w-[180px] object-contain" />
       ) : (
-        <div className="text-2xl font-black tracking-tight text-[#c72eb5]">
-          Kore<span className="text-[#0ea5e9]">HotSpot</span>
+        <div className="text-2xl font-black tracking-tight">
+          <span className="text-red-500">Kore</span><span className="text-blue-500">-HotSpot</span>
         </div>
       )}
     </div>

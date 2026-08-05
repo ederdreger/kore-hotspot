@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
-import { Ticket, Plus, Search, RefreshCw, Copy, Trash2, Clock, CheckCircle } from 'lucide-react';
+import { Ticket, Plus, Search, RefreshCw, Copy, Trash2, Clock, CheckCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -24,6 +24,8 @@ export default function Vouchers() {
   const [showDialog, setShowDialog] = useState(false);
   const [form, setForm] = useState({ plan_id: '', duration_minutes: '30', quantity: '1', notes: '' });
   const [saving, setSaving] = useState(false);
+  const [page, setPage] = useState(1);
+  const pageSize = 25;
 
   const load = async ({ silent = false } = {}) => {
     if (!silent) setLoading(true);
@@ -48,6 +50,12 @@ export default function Vouchers() {
     const matchStatus = statusFilter === 'all' || currentStatus === statusFilter;
     return matchSearch && matchStatus;
   });
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const paginated = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
+  useEffect(() => { setPage(1); }, [search, statusFilter]);
+  useEffect(() => { if (page > totalPages) setPage(totalPages); }, [page, totalPages]);
 
   const handleCreate = async () => {
     setSaving(true);
@@ -93,18 +101,19 @@ export default function Vouchers() {
   };
 
   const stats = [
-    { label: 'Disponíveis', value: vouchers.filter(v => v.status === 'available').length, color: 'text-success' },
-    { label: 'Em uso agora', value: vouchers.filter(v => voucherStatus(v) === 'online').length, color: 'text-success' },
-    { label: 'Coletando', value: vouchers.filter(v => voucherStatus(v) === 'collecting').length, color: 'text-info' },
-    { label: 'Expirados', value: vouchers.filter(v => v.status === 'expired').length, color: 'text-destructive' },
-    { label: 'Total', value: vouchers.length, color: 'text-foreground' },
+    { label: 'Disponíveis', value: vouchers.filter(v => v.status === 'available').length, color: 'text-emerald-600 dark:text-emerald-400', card: 'border-emerald-500/30 bg-gradient-to-br from-emerald-500/15 to-card', dot: 'bg-emerald-500' },
+    { label: 'Em uso agora', value: vouchers.filter(v => voucherStatus(v) === 'online').length, color: 'text-cyan-600 dark:text-cyan-400', card: 'border-cyan-500/30 bg-gradient-to-br from-cyan-500/15 to-card', dot: 'bg-cyan-500' },
+    { label: 'Coletando', value: vouchers.filter(v => voucherStatus(v) === 'collecting').length, color: 'text-blue-600 dark:text-blue-400', card: 'border-blue-500/30 bg-gradient-to-br from-blue-500/15 to-card', dot: 'bg-blue-500' },
+    { label: 'Expirados', value: vouchers.filter(v => v.status === 'expired').length, color: 'text-rose-600 dark:text-rose-400', card: 'border-rose-500/30 bg-gradient-to-br from-rose-500/15 to-card', dot: 'bg-rose-500' },
+    { label: 'Total', value: vouchers.length, color: 'text-violet-600 dark:text-violet-400', card: 'border-violet-500/30 bg-gradient-to-br from-violet-500/15 to-card', dot: 'bg-violet-500' },
   ];
 
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         {stats.map((s, i) => (
-          <div key={i} className="bg-card border border-border rounded-xl p-4">
+          <div key={i} className={`relative overflow-hidden border rounded-xl p-4 shadow-sm ${s.card}`}>
+            <span className={`absolute right-4 top-4 h-2.5 w-2.5 rounded-full shadow-[0_0_12px_currentColor] ${s.dot}`} />
             <p className={`text-2xl font-bold font-mono ${s.color}`}>{s.value}</p>
             <p className="text-xs text-muted-foreground mt-1">{s.label}</p>
           </div>
@@ -153,7 +162,7 @@ export default function Vouchers() {
                 </tr>
               )) : filtered.length === 0 ? (
                 <tr><td colSpan={6} className="text-center py-12 text-muted-foreground"><Ticket className="w-8 h-8 mx-auto mb-2 opacity-30" /><p>Nenhum voucher encontrado</p></td></tr>
-              ) : filtered.map(v => (
+              ) : paginated.map(v => (
                 <tr key={v.id} className="border-b border-border hover:bg-secondary/20 transition-colors">
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
@@ -170,7 +179,7 @@ export default function Vouchers() {
                   </td>
                   <td className="px-4 py-3">
                     <StatusBadge status={voucherStatus(v)} />
-                    {v.runtime_last_seen_at && <p className="mt-1 text-[10px] text-muted-foreground">presenÃ§a coletada</p>}
+                    {v.runtime_last_seen_at && <p className="mt-1 text-[10px] text-muted-foreground">presença coletada</p>}
                   </td>
                   <td className="px-4 py-3 hidden lg:table-cell">
                     {v.used_by_name ? (
@@ -195,7 +204,22 @@ export default function Vouchers() {
             </tbody>
           </table>
         </div>
-        {!loading && <div className="px-4 py-2 border-t border-border text-xs text-muted-foreground">{filtered.length} registro(s)</div>}
+        {!loading && (
+          <div className="flex flex-col gap-2 border-t border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs text-muted-foreground">
+              {filtered.length === 0 ? 'Nenhum registro' : `${(currentPage - 1) * pageSize + 1}–${Math.min(currentPage * pageSize, filtered.length)} de ${filtered.length} vouchers`}
+            </p>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" className="h-8 gap-1" disabled={currentPage === 1} onClick={() => setPage(value => Math.max(1, value - 1))}>
+                <ChevronLeft className="h-3.5 w-3.5" /> Anterior
+              </Button>
+              <span className="min-w-24 text-center text-xs font-medium text-foreground">Página {currentPage} de {totalPages}</span>
+              <Button variant="outline" size="sm" className="h-8 gap-1" disabled={currentPage === totalPages} onClick={() => setPage(value => Math.min(totalPages, value + 1))}>
+                Próxima <ChevronRight className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
 
       <Dialog open={showDialog} onOpenChange={setShowDialog}>

@@ -15,7 +15,7 @@ function resolveAppVersion() {
       if (version) return String(version);
     } catch {}
   }
-  return '1.2.72';
+  return '1.2.73';
 }
 
 const APP_VERSION = resolveAppVersion();
@@ -2264,9 +2264,11 @@ async function repairMikrotikCaptivePortal(payload = {}) {
     ':local pool [/ip dhcp-server get [:pick $dhcp 0] address-pool]',
     ':if ([:len $pool] = 0) do={ :error "DHCP da interface nao possui address-pool" }',
     `:local profile [/ip hotspot profile find where name="${profileName}"]`,
-    `:if ([:len $profile] = 0) do={ :if ([:len [/file find where name~"^flash"]] > 0) do={ /ip hotspot profile add name="${profileName}" hotspot-address=$gateway use-radius=yes radius-accounting=yes login-by=http-chap,http-pap,cookie html-directory="/flash/hotspot" } else={ /ip hotspot profile add name="${profileName}" hotspot-address=$gateway use-radius=yes radius-accounting=yes login-by=http-chap,http-pap,cookie html-directory=hotspot }; :set profile [/ip hotspot profile find where name="${profileName}"] }`,
+    `:if ([:len $profile] = 0) do={ :if ([:len [/file find where name~"^flash"]] > 0) do={ /ip hotspot profile add name="${profileName}" hotspot-address=$gateway use-radius=yes radius-accounting=yes login-by=http-chap,http-pap html-directory="/flash/hotspot" } else={ /ip hotspot profile add name="${profileName}" hotspot-address=$gateway use-radius=yes radius-accounting=yes login-by=http-chap,http-pap html-directory=hotspot }; :set profile [/ip hotspot profile find where name="${profileName}"] }`,
+    '/ip hotspot profile set [:pick $profile 0] login-by=http-chap,http-pap use-radius=yes radius-accounting=yes',
     ':local hotspot [/ip hotspot find where interface=$iface]',
-    `:if ([:len $hotspot] = 0) do={ /ip hotspot add name="${serverName}" interface=$iface address-pool=$pool profile="${profileName}" disabled=no; :set hotspot [/ip hotspot find where name="${serverName}"] } else={ /ip hotspot set [:pick $hotspot 0] address-pool=$pool profile="${profileName}" disabled=no; :set hotspot [:pick $hotspot 0] }`,
+    `:if ([:len $hotspot] = 0) do={ /ip hotspot add name="${serverName}" interface=$iface address-pool=$pool profile="${profileName}" idle-timeout=1m keepalive-timeout=10s disabled=no; :set hotspot [/ip hotspot find where name="${serverName}"] } else={ /ip hotspot set [:pick $hotspot 0] address-pool=$pool profile="${profileName}" idle-timeout=1m keepalive-timeout=10s disabled=no; :set hotspot [:pick $hotspot 0] }`,
+    ':do { /ip hotspot cookie remove [find] } on-error={}',
     '/ip dns set allow-remote-requests=yes',
     ':if ([:len [/ip dns get servers]] = 0) do={ /ip dns set servers=1.1.1.1,8.8.8.8 }',
     ':local dhcpNetwork [/ip dhcp-server network find where address=$subnet]',

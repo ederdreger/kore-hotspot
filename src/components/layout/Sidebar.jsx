@@ -34,16 +34,12 @@ export default function Sidebar({ open, onClose }) {
         open ? 'translate-x-0' : '-translate-x-full'
       )}>
         <div className="flex items-center justify-between px-6 py-5 border-b border-border">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center glow-cyan">
-              <Wifi className="w-4 h-4 text-primary-foreground" />
-            </div>
+          <div className="flex min-w-0 items-center gap-3">
             {sidebarLogoUrl ? (
-              <img src={sidebarLogoUrl} alt="Kore-HotSpot" className="max-h-9 max-w-[150px] object-contain" />
+              <img src={sidebarLogoUrl} alt="Logo da empresa" className="max-h-11 max-w-[190px] object-contain" />
             ) : (
-              <div>
-                <p className="font-bold text-sm text-foreground">Kore</p>
-                <p className="text-xs text-primary font-mono tracking-widest">HOTSPOT</p>
+              <div className="text-xl font-black tracking-tight" aria-label="Kore-HotSpot">
+                <span className="text-red-500">Kore</span><span className="text-blue-500">-HotSpot</span>
               </div>
             )}
           </div>

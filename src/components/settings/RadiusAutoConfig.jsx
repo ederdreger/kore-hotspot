@@ -92,7 +92,8 @@ export default function RadiusAutoConfig() {
 
 /radius add service=hotspot address=${config.radius_host} secret="${secretToUse}" authentication-port=${config.radius_port} accounting-port=1813 timeout=3s comment="Kore-HotSpot"
 
-/ip hotspot profile set [find default=yes] use-radius=yes radius-accounting=yes login-by=http-chap,http-pap,cookie html-directory=hotspot
+/ip hotspot profile set [find default=yes] use-radius=yes radius-accounting=yes login-by=http-chap,http-pap html-directory=hotspot
+/ip hotspot cookie remove [find]
 
 :put "=== INTEGRACAO KORE-HOTSPOT CONCLUIDA ==="
 `;

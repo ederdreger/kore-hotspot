@@ -205,8 +205,9 @@ ${vpnSection}
 /ip dhcp-server add name="${dhcpName}" interface="${finalHotspotInterface}" address-pool="${poolName}" lease-time=1h authoritative=yes disabled=no
 
 # Perfil e servidor Hotspot na interface final ${finalHotspotInterface}
-/ip hotspot profile add name="${profileName}" hotspot-address=${hotspotNet.gateway} use-radius=yes radius-accounting=yes login-by=http-chap,http-pap,cookie html-directory=hotspot
-/ip hotspot add name="${hotspotName}" interface="${finalHotspotInterface}" address-pool="${poolName}" profile="${profileName}" disabled=no
+/ip hotspot profile add name="${profileName}" hotspot-address=${hotspotNet.gateway} use-radius=yes radius-accounting=yes login-by=http-chap,http-pap html-directory=hotspot
+/ip hotspot add name="${hotspotName}" interface="${finalHotspotInterface}" address-pool="${poolName}" profile="${profileName}" idle-timeout=1m keepalive-timeout=10s disabled=no
+/ip hotspot cookie remove [find]
 
 # Perfis de velocidade gerados a partir dos planos cadastrados no sistema
 ${profileScript || ':put "Nenhum perfil de velocidade cadastrado no sistema"'}
