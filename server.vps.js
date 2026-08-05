@@ -693,6 +693,19 @@ async function adoptLocalUnifiController(mac) {
   return adoption;
 }
 
+async function forgetLocalUnifiController(mac) {
+  const normalizedMac = normalizeMac(mac).toLowerCase();
+  if (!normalizedMac) throw Object.assign(new Error('MAC UniFi invalido para exclusao local'), { status: 400 });
+  const result = await run('/usr/local/sbin/kore-unifi-adopt', [normalizedMac, 'forget'], 55000);
+  const line = result.stdout.split(/\r?\n/).map(value => value.trim()).filter(Boolean).pop();
+  let removal;
+  try { removal = JSON.parse(line || '{}'); } catch { removal = null; }
+  if (!removal?.success || !removal?.forgotten) {
+    throw Object.assign(new Error(removal?.error || 'A controladora UniFi nao confirmou a exclusao'), { status: 502 });
+  }
+  return removal;
+}
+
 function unifiDiscoveryOptions(value = {}) {
   const managementInterface = String(value.management_interface || '').trim();
   if (managementInterface && !/^[a-zA-Z0-9_.:+@ -]{1,64}$/.test(managementInterface)) {
@@ -1122,6 +1135,52 @@ function unifiDiscoveryRelayPlan(apIp, controllerIp, mac) {
       '/ip firewall filter move $forward destination=0'
     ].join('; ')
   };
+}
+
+function unifiCleanupPlan(mac) {
+  const normalizedMac = normalizeMac(mac);
+  if (!normalizedMac) throw Object.assign(new Error('MAC UniFi invalido para limpeza'), { status: 400 });
+  const suffix = normalizedMac.replace(/:/g, '').toLowerCase();
+  const optionName = `kore-unifi-${suffix}`;
+  return {
+    mac: normalizedMac,
+    suffix,
+    optionName,
+    script: [
+      `:do { /ip hotspot ip-binding remove [find where mac-address="${normalizedMac}"] } on-error={}`,
+      `:do { /ip hotspot active remove [find where mac-address="${normalizedMac}"] } on-error={}`,
+      `:do { /ip hotspot host remove [find where mac-address="${normalizedMac}"] } on-error={}`,
+      `:do { /ip firewall nat remove [find where comment~"${suffix}"] } on-error={}`,
+      `:do { /ip firewall mangle remove [find where comment~"${suffix}"] } on-error={}`,
+      `:do { /ip firewall filter remove [find where comment~"${suffix}"] } on-error={}`,
+      `:do { /ip dhcp-server lease remove [find where mac-address="${normalizedMac}"] } on-error={}`,
+      `:do { /ip dhcp-server option remove [find where name="${optionName}"] } on-error={}`,
+      `:do { /ip arp remove [find where mac-address="${normalizedMac}"] } on-error={}`,
+      ':put "unifi-cleanup-complete"'
+    ].join('; ')
+  };
+}
+
+async function cleanupUnifiAccessPoint(accessPoint = {}) {
+  const mac = normalizeMac(accessPoint.mac_address || accessPoint.mac);
+  if (!mac) throw Object.assign(new Error('O Access Point nao possui MAC valido para exclusao completa'), { status: 400 });
+  const local = accessPoint.source === 'unifi-local' || String(accessPoint.controller_id || '').startsWith('unifi-local:');
+  const wasPrepared = !!(accessPoint.managed || accessPoint.adoption_requested_at || accessPoint.adoption_status === 'adopted');
+  let controller = { skipped: true };
+  if (local && wasPrepared) controller = await forgetLocalUnifiController(mac);
+
+  const controllerId = String(accessPoint.controller_id || '').replace(/^unifi-local:/, '');
+  const mikrotik = controllerId ? mikrotikDeviceById(controllerId) : null;
+  let router = { skipped: true };
+  if (mikrotik) {
+    const plan = unifiCleanupPlan(mac);
+    const result = await runMikrotikKeyCommand(mikrotik, plan.script, 20000);
+    if (!/unifi-cleanup-complete/i.test(result.stdout || '')) {
+      throw Object.assign(new Error('O MikroTik nao confirmou a limpeza completa do UniFi'), { status: 502 });
+    }
+    router = { cleaned: true, option_name: plan.optionName, mac };
+  }
+  return { controller, router, mac };
 }
 
 async function configureUnifiDiscoveryRelay(mikrotik, accessPoint, controllerIp) {
@@ -2230,7 +2289,7 @@ async function mikrotikSyncPlans({ host, port = '22', user = 'kore-api' }) {
     const name = rawName.replace(/"/g, '');
     const rate = planRateLimit(plan);
     if (!rate) return '';
-    return `:do { /ip hotspot user profile remove [find where name=${name}] } on-error={}; /ip hotspot user profile add name=${name} rate-limit=${rate} shared-users=1`;
+    return hotspotProfileUpsertCommand(name, rate);
   }).filter(Boolean);
   if (!commands.length) return { success: true, applied: 0, message: 'Nenhum plano com velocidade para sincronizar' };
 
@@ -3272,10 +3331,14 @@ async function entityCrud(req) {
   if (req.method === 'DELETE' && parsed.id) {
     assertTenantLicense({ action: 'write', resource: parsed.entity });
     const removedItem = items.find(item => item.id === parsed.id || item._id === parsed.id);
+    let cleanup = null;
     if (parsed.entity === 'clients' && removedItem) {
       await cleanupMikrotikAccess(removedItem);
     }
     if (parsed.entity === 'access_points' && removedItem) {
+      if (removedItem.source === 'unifi-local' || String(removedItem.controller_id || '').startsWith('unifi-local:')) {
+        cleanup = await cleanupUnifiAccessPoint(removedItem);
+      }
       const ignored = readJson(AP_IGNORED_FILE, []);
       const mac = normalizeMac(removedItem.mac_address || removedItem.mac);
       const id = removedItem.id || removedItem._id || parsed.id;
@@ -3288,7 +3351,7 @@ async function entityCrud(req) {
       }
     }
     writeJson(file, items.filter(item => item.id !== parsed.id && item._id !== parsed.id));
-    return { success: true };
+    return { success: true, cleanup };
   }
 
   return null;
@@ -3319,7 +3382,7 @@ async function ensureHotspotProfile({ host, port = '22', user = 'kore-api', plan
   const profile = hotspotProfileName(plan);
   const rate = planRateLimit(plan);
   if (!rate) return { profile, rate_limit: '' };
-  const command = `:do { /ip hotspot user profile remove [find where name=${profile}] } on-error={}; /ip hotspot user profile add name=${profile} rate-limit=${rate} shared-users=1; /ip hotspot user profile print detail where name=${profile}`;
+  const command = `${hotspotProfileUpsertCommand(profile, rate)}; /ip hotspot user profile print detail where name=${profile}`;
   await ensureSshKey();
   const { stdout } = await runSshWithRetry(['-i', KEY_PATH, '-o', 'LogLevel=ERROR', '-o', 'IdentitiesOnly=yes', '-o', 'PreferredAuthentications=publickey', '-o', 'PubkeyAcceptedAlgorithms=+ssh-rsa', '-o', 'HostkeyAlgorithms=+ssh-rsa', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=8', '-p', String(port || '22'), `${user || 'kore-api'}@${host}`, command], 15000);
   return { profile, rate_limit: rate, raw: stdout };
@@ -3364,7 +3427,7 @@ async function createHotspotUser({ host, port = '22', user = 'kore-api', usernam
     cleanMac ? `:do { /ip hotspot ip-binding remove [find where mac-address="${cleanMac}"] } on-error={}` : '',
     cleanIp ? `:do { /ip hotspot ip-binding remove [find where address="${cleanIp}"] } on-error={}` : '',
     `:do { /ip hotspot user remove [find where name=${login}] } on-error={}`,
-    `/ip hotspot user add name=${login} password="${pass}" profile=${profile} server=kore-hotspot comment="Kore-HotSpot captive ${cleanMac || cleanIp || login}" disabled=no`,
+    `/ip hotspot user add name=${login} password="${pass}" profile=${profile} server=kore-hotspot limit-uptime=${ttlMinutes}m comment="Kore-HotSpot captive ${cleanMac || cleanIp || login}" disabled=no`,
     cleanMac ? `:do { /ip hotspot active remove [find where mac-address="${cleanMac}"] } on-error={}` : '',
     cleanIp ? `:do { /ip hotspot active login user=${login} password="${pass}" ip=${cleanIp} } on-error={ :error "Falha ao ativar usuario Hotspot" }` : '',
     cleanIp ? `:delay 1s; :if ([:len [/ip hotspot active find where user=${login}]] = 0) do={ :error "Usuario criado, mas a sessao Hotspot nao foi ativada" }` : '',
@@ -3712,18 +3775,15 @@ async function captiveVoucherLogin(payload = {}) {
   const reservationExpired = voucher?.status === 'reserved' && Date.now() - new Date(voucher.reserved_at || 0).getTime() > 5 * 60 * 1000;
   if (!voucher || (voucher.status !== 'available' && !reservationExpired)) throw Object.assign(new Error('Voucher invalido ou indisponivel'), { status: 400 });
 
-  const minutes = Number(voucher.duration_minutes || payload.minutes || 30);
-  const expires = new Date(Date.now() + minutes * 60000).toISOString();
+  const minutes = Math.max(1, Math.min(Number(voucher.duration_minutes || payload.minutes || 30) || 30, 60 * 24 * 7));
   const matchesVoucher = item => item.id === voucher.id || item._id === voucher._id;
   writeJson(ENTITY_FILES.vouchers, vouchers.map(item => matchesVoucher(item) ? { ...item, status: 'reserved', reserved_at: new Date().toISOString() } : item));
 
   let authorization;
   try {
     const mikrotik = resolveMikrotikTarget(payload, voucher);
-    authorization = await createHotspotUser({
+    authorization = await authorizeHotspot({
       ...mikrotik,
-      username: hotspotCredential(`voucher-${code}`),
-      password: randomPassword(),
       mac: payload.mac,
       ip: payload.ip,
       minutes,
@@ -3740,7 +3800,7 @@ async function captiveVoucherLogin(payload = {}) {
     status: 'used',
     reserved_at: '',
     used_at: new Date().toISOString(),
-    expires_at: expires,
+    expires_at: new Date(Date.now() + authorization.minutes * 60000).toISOString(),
     used_by_name: payload.name || 'Visitante',
     used_by_email: payload.email || '',
     mac_address: authorization.mac || normalizeMac(payload.mac),
@@ -3748,7 +3808,12 @@ async function captiveVoucherLogin(payload = {}) {
   };
   const current = readJson(ENTITY_FILES.vouchers, []);
   writeJson(ENTITY_FILES.vouchers, current.map(item => matchesVoucher(item) ? usedVoucher : item));
-  return { success: true, voucher: usedVoucher, minutes, authorization, login: { username: authorization.username, password: authorization.password, active_login: authorization.active_login } };
+  return { success: true, voucher: usedVoucher, minutes: authorization.minutes, authorization, login: { active_login: true } };
+}
+
+function hotspotProfileUpsertCommand(profile, rate) {
+  const variable = `profileId${String(profile).replace(/[^A-Za-z0-9]/g, '').slice(-20) || 'Kore'}`;
+  return `:local ${variable} [/ip hotspot user profile find where name=${profile}]; :if ([:len $${variable}] = 0) do={ /ip hotspot user profile add name=${profile} rate-limit=${rate} shared-users=1 } else={ /ip hotspot user profile set $${variable} rate-limit=${rate} shared-users=1 }`;
 }
 
 async function activateFreePlan(payload = {}) {
@@ -4241,7 +4306,7 @@ const server = http.createServer((req, res) => {
 });
 
 if (process.env.KORE_TEST_EXPORTS === 'true') {
-  module.exports = { normalizeRouterHex, unifiDhcpOption43, unifiDiscoveryRelayPlan, unifiInformRedirectPlan, unifiActivityMonitorPlan };
+  module.exports = { normalizeRouterHex, unifiDhcpOption43, unifiDiscoveryRelayPlan, unifiInformRedirectPlan, unifiActivityMonitorPlan, unifiCleanupPlan, hotspotProfileUpsertCommand };
 } else {
   ensureSshKey().then(() => {
     server.listen(PORT, '0.0.0.0', () => console.log(`Kore VPN API listening on ${PORT}`));
