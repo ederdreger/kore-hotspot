@@ -70,11 +70,14 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
     const sshPort = mikrotik.port || '22';
     const sshUser = mikrotik.user || 'kore-api';
     const sshFallbackPassword = mikrotik.password || 'KoreKeyFallback@123';
-    const publicServerHost = cleanVpnServer || window.location.hostname;
+    let portalBaseUrl = radius?.public_base_url || window.location.origin;
+    let portalHost = window.location.hostname;
+    try { portalHost = new URL(portalBaseUrl).hostname || portalHost; } catch { portalBaseUrl = window.location.origin; }
+    const publicServerHost = cleanVpnServer || portalHost;
     const sshPublicKeyUrl = `http://${publicServerHost}:8081/public/kore-api.pub`;
     const hotspotLoginUrl = `http://${publicServerHost}:8081/public/hotspot-login.html`;
     const captivePortalHost = publicServerHost;
-    const captivePortalUrl = `${window.location.origin}/captive-portal`;
+    const captivePortalUrl = `${portalBaseUrl.replace(/\/$/, '')}/captive-portal`;
     const managementSource = mikrotik.vpn_enabled ? '10.255.255.1' : publicServerHost;
     const radiusName = 'Kore-HotSpot';
     const profileName = 'kore-hotspot-profile';
@@ -217,7 +220,7 @@ ${profileScript || ':put "Nenhum perfil de velocidade cadastrado no sistema"'}
 :if ([:len [/file find where name="flash/hotspot"]] > 0) do={
   :foreach f in={"login.html";"rlogin.html";"redirect.html";"alogin.html"} do={
     :do { /file remove [find where name=("flash/hotspot/" . $f)] } on-error={}
-    /tool fetch url="${hotspotLoginUrl}" mode=http dst-path=("flash/hotspot/" . $f) keep-result=yes
+    /tool fetch url="${hotspotLoginUrl}" mode=http http-header-field="Host:${portalHost}" dst-path=("flash/hotspot/" . $f) keep-result=yes
     :delay 1s
   }
   :if ([:len [/file find where name="flash/hotspot/login.html"]] = 0) do={ :error "ERRO: flash/hotspot/login.html nao foi baixado da VPS" }
@@ -226,7 +229,7 @@ ${profileScript || ':put "Nenhum perfil de velocidade cadastrado no sistema"'}
 } else={
   :foreach f in={"login.html";"rlogin.html";"redirect.html";"alogin.html"} do={
     :do { /file remove [find where name=("hotspot/" . $f)] } on-error={}
-    /tool fetch url="${hotspotLoginUrl}" mode=http dst-path=("hotspot/" . $f) keep-result=yes
+    /tool fetch url="${hotspotLoginUrl}" mode=http http-header-field="Host:${portalHost}" dst-path=("hotspot/" . $f) keep-result=yes
     :delay 1s
   }
   :if ([:len [/file find where name="hotspot/login.html"]] = 0) do={ :error "ERRO: hotspot/login.html nao foi baixado da VPS" }

@@ -15,7 +15,7 @@ function resolveAppVersion() {
       if (version) return String(version);
     } catch {}
   }
-  return '1.2.71';
+  return '1.2.72';
 }
 
 const APP_VERSION = resolveAppVersion();
@@ -2279,6 +2279,7 @@ async function repairMikrotikCaptivePortal(payload = {}) {
     '/ip firewall filter move $dnsUdp destination=0',
     `:local portalDns [/ip dns static find where name="${portalHost}"]`,
     `:if ([:len $portalDns] = 0) do={ /ip dns static add name="${portalHost}" type=A address=${portalIp} ttl=5m comment="Kore-HotSpot captive portal" disabled=no } else={ /ip dns static set [:pick $portalDns 0] type=A address=${portalIp} ttl=5m disabled=no }`,
+    `:foreach staleDns in=[/ip dns static find where comment="Kore-HotSpot captive portal"] do={ :if ([/ip dns static get $staleDns name] != "${portalHost}") do={ /ip dns static remove $staleDns } }`,
     ':local fileDirectory "hotspot"',
     ':if ([:len [/file find where name~"^flash"]] > 0) do={ :set fileDirectory "flash/hotspot"; :if ([:len [/file find where name="flash/hotspot"]] = 0) do={ /file add name="/flash/hotspot" type=directory } } else={ :do { /file make-directory hotspot } on-error={} }',
     ':foreach f in={"login.html";"rlogin.html";"redirect.html";"alogin.html"} do={',
@@ -2289,6 +2290,7 @@ async function repairMikrotikCaptivePortal(payload = {}) {
     ':if ([:len [/file find where name=($fileDirectory . "/login.html")]] = 0) do={ :error "login.html nao foi instalado no MikroTik" }',
     `:do { /ip hotspot walled-garden remove [find where comment="${gardenComment}"] } on-error={}`,
     `:do { /ip hotspot walled-garden ip remove [find where comment="${gardenComment}"] } on-error={}`,
+    `/ip hotspot walled-garden add dst-host="${portalHost}" action=allow comment="${gardenComment}" disabled=no`,
     `/ip hotspot walled-garden ip add dst-address=${portalIp} action=accept comment="${gardenComment}" disabled=no`,
     ':put ("captive-interface=" . $iface)',
     ':put ("captive-gateway=" . $gateway)',
