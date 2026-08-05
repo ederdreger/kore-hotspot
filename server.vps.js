@@ -7,6 +7,7 @@ const net = require('net');
 const dns = require('dns').promises;
 const { AsyncLocalStorage } = require('async_hooks');
 
+const APP_VERSION = '0.2.66';
 const PORT = Number(process.env.PORT || 8081);
 const TOKEN = process.env.KORE_VPN_API_TOKEN || 'kore-vpn-api-2026';
 const DEFAULT_ADMIN_PASSWORD = process.env.KORE_ADMIN_PASSWORD || 'Admin12345';
@@ -2079,7 +2080,7 @@ async function repairMikrotikCaptivePortal(payload = {}) {
     `/ip hotspot walled-garden ip add dst-address=${portalIp} protocol=tcp dst-port=80,443,8081 action=accept comment="${gardenComment}" disabled=no`,
     ':local directory "hotspot"',
     ':local fileDirectory "hotspot"',
-    ':if ([:len [/file find where name~"^flash"]] > 0) do={ :set fileDirectory "flash/hotspot" } else={ :do { /file make-directory hotspot } on-error={} }',
+    ':if ([:len [/file find where name~"^flash"]] > 0) do={ :set directory "/flash/hotspot"; :set fileDirectory "flash/hotspot" } else={ :do { /file make-directory hotspot } on-error={} }',
     ':foreach f in={"login.html";"rlogin.html";"redirect.html";"alogin.html"} do={',
     '  :local target ($fileDirectory . "/" . $f)',
     '  :do { /file remove [find where name=$target] } on-error={}',
@@ -2114,7 +2115,9 @@ async function repairMikrotikCaptivePortal(payload = {}) {
   const dnsRedirectProtocols = new Set(parseKeyValueRows(dnsRedirectResult.stdout).filter(row => row.chain === 'dstnat' && row.action === 'redirect' && row['dst-port'] === '53' && row.disabled !== 'true').map(row => row.protocol));
   const dhcpDnsReady = parseKeyValueRows(dhcpNetworkResult.stdout).some(row => String(row['dns-server'] || '').split(',').includes(row.gateway));
   const gardenReady = [portalIp, `${portalIp}/32`].includes(String(garden['dst-address'] || ''));
-  const ready = hotspot.disabled !== 'true' && hotspot.interface === interfaceName && profile.name === profileName && !String(profile['html-directory'] || '').includes('flash/flash') && gardenReady && !!loginFile.name && dnsProtocols.has('udp') && dnsProtocols.has('tcp') && dnsRedirectProtocols.has('udp') && dnsRedirectProtocols.has('tcp') && dhcpDnsReady;
+  const normalizedHtmlDirectory = String(profile['html-directory'] || '').replace(/^\//, '');
+  const htmlDirectoryReady = ['hotspot', 'flash/hotspot'].includes(normalizedHtmlDirectory);
+  const ready = hotspot.disabled !== 'true' && hotspot.interface === interfaceName && profile.name === profileName && htmlDirectoryReady && gardenReady && !!loginFile.name && dnsProtocols.has('udp') && dnsProtocols.has('tcp') && dnsRedirectProtocols.has('udp') && dnsRedirectProtocols.has('tcp') && dhcpDnsReady;
   if (!ready || !/captive-repair-ready=yes/i.test(applied.stdout)) {
     throw Object.assign(new Error('O MikroTik nao confirmou todos os componentes do captive portal'), { status: 502 });
   }
@@ -2157,6 +2160,7 @@ async function diagnoseMikrotikCaptivePortal(payload = {}) {
     dns: '/ip dns print detail without-paging',
     dns_static: portalHost ? `/ip dns static print detail without-paging where name="${portalHost}"` : '/ip dns static print detail without-paging',
     firewall_input: '/ip firewall filter print stats detail without-paging where chain=input',
+    dns_redirect_nat: '/ip firewall nat print stats detail without-paging where comment~"Kore-HotSpot captive DNS redirect"',
     source_nat: '/ip firewall nat print stats detail without-paging where chain=srcnat',
     default_routes: '/ip route print detail without-paging where dst-address=0.0.0.0/0',
     resolve_test: ':do { :put ("resolved=" . [:resolve "neverssl.com"]) } on-error={ :put "resolved=ERROR" }',
@@ -4086,7 +4090,7 @@ async function handleRequest(req, res) {
   try {
     ensureRuntimeSettings();
     if (req.method === 'OPTIONS') return send(res, 200, { ok: true });
-    if (req.url === '/health') return send(res, 200, { ok: true, service: 'kore-vpn-api', tenant: currentTenant().id, multi_tenant: MULTI_TENANT });
+    if (req.url === '/health') return send(res, 200, { ok: true, service: 'kore-vpn-api', version: APP_VERSION, tenant: currentTenant().id, multi_tenant: MULTI_TENANT });
     const [pathname, query = ''] = req.url.split('?');
     if (req.method === 'POST' && pathname === '/api/payments/mercadopago/webhook') return send(res, 200, await mercadoPagoWebhook(await readBody(req), query));
     if (req.method === 'GET' && req.url === '/public/hotspot-login.html') {
