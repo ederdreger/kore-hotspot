@@ -3,7 +3,7 @@ set -Eeuo pipefail
 umask 077
 
 APP_NAME="Kore-HotSpot"
-SCRIPT_VERSION="v1.2.76"
+SCRIPT_VERSION="v1.2.77"
 REPO_SLUG="${REPO_SLUG:-ederdreger/kore-hotspot}"
 RELEASE_CHANNEL="${RELEASE_CHANNEL:-latest}"
 ALLOW_UNSIGNED_RELEASE="${ALLOW_UNSIGNED_RELEASE:-false}"
@@ -17,6 +17,8 @@ CERTBOT_EMAIL="${CERTBOT_EMAIL:-}"
 PUBLIC_URL="${PUBLIC_URL:-}"
 API_URL="${API_URL:-}"
 API_TOKEN="${API_TOKEN:-}"
+ADMIN_EMAIL="${ADMIN_EMAIL:-spedynet@spedynet.com.br}"
+ADMIN_NAME="${ADMIN_NAME:-Administrador Spedynet}"
 SSH_PORT="${SSH_PORT:-}"
 VPN_LOCAL_IP="${VPN_LOCAL_IP:-10.255.255.1}"
 VPN_IP_RANGE="${VPN_IP_RANGE:-10.255.255.2-10.255.255.254}"
@@ -25,6 +27,7 @@ TENANT_ID="${TENANT_ID:-default}"
 MULTI_TENANT="${MULTI_TENANT:-true}"
 REQUIRE_TENANT_SIGNATURE="${REQUIRE_TENANT_SIGNATURE:-false}"
 KORE_SAAS_MP_ACCESS_TOKEN="${KORE_SAAS_MP_ACCESS_TOKEN:-}"
+NODE_MAJOR="${NODE_MAJOR:-24}"
 BACKUP_DIR="${BACKUP_DIR:-/opt/kore-hotspot-backups}"
 
 log() { printf '\033[1;36m[%s]\033[0m %s\n' "$APP_NAME" "$*"; }
@@ -51,7 +54,7 @@ load_update_environment() {
     key="${line%%=*}"
     value="${line#*=}"
     case "$key" in
-      REPO_URL|REPO_SLUG|BRANCH|INSTALL_DIR|WEB_DIR|API_DIR|PUBLIC_HOST|DOMAIN|CERTBOT_EMAIL|ENABLE_SSL|PUBLIC_URL|API_URL|API_TOKEN|ADMIN_PASSWORD|SSH_PORT|VPN_LOCAL_IP|VPN_IP_RANGE|VPN_IPSEC_SECRET|TENANT_ID|MULTI_TENANT|REQUIRE_TENANT_SIGNATURE|KORE_SAAS_MP_ACCESS_TOKEN|RELEASE_CHANNEL|ALLOW_UNSIGNED_RELEASE|BACKUP_DIR)
+      REPO_URL|REPO_SLUG|BRANCH|INSTALL_DIR|WEB_DIR|API_DIR|PUBLIC_HOST|DOMAIN|CERTBOT_EMAIL|ENABLE_SSL|PUBLIC_URL|API_URL|API_TOKEN|ADMIN_PASSWORD|ADMIN_EMAIL|ADMIN_NAME|SSH_PORT|VPN_LOCAL_IP|VPN_IP_RANGE|VPN_IPSEC_SECRET|TENANT_ID|MULTI_TENANT|REQUIRE_TENANT_SIGNATURE|KORE_SAAS_MP_ACCESS_TOKEN|NODE_MAJOR|RELEASE_CHANNEL|ALLOW_UNSIGNED_RELEASE|BACKUP_DIR)
         printf -v "$key" '%s' "$value"
         export "${key?}"
         ;;
@@ -114,12 +117,27 @@ migrate_public_endpoints() {
 
 install_vpn_packages() {
   export DEBIAN_FRONTEND=noninteractive
-  if [ -f /etc/apt/sources.list.d/100-ubnt-unifi.list ]; then
-    log "Desativando repositorio UniFi legado; a controladora usa pacote versionado direto"
-    mv -f /etc/apt/sources.list.d/100-ubnt-unifi.list /etc/apt/sources.list.d/100-ubnt-unifi.list.disabled
-  fi
+  while IFS= read -r legacy_unifi_repo; do
+    [ -n "$legacy_unifi_repo" ] || continue
+    log "Desativando repositorio UniFi legado: $legacy_unifi_repo"
+    mv -f "$legacy_unifi_repo" "${legacy_unifi_repo}.disabled-by-kore"
+  done < <(grep -l 'dl\.ui\.com/unifi' /etc/apt/sources.list.d/*.list 2>/dev/null || true)
   apt-get update
-  apt-get install -y strongswan xl2tpd ppp iptables iptables-persistent net-tools certbot python3-certbot-nginx sshpass
+  apt-get install -y ca-certificates curl gnupg strongswan xl2tpd ppp iptables iptables-persistent net-tools certbot python3-certbot-nginx sshpass
+}
+
+ensure_supported_node() {
+  local current=0
+  if command -v node >/dev/null 2>&1; then current="$(node -p 'Number(process.versions.node.split(".")[0])')"; fi
+  [ "$current" -ge "$NODE_MAJOR" ] && return 0
+  log "Atualizando Node.js ${current:-0} para ${NODE_MAJOR}.x LTS"
+  install -d -m 0755 /etc/apt/keyrings
+  curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor --yes -o /etc/apt/keyrings/nodesource.gpg
+  printf 'deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_%s.x nodistro main\n' "$NODE_MAJOR" > /etc/apt/sources.list.d/nodesource.list
+  apt-get update
+  apt-get install -y nodejs
+  current="$(node -p 'Number(process.versions.node.split(".")[0])')"
+  [ "$current" -ge "$NODE_MAJOR" ] || fail "Node.js ${NODE_MAJOR}.x nao foi instalado corretamente"
 }
 
 configure_l2tp_base() {
@@ -534,8 +552,11 @@ Environment=KORE_BIND_HOST=127.0.0.1
 Environment=KORE_WEB_DIR=${WEB_DIR}
 Environment=KORE_CERTBOT_EMAIL=${CERTBOT_EMAIL:-admin@spedynet.com.br}
 Environment=KORE_PUBLIC_HOST=${PUBLIC_HOST}
+Environment=KORE_ADMIN_EMAIL=${ADMIN_EMAIL}
+Environment="KORE_ADMIN_NAME=${ADMIN_NAME}"
 Environment=KORE_REQUIRE_TENANT_SIGNATURE=${REQUIRE_TENANT_SIGNATURE}
 Environment=KORE_SAAS_MP_ACCESS_TOKEN=${KORE_SAAS_MP_ACCESS_TOKEN}
+UnsetEnvironment=KORE_ADMIN_PASSWORD
 EOF
   cat > /etc/systemd/system/kore-vpn-api.service.d/30-security.conf <<'EOF'
 [Service]
@@ -591,9 +612,10 @@ main() {
   backup_data
   detect_public_host
   install_vpn_packages
+  ensure_supported_node
   prepare_source
   if [ -f "$INSTALL_DIR/package.json" ]; then
-    SCRIPT_VERSION="v$(node -p "require('$INSTALL_DIR/package.json').version" 2>/dev/null || printf '1.2.76')"
+    SCRIPT_VERSION="v$(node -p "require('$INSTALL_DIR/package.json').version" 2>/dev/null || printf '1.2.77')"
     log "Aplicando pacote ${SCRIPT_VERSION}"
   fi
   install_updater_binary

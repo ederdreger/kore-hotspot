@@ -15,7 +15,7 @@ function resolveAppVersion() {
       if (version) return String(version);
     } catch {}
   }
-  return '1.2.76';
+  return '1.2.77';
 }
 
 const APP_VERSION = resolveAppVersion();
@@ -23,6 +23,8 @@ const PORT = Number(process.env.PORT || 8081);
 const BIND_HOST = process.env.KORE_BIND_HOST || '0.0.0.0';
 const INTERNAL_API_TOKEN = String(process.env.KORE_INTERNAL_API_TOKEN || process.env.KORE_VPN_API_TOKEN || '');
 const DEFAULT_ADMIN_PASSWORD = process.env.KORE_ADMIN_PASSWORD || `Kore${crypto.randomBytes(18).toString('base64url')}!`;
+const DEFAULT_ADMIN_EMAIL = String(process.env.KORE_ADMIN_EMAIL || 'spedynet@spedynet.com.br').trim().toLowerCase();
+const DEFAULT_ADMIN_NAME = String(process.env.KORE_ADMIN_NAME || 'Administrador Spedynet').trim();
 const CHAP = process.env.KORE_CHAP_FILE || '/etc/ppp/chap-secrets';
 const KEY_DIR = process.env.KORE_KEY_DIR || '/opt/kore-hotspot-vpn-api/keys';
 const KEY_PATH = path.join(KEY_DIR, 'kore-api_rsa');
@@ -61,7 +63,7 @@ const ENTITY_FILES = {
   payments: path.join(DATA_DIR, 'payments.json')
 };
 const DEFAULT_ADMINS = [
-  { email: 'spedynet@spedynet.com.br', full_name: 'Administrador Spedynet', role: 'super_admin' }
+  { email: DEFAULT_ADMIN_EMAIL, full_name: DEFAULT_ADMIN_NAME, role: 'super_admin' }
 ];
 const SYSTEM_MODULES = ['providers'];
 const TENANT_ADMIN_PERMISSIONS = ['dashboard', 'clients', 'prospects', 'mikrotiks', 'vpn', 'plans', 'vouchers', 'campaigns', 'radius', 'ap-monitor', 'logs', 'users', 'settings'];
@@ -2870,7 +2872,7 @@ function publicAdmin(user) {
   return safeUser;
 }
 
-function ensureDefaultAdmins({ resetPassword = false, force = false } = {}) {
+function ensureDefaultAdmins({ resetPassword = false, force = false, password = DEFAULT_ADMIN_PASSWORD } = {}) {
   const scopedProvider = currentTenant().id !== DEFAULT_TENANT_ID ? providerForTenantRaw(currentTenant().id) : null;
   if (!force && scopedProvider?.contact_email) {
     ensureProviderAdmin(scopedProvider);
@@ -2922,7 +2924,7 @@ function ensureDefaultAdmins({ resetPassword = false, force = false } = {}) {
         status: 'active',
         scope: 'system',
         permissions: ['*'],
-        password_hash: passwordHash(DEFAULT_ADMIN_PASSWORD),
+        password_hash: passwordHash(password),
         created_date: new Date().toISOString(),
         updated_date: new Date().toISOString()
       });
@@ -2934,7 +2936,7 @@ function ensureDefaultAdmins({ resetPassword = false, force = false } = {}) {
       existing.permissions = ['*'];
       existing.updated_date = new Date().toISOString();
       if (resetPassword || (!existing.password_hash && !existing.password)) {
-        existing.password_hash = passwordHash(DEFAULT_ADMIN_PASSWORD);
+        existing.password_hash = passwordHash(password);
         delete existing.password;
       }
       changed = true;
@@ -3017,9 +3019,10 @@ async function adminAuth(payload = {}) {
 
   if (action === 'resetDefaults') {
     if (!['super_admin', 'admin'].includes(session.role)) throw Object.assign(new Error('Acesso negado'), { status: 403 });
-    const resetUsers = ensureDefaultAdmins({ resetPassword: true, force: true });
+    const resetPassword = randomAdminPassword();
+    const resetUsers = ensureDefaultAdmins({ resetPassword: true, force: true, password: resetPassword });
     writeJson(ENTITY_FILES.admin_sessions, [session]);
-    return { success: true, email: DEFAULT_ADMINS.map(user => user.email).join(' / '), password: DEFAULT_ADMIN_PASSWORD, users: resetUsers.map(publicAdmin) };
+    return { success: true, email: DEFAULT_ADMINS.map(user => user.email).join(' / '), password: resetPassword, users: resetUsers.map(publicAdmin) };
   }
 
   if (action === 'listUsers') return { users: users.map(publicAdmin) };
@@ -3643,7 +3646,8 @@ async function providersCrud(req) {
       updated_date: nowIso
     };
     fs.mkdirSync(path.join(TENANTS_DIR, tenantId), { recursive: true });
-    const admin_credentials = ensureProviderAdmin(provider);
+    const requestedAdminPassword = String(body.admin_password || '');
+    const admin_credentials = ensureProviderAdmin(provider, requestedAdminPassword ? { password: requestedAdminPassword } : {});
     writeGlobalJson(PROVIDERS_FILE, [provider, ...providers].slice(0, 1000));
     return { provider: publicProvider(provider), admin_credentials };
   }
@@ -3668,7 +3672,8 @@ async function providersCrud(req) {
         updated_date: nowIso
       };
       fs.mkdirSync(path.join(TENANTS_DIR, tenantId), { recursive: true });
-      const admin_credentials = ensureProviderAdmin(provider);
+      const requestedAdminPassword = String(body.admin_password || '');
+      const admin_credentials = ensureProviderAdmin(provider, requestedAdminPassword ? { password: requestedAdminPassword } : {});
       writeGlobalJson(PROVIDERS_FILE, [provider, ...providers].slice(0, 1000));
       return { created: true, provider: publicProvider(provider), admin_credentials, commercial_plans: PROVIDER_COMMERCIAL_PLANS };
     }
