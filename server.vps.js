@@ -15,7 +15,7 @@ function resolveAppVersion() {
       if (version) return String(version);
     } catch {}
   }
-  return '1.2.77';
+  return '1.2.78';
 }
 
 const APP_VERSION = resolveAppVersion();
@@ -2984,12 +2984,6 @@ async function adminAuth(payload = {}) {
     const admin = users.find(user => normalizeEmail(user.email) === email);
     if (!admin || admin.status === 'inactive' || !verifyPassword(payload.password, admin.password_hash || admin.password)) {
       throw Object.assign(new Error('E-mail ou senha invalidos'), { status: 401 });
-    }
-    if (!String(admin.password_hash || '').startsWith('scrypt$')) {
-      admin.password_hash = passwordHash(payload.password);
-      delete admin.password;
-      admin.updated_date = new Date().toISOString();
-      writeJson(ENTITY_FILES.admins, users);
     }
     const session = createAdminSession(admin);
     return { token: session.token, user: publicAdmin(admin) };
