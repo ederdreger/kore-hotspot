@@ -7,13 +7,14 @@ import path from 'node:path';
 
 const port = 19081;
 const password = 'TesteSeguro123';
+const adminEmail = 'admin@central.example.com';
 let directory;
 let api;
 let tenantDataDir;
 
 async function loginAdmin() {
   const login = await request('/api/admin/auth', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'login', email: 'spedynet@spedynet.com.br', password })
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'login', email: adminEmail, password })
   });
   assert.equal(login.response.status, 200);
   assert.ok(login.data.token);
@@ -41,6 +42,8 @@ test.before(async () => {
       KORE_KEY_DIR: keyDir,
       KORE_CHAP_FILE: path.join(directory, 'chap-secrets'),
       KORE_ADMIN_PASSWORD: password,
+      KORE_ADMIN_EMAIL: adminEmail,
+      KORE_ADMIN_NAME: 'Administrador Central',
       KORE_MULTI_TENANT: 'true',
       KORE_REQUIRE_TENANT_SIGNATURE: 'true'
     },
@@ -96,6 +99,34 @@ test('planos comerciais incluem modalidade gratuita', async () => {
   const { response, data } = await request('/api/providers', { headers: { 'X-Kore-Session': token } });
   assert.equal(response.status, 200);
   assert.deepEqual(data.commercial_plans.free, { label: 'Free', price: 0 });
+});
+
+test('tenant inicial aceita a senha administrativa definida pelo instalador', async () => {
+  const token = await loginAdmin();
+  const tenantPassword = 'TenantSeguro123!';
+  const created = await request('/api/providers', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Kore-Session': token },
+    body: JSON.stringify({
+      name: 'Tenant Teste',
+      tenant_id: 'tenant-teste',
+      domain: 'tenant-teste.example.com',
+      contact_name: 'Administrador Tenant',
+      contact_email: 'admin@tenant-teste.example.com',
+      commercial_plan: 'free',
+      admin_password: tenantPassword
+    })
+  });
+  assert.equal(created.response.status, 200);
+  assert.equal(created.data.admin_credentials.password, tenantPassword);
+
+  const tenantLogin = await request('/api/admin/auth', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Forwarded-Host': 'tenant-teste.example.com' },
+    body: JSON.stringify({ action: 'login', email: 'admin@tenant-teste.example.com', password: tenantPassword })
+  });
+  assert.equal(tenantLogin.response.status, 200, JSON.stringify(tenantLogin.data));
+  assert.equal(tenantLogin.data.user.role, 'provider_admin');
 });
 
 test('voucher nao e consumido quando o MikroTik nao pode autorizar', async () => {
@@ -345,7 +376,7 @@ test('header de tenant sem assinatura e rejeitado', async () => {
 
 test('login grava cookie HttpOnly e nao persiste token da sessao em texto puro', async () => {
   const login = await request('/api/admin/auth', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'login', email: 'spedynet@spedynet.com.br', password })
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'login', email: adminEmail, password })
   });
   const cookie = login.response.headers.get('set-cookie');
   assert.match(cookie, /kore_admin_session=.*HttpOnly.*SameSite=Strict/i);

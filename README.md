@@ -1,5 +1,7 @@
 # Kore-HotSpot
 
+Guia recomendado para novas VPS: [Instalador inteligente](docs/INSTALACAO-INTELIGENTE.md).
+
 Sistema de gerenciamento de hotspot, VPN L2TP/IPsec, MikroTik, clientes, prospectos, vouchers, planos, captive portal e integrações para provedores.
 
 Criador e mantenedor: **Spedynet Telecom**.
@@ -35,10 +37,10 @@ Criador e mantenedor: **Spedynet Telecom**.
 - Portas recomendadas liberadas no firewall:
   - `80/tcp` emissão e renovação do certificado grátis
   - `443/tcp` painel web com HTTPS
-  - `8080/tcp` painel web
-  - `8081/tcp` API local
+  - `8081/tcp` entrada exclusiva do captive portal
+  - `8080/tcp`, `8443/tcp`, `3478/udp`, `10001/udp` controladora UniFi opcional
   - `500/udp`, `4500/udp`, `1701/udp` VPN L2TP/IPsec
-  - `22/tcp` SSH
+  - porta SSH configurada na VPS
 
 ## Instalação rápida
 
@@ -47,7 +49,7 @@ Na VPS limpa, execute:
 ```bash
 sudo apt-get update
 sudo apt-get install -y curl
-curl -fsSL https://raw.githubusercontent.com/ederdreger/kore-hotspot/main/scripts/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/ederdreger/kore-hotspot/main/scripts/install-wizard.sh | sudo bash
 ```
 
 O instalador detecta o IP público automaticamente, instala os pacotes necessários, compila o painel, configura Nginx, cria o serviço da API e prepara o atualizador.
@@ -156,8 +158,8 @@ sudo systemctl restart kore-vpn-api
 
 Após instalar:
 
-- Painel: `http://IP_DA_VPS:8080`
-- API: `http://IP_DA_VPS:8081`
+- Painel: `http://IP_DA_VPS`
+- Captive: `http://IP_DA_VPS:8081/public/hotspot-login.html`
 
 Se instalado com `DOMAIN`, use:
 
@@ -166,7 +168,7 @@ Se instalado com `DOMAIN`, use:
 
 Usuário inicial:
 
-- E-mail: `spedynet@spedynet.com.br`
+- E-mail: valor informado em `ADMIN_EMAIL` pelo assistente.
 - Senha: valor informado em `ADMIN_PASSWORD` ou senha gerada no final da instalação.
 
 Altere a senha após o primeiro acesso.
@@ -174,7 +176,7 @@ Altere a senha após o primeiro acesso.
 ## Serviços criados
 
 - `kore-vpn-api.service`: API local, automação MikroTik, VPN e integrações.
-- `nginx.service`: painel web na porta `8080`.
+- `nginx.service`: painel web nas portas `80/443` e captive restrito na `8081`.
 - `certbot.timer`: renovação automática do certificado Let's Encrypt.
 - `kore-hotspot-update.timer`: verificação diária de atualização.
 - `kore-hotspot-update.service`: execução de atualização.
