@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 
 const baseEnv = {
   TENANT_ID: 'default',
@@ -58,4 +59,13 @@ test('instalador rejeita tenant id reservado', () => {
   const result = validate({ INITIAL_TENANT_ID: 'default' });
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /nao pode ser default/i);
+});
+
+test('atualizador migra proxies antigos dos tenants para a API ativa', () => {
+  const updater = readFileSync('scripts/update.sh', 'utf8');
+  assert.match(updater, /repair_provider_nginx_upstreams\(\)/);
+  assert.match(updater, /kore-hotspot-provider-\*\.conf/);
+  assert.match(updater, /127\\\.0\\\.0\\\.1:8081/);
+  assert.match(updater, /proxy_pass http:\/\/127\.0\.0\.1:8082/);
+  assert.match(updater, /configure_nginx_site\s+repair_provider_nginx_upstreams\s+repair_ssl/);
 });

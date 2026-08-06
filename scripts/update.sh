@@ -3,7 +3,7 @@ set -Eeuo pipefail
 umask 077
 
 APP_NAME="Kore-HotSpot"
-SCRIPT_VERSION="v1.2.78"
+SCRIPT_VERSION="v1.2.79"
 REPO_SLUG="${REPO_SLUG:-ederdreger/kore-hotspot}"
 RELEASE_CHANNEL="${RELEASE_CHANNEL:-latest}"
 ALLOW_UNSIGNED_RELEASE="${ALLOW_UNSIGNED_RELEASE:-false}"
@@ -531,6 +531,31 @@ EOF
   fi
 }
 
+repair_provider_nginx_upstreams() {
+  command -v nginx >/dev/null 2>&1 || return 0
+
+  local stamp provider_conf changed=""
+  stamp="$(date +%Y%m%d%H%M%S)"
+  for provider_conf in /etc/nginx/conf.d/kore-hotspot-provider-*.conf; do
+    [ -f "$provider_conf" ] || continue
+    if grep -Eq 'proxy_pass[[:space:]]+http://127\.0\.0\.1:8081;' "$provider_conf"; then
+      cp -a "$provider_conf" "${provider_conf}.backup.${stamp}"
+      sed -i -E 's#proxy_pass[[:space:]]+http://127\.0\.0\.1:8081;#proxy_pass http://127.0.0.1:8082;#g' "$provider_conf"
+      changed="${changed} ${provider_conf}"
+    fi
+  done
+
+  [ -n "$changed" ] || return 0
+  if ! nginx -t; then
+    for provider_conf in $changed; do
+      cp -a "${provider_conf}.backup.${stamp}" "$provider_conf"
+    done
+    nginx -t
+    fail "A migracao dos dominios de provedores foi rejeitada; configuracoes anteriores restauradas."
+  fi
+  log "Dominios de provedores antigos migrados para a API interna na porta 8082"
+}
+
 repair_ssl() {
   [ -n "$DOMAIN" ] || return 0
   if [ ! -s "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" ] || [ ! -s "/etc/letsencrypt/live/${DOMAIN}/privkey.pem" ]; then
@@ -615,7 +640,7 @@ main() {
   ensure_supported_node
   prepare_source
   if [ -f "$INSTALL_DIR/package.json" ]; then
-    SCRIPT_VERSION="v$(node -p "require('$INSTALL_DIR/package.json').version" 2>/dev/null || printf '1.2.78')"
+    SCRIPT_VERSION="v$(node -p "require('$INSTALL_DIR/package.json').version" 2>/dev/null || printf '1.2.79')"
     log "Aplicando pacote ${SCRIPT_VERSION}"
   fi
   install_updater_binary
@@ -624,6 +649,7 @@ main() {
   install_vpn_diagnostics
   configure_l2tp_base
   configure_nginx_site
+  repair_provider_nginx_upstreams
   repair_ssl
   configure_nginx_no_cache
   configure_api_environment
