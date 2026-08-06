@@ -123,7 +123,7 @@ download_verified_installer() {
   asset="kore-hotspot-${tag}.tar.gz"
   package_url="$(jq -r --arg name "$asset" '.assets[]? | select(.name == $name) | .browser_download_url' "$metadata" | head -n1)"
   checksum_url="$(jq -r --arg name "${asset}.sha256" '.assets[]? | select(.name == $name) | .browser_download_url' "$metadata" | head -n1)"
-  [ -n "$package_url" ] && [ -n "$checksum_url" ] || fail "Release $tag nao possui pacote e checksum"
+  if [ -z "$package_url" ] || [ -z "$checksum_url" ]; then fail "Release $tag nao possui pacote e checksum"; fi
   curl -fsSL -L "$package_url" -o "$target_dir/source.tar.gz"
   curl -fsSL -L "$checksum_url" -o "$target_dir/source.tar.gz.sha256"
   expected="$(awk 'NR == 1 {print $1}' "$target_dir/source.tar.gz.sha256")"
@@ -230,7 +230,7 @@ export TENANT_ID=default MULTI_TENANT AUTO_UPDATE INSTALL_UNIFI_CONTROLLER SAVE_
 export INITIAL_TENANT_NAME INITIAL_TENANT_ID INITIAL_TENANT_DOMAIN INITIAL_TENANT_CONTACT_NAME
 export INITIAL_TENANT_CONTACT_EMAIL INITIAL_TENANT_CONTACT_PHONE INITIAL_TENANT_PLAN INITIAL_TENANT_PASSWORD INITIAL_TENANT_ENABLE_SSL
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
+if script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"; then :; else script_dir=''; fi
 if [ -n "$script_dir" ] && [ -f "$script_dir/install.sh" ]; then
   installer="$script_dir/install.sh"
 else
