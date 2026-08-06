@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { copyFile, mkdtemp, mkdir, readFile, rm, stat } from 'node:fs/promises';
+import { copyFile, mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -92,6 +93,35 @@ test('login cria sessao que autoriza entidades', async () => {
   const clients = await request('/api/entities/clients', { headers: { 'X-Kore-Session': token } });
   assert.equal(clients.response.status, 200);
   assert.deepEqual(clients.data.items, []);
+});
+
+test('login legado PBKDF2 continua valido sem regravar o hash automaticamente', async () => {
+  const adminToken = await loginAdmin();
+  const email = 'legado@example.com';
+  const legacyPassword = 'LegadoSeguro123!';
+  const created = await request('/api/admin/auth', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'createUser', token: adminToken, email, full_name: 'Usuario Legado', password: legacyPassword, role: 'user', permissions: ['dashboard'] })
+  });
+  assert.equal(created.response.status, 200);
+
+  const adminFile = path.join(tenantDataDir, 'admin-users.json');
+  const users = JSON.parse(await readFile(adminFile, 'utf8'));
+  const salt = '00112233445566778899aabbccddeeff';
+  const legacyHash = `${salt}:${crypto.pbkdf2Sync(legacyPassword, salt, 120000, 32, 'sha256').toString('hex')}`;
+  const legacyUser = users.find(user => user.email === email);
+  legacyUser.password_hash = legacyHash;
+  await writeFile(adminFile, JSON.stringify(users, null, 2));
+
+  const login = await request('/api/admin/auth', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'login', email, password: legacyPassword })
+  });
+  assert.equal(login.response.status, 200);
+  const storedUsers = JSON.parse(await readFile(adminFile, 'utf8'));
+  assert.equal(storedUsers.find(user => user.email === email).password_hash, legacyHash);
 });
 
 test('planos comerciais incluem modalidade gratuita', async () => {
