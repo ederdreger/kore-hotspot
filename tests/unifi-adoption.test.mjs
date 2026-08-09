@@ -53,6 +53,7 @@ test('reparo captive usa diretorio persistente sem duplicar o prefixo flash', as
   assert.match(source, /fileDirectory "flash\/kore-hotspot"/);
   assert.match(source, /profileDirectory "kore-hotspot"/);
   assert.match(source, /html-directory=\$profileDirectory html-directory-override=""/);
+  assert.match(source, /where name="\$\{expectedLoginFile\}"/);
   assert.doesNotMatch(source, /html-directory="\/flash\/hotspot"/);
 });
 

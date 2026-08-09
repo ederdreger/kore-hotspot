@@ -15,7 +15,7 @@ function resolveAppVersion() {
       if (version) return String(version);
     } catch {}
   }
-  return '1.2.80';
+  return '1.2.81';
 }
 
 const APP_VERSION = resolveAppVersion();
@@ -2477,24 +2477,23 @@ async function repairMikrotikCaptivePortal(payload = {}) {
     ':put "captive-repair-ready=yes"'
   ].join('; ');
   const applied = await runMikrotikKeyCommand(device, script, 60000);
-  const [hotspotResult, profileResult, gardenResult, fileResult, dnsFilterResult, dhcpNetworkResult] = await Promise.all([
+  const [hotspotResult, profileResult, gardenResult, dnsFilterResult, dhcpNetworkResult] = await Promise.all([
     runMikrotikKeyCommand(device, `/ip hotspot print detail without-paging where interface="${interfaceName}"`),
     runMikrotikKeyCommand(device, `/ip hotspot profile print detail without-paging where name="${profileName}"`),
     runMikrotikKeyCommand(device, `/ip hotspot walled-garden ip print detail without-paging where comment="${gardenComment}"`),
-    runMikrotikKeyCommand(device, '/file print detail without-paging where name~"hotspot/login.html"'),
     runMikrotikKeyCommand(device, '/ip firewall filter print detail without-paging where comment~"Kore-HotSpot captive DNS"'),
     runMikrotikKeyCommand(device, '/ip dhcp-server network print detail without-paging')
   ]);
   const hotspot = parseKeyValueRows(hotspotResult.stdout)[0] || {};
   const profile = parseKeyValueRows(profileResult.stdout)[0] || {};
   const garden = parseKeyValueRows(gardenResult.stdout)[0] || {};
-  const loginFile = parseKeyValueRows(fileResult.stdout).find(row =>
-    ['hotspot/login.html', 'flash/kore-hotspot/login.html'].includes(String(row.name || ''))
-  ) || {};
+  const normalizedHtmlDirectory = String(profile['html-directory'] || '').replace(/^\//, '');
+  const expectedLoginFile = `${normalizedHtmlDirectory || 'hotspot'}/login.html`;
+  const fileResult = await runMikrotikKeyCommand(device, `/file print detail without-paging where name="${expectedLoginFile}"`);
+  const loginFile = parseKeyValueRows(fileResult.stdout).find(row => String(row.name || '') === expectedLoginFile) || {};
   const dnsProtocols = new Set(parseKeyValueRows(dnsFilterResult.stdout).filter(row => row.action === 'accept' && row['dst-port'] === '53' && row.disabled !== 'true').map(row => row.protocol));
   const dhcpDnsReady = parseKeyValueRows(dhcpNetworkResult.stdout).some(row => String(row['dns-server'] || '').split(',').includes(row.gateway));
   const gardenReady = [portalIp, `${portalIp}/32`].includes(String(garden['dst-address'] || ''));
-  const normalizedHtmlDirectory = String(profile['html-directory'] || '').replace(/^\//, '');
   const htmlDirectoryReady = ['hotspot', 'kore-hotspot', 'flash/kore-hotspot'].includes(normalizedHtmlDirectory);
   const ready = hotspot.disabled !== 'true' && hotspot.interface === interfaceName && profile.name === profileName && htmlDirectoryReady && gardenReady && !!loginFile.name && dnsProtocols.has('udp') && dnsProtocols.has('tcp') && dhcpDnsReady;
   if (!ready || !/captive-repair-ready=yes/i.test(applied.stdout)) {
