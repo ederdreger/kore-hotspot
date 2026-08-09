@@ -124,8 +124,8 @@ download_verified_installer() {
   package_url="$(jq -r --arg name "$asset" '.assets[]? | select(.name == $name) | .browser_download_url' "$metadata" | head -n1)"
   checksum_url="$(jq -r --arg name "${asset}.sha256" '.assets[]? | select(.name == $name) | .browser_download_url' "$metadata" | head -n1)"
   if [ -z "$package_url" ] || [ -z "$checksum_url" ]; then fail "Release $tag nao possui pacote e checksum"; fi
-  curl -fsSL -L "$package_url" -o "$target_dir/source.tar.gz"
-  curl -fsSL -L "$checksum_url" -o "$target_dir/source.tar.gz.sha256"
+  curl -fsSL -L "${package_url}?kore_release=${tag}" -o "$target_dir/source.tar.gz"
+  curl -fsSL -L "${checksum_url}?kore_release=${tag}" -o "$target_dir/source.tar.gz.sha256"
   expected="$(awk 'NR == 1 {print $1}' "$target_dir/source.tar.gz.sha256")"
   actual="$(sha256sum "$target_dir/source.tar.gz" | awk '{print $1}')"
   [[ "$expected" =~ ^[a-fA-F0-9]{64}$ && "$expected" = "$actual" ]] || fail "Checksum do release $tag invalido"

@@ -78,3 +78,12 @@ test('instalador valida login, tenant e Wiki antes de concluir', () => {
   assert.match(installer, /\/wiki/);
   assert.match(installer, /bootstrap_initial_tenant\s+verify_initial_access\s+remove_bootstrap_admin_password/);
 });
+
+test('downloads verificados evitam redirecionamento de release em cache', () => {
+  const installer = readFileSync('scripts/install.sh', 'utf8');
+  const updater = readFileSync('scripts/update.sh', 'utf8');
+  const wizard = readFileSync('scripts/install-wizard.sh', 'utf8');
+  assert.match(installer, /\$\{tarball\}\?kore_release=\$\{tag\}/);
+  assert.match(updater, /\$\{tarball\}\?kore_release=\$\{tag\}/);
+  assert.match(wizard, /\$\{package_url\}\?kore_release=\$\{tag\}/);
+});
