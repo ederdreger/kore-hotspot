@@ -15,7 +15,7 @@ function resolveAppVersion() {
       if (version) return String(version);
     } catch {}
   }
-  return '1.2.79';
+  return '1.2.80';
 }
 
 const APP_VERSION = resolveAppVersion();
@@ -2417,7 +2417,7 @@ async function repairMikrotikCaptivePortal(payload = {}) {
   if (net.isIP(portalIp) !== 4) throw Object.assign(new Error('Nao foi possivel resolver o IPv4 do captive portal'), { status: 502 });
   const loginSourceHost = routerAddress(PUBLIC_HOST || portalIp);
   const loginSourceUrl = `http://${loginSourceHost}:8081/public/hotspot-login.html`;
-  const profileName = 'kore-hotspot-profile-v3';
+  const profileName = 'kore-hotspot-profile-v7';
   const serverName = 'kore-hotspot';
   const gardenComment = 'Kore-HotSpot captive portal automatico';
   const dnsUdpComment = 'Kore-HotSpot captive DNS UDP';
@@ -2437,9 +2437,12 @@ async function repairMikrotikCaptivePortal(payload = {}) {
     ':if ([:len $dhcp] = 0) do={ :error "Servidor DHCP ativo nao encontrado na interface" }',
     ':local pool [/ip dhcp-server get [:pick $dhcp 0] address-pool]',
     ':if ([:len $pool] = 0) do={ :error "DHCP da interface nao possui address-pool" }',
+    ':local fileDirectory "hotspot"',
+    ':local profileDirectory "hotspot"',
+    ':if ([:len [/file find where name="flash"]] > 0) do={ :set fileDirectory "flash/kore-hotspot"; :set profileDirectory "kore-hotspot"; :if ([:len [/file find where name="flash/kore-hotspot"]] = 0) do={ /file add name="/flash/kore-hotspot" type=directory } } else={ :do { /file make-directory hotspot } on-error={} }',
     `:local profile [/ip hotspot profile find where name="${profileName}"]`,
-    `:if ([:len $profile] = 0) do={ :if ([:len [/file find where name~"^flash"]] > 0) do={ /ip hotspot profile add name="${profileName}" hotspot-address=$gateway use-radius=yes radius-accounting=yes login-by=http-chap,http-pap html-directory="/flash/hotspot" } else={ /ip hotspot profile add name="${profileName}" hotspot-address=$gateway use-radius=yes radius-accounting=yes login-by=http-chap,http-pap html-directory=hotspot }; :set profile [/ip hotspot profile find where name="${profileName}"] }`,
-    '/ip hotspot profile set [:pick $profile 0] login-by=http-chap,http-pap use-radius=yes radius-accounting=yes',
+    `:if ([:len $profile] = 0) do={ /ip hotspot profile add name="${profileName}" hotspot-address=$gateway use-radius=yes radius-accounting=yes login-by=http-chap,http-pap html-directory=$profileDirectory; :set profile [/ip hotspot profile find where name="${profileName}"] }`,
+    '/ip hotspot profile set [:pick $profile 0] login-by=http-chap,http-pap use-radius=yes radius-accounting=yes html-directory=$profileDirectory html-directory-override=""',
     ':local hotspot [/ip hotspot find where interface=$iface]',
     `:if ([:len $hotspot] = 0) do={ /ip hotspot add name="${serverName}" interface=$iface address-pool=$pool profile="${profileName}" idle-timeout=1m keepalive-timeout=10s disabled=no; :set hotspot [/ip hotspot find where name="${serverName}"] } else={ /ip hotspot set [:pick $hotspot 0] address-pool=$pool profile="${profileName}" idle-timeout=1m keepalive-timeout=10s disabled=no; :set hotspot [:pick $hotspot 0] }`,
     ':do { /ip hotspot cookie remove [find] } on-error={}',
@@ -2456,8 +2459,6 @@ async function repairMikrotikCaptivePortal(payload = {}) {
     `:local portalDns [/ip dns static find where name="${portalHost}"]`,
     `:if ([:len $portalDns] = 0) do={ /ip dns static add name="${portalHost}" type=A address=${portalIp} ttl=5m comment="Kore-HotSpot captive portal" disabled=no } else={ /ip dns static set [:pick $portalDns 0] type=A address=${portalIp} ttl=5m disabled=no }`,
     `:foreach staleDns in=[/ip dns static find where comment="Kore-HotSpot captive portal"] do={ :if ([/ip dns static get $staleDns name] != "${portalHost}") do={ /ip dns static remove $staleDns } }`,
-    ':local fileDirectory "hotspot"',
-    ':if ([:len [/file find where name~"^flash"]] > 0) do={ :set fileDirectory "flash/hotspot"; :if ([:len [/file find where name="flash/hotspot"]] = 0) do={ /file add name="/flash/hotspot" type=directory } } else={ :do { /file make-directory hotspot } on-error={} }',
     ':foreach f in={"login.html";"rlogin.html";"redirect.html";"alogin.html";"flogin.html";"error.html";"status.html";"logout.html"} do={',
     '  :local target ($fileDirectory . "/" . $f)',
     '  :do { /file remove [find where name=$target] } on-error={}',
@@ -2488,13 +2489,13 @@ async function repairMikrotikCaptivePortal(payload = {}) {
   const profile = parseKeyValueRows(profileResult.stdout)[0] || {};
   const garden = parseKeyValueRows(gardenResult.stdout)[0] || {};
   const loginFile = parseKeyValueRows(fileResult.stdout).find(row =>
-    ['hotspot/login.html', 'flash/hotspot/login.html'].includes(String(row.name || ''))
+    ['hotspot/login.html', 'flash/kore-hotspot/login.html'].includes(String(row.name || ''))
   ) || {};
   const dnsProtocols = new Set(parseKeyValueRows(dnsFilterResult.stdout).filter(row => row.action === 'accept' && row['dst-port'] === '53' && row.disabled !== 'true').map(row => row.protocol));
   const dhcpDnsReady = parseKeyValueRows(dhcpNetworkResult.stdout).some(row => String(row['dns-server'] || '').split(',').includes(row.gateway));
   const gardenReady = [portalIp, `${portalIp}/32`].includes(String(garden['dst-address'] || ''));
   const normalizedHtmlDirectory = String(profile['html-directory'] || '').replace(/^\//, '');
-  const htmlDirectoryReady = ['hotspot', 'flash/hotspot'].includes(normalizedHtmlDirectory);
+  const htmlDirectoryReady = ['hotspot', 'kore-hotspot', 'flash/kore-hotspot'].includes(normalizedHtmlDirectory);
   const ready = hotspot.disabled !== 'true' && hotspot.interface === interfaceName && profile.name === profileName && htmlDirectoryReady && gardenReady && !!loginFile.name && dnsProtocols.has('udp') && dnsProtocols.has('tcp') && dhcpDnsReady;
   if (!ready || !/captive-repair-ready=yes/i.test(applied.stdout)) {
     const missing = [];
