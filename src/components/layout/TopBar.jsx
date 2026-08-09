@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Menu, Bell, Activity, LogOut, Sun, Moon } from 'lucide-react';
-import { useLocation } from 'react-router-dom';
+import { Menu, Bell, Activity, LogOut, Sun, Moon, BookOpen } from 'lucide-react';
+import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/lib/AuthContext';
 import { spedynet } from '@/api/spedynetClient';
 
@@ -51,6 +51,9 @@ export default function TopBar({ onMenuClick }) {
       </div>
 
       <div className="flex items-center gap-3">
+        <Link to="/wiki" className="hidden items-center gap-2 rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/30 hover:text-primary sm:flex" title="Abrir Wiki do sistema">
+          <BookOpen className="h-3.5 w-3.5" /> Wiki
+        </Link>
         {/* Status badge */}
         <div className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full border ${
           licenseBlocked ? 'bg-destructive/10 border-destructive/20' : licenseWarn ? 'bg-warning/10 border-warning/20' : 'bg-success/10 border-success/20'

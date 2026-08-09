@@ -1,6 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useEffect, useState } from 'react';
-import { Wifi, ChevronRight, X } from 'lucide-react';
+import { Wifi, ChevronRight, X, BookOpen } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { spedynet } from '@/api/spedynetClient';
 import { useAuth } from '@/lib/AuthContext';
@@ -76,6 +76,14 @@ export default function Sidebar({ open, onClose }) {
         </nav>
 
         <div className="px-3 py-4 border-t border-border">
+          <Link
+            to="/wiki"
+            onClick={onClose}
+            className="mb-2 flex items-center gap-3 rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-2.5 text-sm font-medium text-blue-500 transition-all hover:border-blue-500/40 hover:bg-blue-500/10"
+          >
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-500/10"><BookOpen className="h-4 w-4" /></span>
+            <span>Wiki do Sistema</span>
+          </Link>
           <Link
             to="/captive-portal"
             className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-muted-foreground hover:text-primary hover:bg-primary/5 transition-all border border-dashed border-border hover:border-primary/30"

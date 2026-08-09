@@ -3,7 +3,7 @@ set -Eeuo pipefail
 umask 077
 
 APP_NAME="Kore-HotSpot"
-SCRIPT_VERSION="v1.2.82"
+SCRIPT_VERSION="v1.2.83"
 REPO_URL="${REPO_URL:-https://github.com/ederdreger/kore-hotspot.git}"
 REPO_SLUG="${REPO_SLUG:-ederdreger/kore-hotspot}"
 BRANCH="${BRANCH:-main}"
@@ -632,6 +632,35 @@ bootstrap_initial_tenant() {
   fi
 }
 
+verify_initial_access() {
+  local host email password payload response session_token tenant_response wiki_page
+  local -a access_rows
+  access_rows=("${DOMAIN:-$PUBLIC_HOST}|${ADMIN_EMAIL}|${ADMIN_PASSWORD}|default")
+  if [ -n "$INITIAL_TENANT_NAME" ]; then
+    access_rows+=("${INITIAL_TENANT_DOMAIN}|${INITIAL_TENANT_ADMIN_EMAIL}|${INITIAL_TENANT_PASSWORD}|${INITIAL_TENANT_ID}")
+  fi
+
+  log "Validando logins e Wiki pelos dominios publicos"
+  for row in "${access_rows[@]}"; do
+    IFS='|' read -r host email password expected_tenant <<< "$row"
+    payload="$(jq -cn --arg email "$email" --arg password "$password" '{action:"login",email:$email,password:$password}')"
+    if [ -s "/etc/letsencrypt/live/${host}/fullchain.pem" ]; then
+      response="$(curl -fsS --max-time 20 --resolve "${host}:443:127.0.0.1" -X POST "https://${host}/api/admin/auth" -H 'Content-Type: application/json' --data "$payload")" || fail "Login HTTPS falhou para ${host}"
+      wiki_page="$(curl -fsS --max-time 20 --resolve "${host}:443:127.0.0.1" "https://${host}/wiki")" || fail "Wiki HTTPS indisponivel em ${host}"
+    else
+      response="$(curl -fsS --max-time 20 -X POST 'http://127.0.0.1/api/admin/auth' -H "Host: ${host}" -H 'Content-Type: application/json' --data "$payload")" || fail "Login HTTP falhou para ${host}"
+      wiki_page="$(curl -fsS --max-time 20 'http://127.0.0.1/wiki' -H "Host: ${host}")" || fail "Wiki HTTP indisponivel em ${host}"
+    fi
+    printf '%s' "$response" | jq -e --arg email "$email" '.token and ((.user.email | ascii_downcase) == ($email | ascii_downcase))' >/dev/null || fail "A API nao confirmou o usuario ${email} em ${host}"
+    printf '%s' "$wiki_page" | grep -q 'id="root"' || fail "O frontend da Wiki nao foi confirmado em ${host}"
+    tenant_response="$(curl -fsS --max-time 10 'http://127.0.0.1:8082/api/tenant/current' -H "Host: ${host}" -H "X-Kore-Internal-Token: ${API_TOKEN}")"
+    printf '%s' "$tenant_response" | jq -e --arg tenant "$expected_tenant" '.tenant.id == $tenant' >/dev/null || fail "O dominio ${host} nao resolveu para o tenant ${expected_tenant}"
+    session_token="$(printf '%s' "$response" | jq -r '.token')"
+    curl -fsS --max-time 10 -X POST 'http://127.0.0.1:8082/api/admin/auth' -H "Host: ${host}" -H 'Content-Type: application/json' --data "$(jq -cn --arg token "$session_token" '{action:"logout",token:$token}')" >/dev/null || true
+    log "Acesso validado: ${host} -> tenant ${expected_tenant}"
+  done
+}
+
 remove_bootstrap_admin_password() {
   local runtime_file="${CONFIG_DIR}/runtime.env" tmp_file
   tmp_file="$(mktemp "${CONFIG_DIR}/runtime.env.XXXXXX")"
@@ -771,6 +800,7 @@ print_summary() {
 Kore-HotSpot instalado com sucesso.
 
 Painel:       ${PUBLIC_URL}
+Wiki:         ${PUBLIC_URL}/wiki
 Painel IP:    http://${PUBLIC_HOST}
 API:          ${API_URL}/api
 Captive:      http://${PUBLIC_HOST}:8081/public/hotspot-login.html
@@ -829,6 +859,7 @@ main() {
   start_services
   configure_ssl
   bootstrap_initial_tenant
+  verify_initial_access
   remove_bootstrap_admin_password
   install_vpn_diagnostics
   configure_l2tp_base

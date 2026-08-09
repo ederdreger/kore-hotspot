@@ -69,3 +69,12 @@ test('atualizador migra proxies antigos dos tenants para a API ativa', () => {
   assert.match(updater, /proxy_pass http:\/\/127\.0\.0\.1:8082/);
   assert.match(updater, /configure_nginx_site\s+repair_provider_nginx_upstreams\s+repair_ssl/);
 });
+
+test('instalador valida login, tenant e Wiki antes de concluir', () => {
+  const installer = readFileSync('scripts/install.sh', 'utf8');
+  assert.match(installer, /verify_initial_access\(\)/);
+  assert.match(installer, /\/api\/admin\/auth/);
+  assert.match(installer, /\/api\/tenant\/current/);
+  assert.match(installer, /\/wiki/);
+  assert.match(installer, /bootstrap_initial_tenant\s+verify_initial_access\s+remove_bootstrap_admin_password/);
+});

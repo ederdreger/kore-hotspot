@@ -3,7 +3,7 @@ set -Eeuo pipefail
 umask 077
 
 APP_NAME="Kore-HotSpot"
-SCRIPT_VERSION="v1.2.82"
+SCRIPT_VERSION="v1.2.83"
 REPO_SLUG="${REPO_SLUG:-ederdreger/kore-hotspot}"
 RELEASE_CHANNEL="${RELEASE_CHANNEL:-latest}"
 ALLOW_UNSIGNED_RELEASE="${ALLOW_UNSIGNED_RELEASE:-false}"
@@ -640,7 +640,7 @@ main() {
   ensure_supported_node
   prepare_source
   if [ -f "$INSTALL_DIR/package.json" ]; then
-    SCRIPT_VERSION="v$(node -p "require('$INSTALL_DIR/package.json').version" 2>/dev/null || printf '1.2.82')"
+    SCRIPT_VERSION="v$(node -p "require('$INSTALL_DIR/package.json').version" 2>/dev/null || printf '1.2.83')"
     log "Aplicando pacote ${SCRIPT_VERSION}"
   fi
   install_updater_binary
