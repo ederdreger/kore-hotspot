@@ -29,6 +29,7 @@ import MikrotikManager from '@/pages/MikrotikManager';
 import ClientPortalLogin from '@/pages/ClientPortalLogin';
 import ClientPortal from '@/pages/ClientPortal';
 import VpnManager from '@/pages/VpnManager';
+import Wiki from '@/pages/Wiki';
 
 // AuthenticatedApp: All admin routes are protected by ProtectedRoute
 const AuthenticatedApp = () => {
@@ -72,6 +73,7 @@ const AppRoutes = () => {
       <Routes>
         {/* Rotas públicas de autenticação */}
         <Route path="/login" element={<Login />} />
+        <Route path="/wiki" element={<Wiki />} />
         {/* Captive Portal e Hotspot Login — standalone */}
         <Route path="/hotspot-login" element={<HotspotLogin />} />
         <Route path="/captive-portal" element={<CaptivePortal />} />

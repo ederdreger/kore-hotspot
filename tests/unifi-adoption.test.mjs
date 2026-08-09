@@ -59,6 +59,13 @@ test('reparo captive usa diretorio persistente sem duplicar o prefixo flash', as
   assert.doesNotMatch(source, /html-directory="\/flash\/hotspot"/);
 });
 
+test('script inicial do MikroTik usa o mesmo diretorio captive persistente', async () => {
+  const source = await readFile('src/components/settings/MikrotikScriptModal.jsx', 'utf8');
+  assert.match(source, /flash\/kore-hotspot\/login\.html/);
+  assert.match(source, /html-directory=kore-hotspot html-directory-override=""/);
+  assert.doesNotMatch(source, /html-directory=flash\/hotspot/);
+});
+
 test('Option 43 UniFi usa o formato minimo por IPv4', () => {
   const result = unifiDhcpOption43('190.8.175.35', '190.8.175.35');
   assert.equal(result.informUrl, 'http://190.8.175.35:8080/inform');

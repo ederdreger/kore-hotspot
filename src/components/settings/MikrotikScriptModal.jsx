@@ -187,12 +187,12 @@ export default function MikrotikScriptModal({ mikrotik, radius, onClose }) {
 /ip firewall filter add chain=input in-interface="${finalHotspotInterface}" protocol=udp dst-port=67,68 action=accept comment="Kore-HotSpot allow DHCP" disabled=no
 /ip firewall filter add chain=input in-interface="${finalHotspotInterface}" protocol=udp dst-port=53 action=accept comment="Kore-HotSpot allow DNS UDP" disabled=no
 /ip firewall filter add chain=input in-interface="${finalHotspotInterface}" protocol=tcp dst-port=53 action=accept comment="Kore-HotSpot allow DNS TCP" disabled=no
-/ip firewall filter move [find where comment="Kore-HotSpot allow SSH"] destination=0
-/ip firewall filter move [find where comment="Kore-HotSpot allow SNMP UDP 161"] destination=0
-/ip firewall filter move [find where comment="Kore-HotSpot allow DHCP"] destination=0
-/ip firewall filter move [find where comment="Kore-HotSpot allow DNS UDP"] destination=0
-/ip firewall filter move [find where comment="Kore-HotSpot allow DNS TCP"] destination=0
-/ip firewall filter move [find where comment="Kore-HotSpot allow established"] destination=0
+:do { /ip firewall filter move [find where comment="Kore-HotSpot allow SSH"] destination=0 } on-error={}
+:do { /ip firewall filter move [find where comment="Kore-HotSpot allow SNMP UDP 161"] destination=0 } on-error={}
+:do { /ip firewall filter move [find where comment="Kore-HotSpot allow DHCP"] destination=0 } on-error={}
+:do { /ip firewall filter move [find where comment="Kore-HotSpot allow DNS UDP"] destination=0 } on-error={}
+:do { /ip firewall filter move [find where comment="Kore-HotSpot allow DNS TCP"] destination=0 } on-error={}
+:do { /ip firewall filter move [find where comment="Kore-HotSpot allow established"] destination=0 } on-error={}
 ${directInterfaceSection}${bridgeSection}${vlanSection}
 ${vpnSection}
 # RADIUS Hotspot
@@ -218,15 +218,16 @@ ${profileScript || ':put "Nenhum perfil de velocidade cadastrado no sistema"'}
 /ip hotspot walled-garden ip add dst-address=${captivePortalHost} protocol=tcp dst-port=443 action=accept comment="Kore-HotSpot captive portal HTTPS"
 /ip hotspot walled-garden ip add dst-address=${captivePortalHost} protocol=tcp dst-port=8080 action=accept comment="Kore-HotSpot captive portal 8080"
 /ip hotspot walled-garden ip add dst-address=${captivePortalHost} protocol=tcp dst-port=8081 action=accept comment="Kore-HotSpot captive portal API"
-:if ([:len [/file find where name="flash/hotspot"]] > 0) do={
+:if ([:len [/file find where name="flash"]] > 0) do={
+  :if ([:len [/file find where name="flash/kore-hotspot"]] = 0) do={ /file add name="/flash/kore-hotspot" type=directory }
   :foreach f in={"login.html";"rlogin.html";"redirect.html";"alogin.html";"flogin.html";"error.html";"status.html";"logout.html"} do={
-    :do { /file remove [find where name=("flash/hotspot/" . $f)] } on-error={}
-    /tool fetch url="${hotspotLoginUrl}" mode=http http-header-field="Host:${portalHost}" dst-path=("flash/hotspot/" . $f) keep-result=yes
+    :do { /file remove [find where name=("flash/kore-hotspot/" . $f)] } on-error={}
+    /tool fetch url="${hotspotLoginUrl}" mode=http http-header-field="Host:${portalHost}" dst-path=("flash/kore-hotspot/" . $f) keep-result=yes
     :delay 1s
   }
-  :if ([:len [/file find where name="flash/hotspot/login.html"]] = 0) do={ :error "ERRO: flash/hotspot/login.html nao foi baixado da VPS" }
-  /ip hotspot profile set [find where name="${profileName}"] html-directory=flash/hotspot
-  :put "Diretorio Hotspot: flash/hotspot"
+  :if ([:len [/file find where name="flash/kore-hotspot/login.html"]] = 0) do={ :error "ERRO: flash/kore-hotspot/login.html nao foi baixado da VPS" }
+  /ip hotspot profile set [find where name="${profileName}"] html-directory=kore-hotspot html-directory-override=""
+  :put "Diretorio Hotspot: flash/kore-hotspot"
 } else={
   :foreach f in={"login.html";"rlogin.html";"redirect.html";"alogin.html";"flogin.html";"error.html";"status.html";"logout.html"} do={
     :do { /file remove [find where name=("hotspot/" . $f)] } on-error={}
@@ -234,7 +235,7 @@ ${profileScript || ':put "Nenhum perfil de velocidade cadastrado no sistema"'}
     :delay 1s
   }
   :if ([:len [/file find where name="hotspot/login.html"]] = 0) do={ :error "ERRO: hotspot/login.html nao foi baixado da VPS" }
-  /ip hotspot profile set [find where name="${profileName}"] html-directory=hotspot
+  /ip hotspot profile set [find where name="${profileName}"] html-directory=hotspot html-directory-override=""
   :put "Diretorio Hotspot: hotspot"
 }
 :put "Portal externo: ${captivePortalUrl}"
