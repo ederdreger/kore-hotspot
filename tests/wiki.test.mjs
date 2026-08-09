@@ -13,6 +13,7 @@ test('a Wiki e publica e pode ser acessada pelos pontos principais do sistema', 
   assert.match(app, /path="\/wiki"/)
   assert.match(login, /to="\/wiki"/)
   assert.match(sidebar, /to="\/wiki"/)
+  assert.match(sidebar, /v\{__APP_VERSION__\} - by@SpedyNet/)
   assert.match(topbar, /to="\/wiki"/)
 })
 
