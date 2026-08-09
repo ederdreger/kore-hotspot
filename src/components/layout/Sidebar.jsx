@@ -94,7 +94,7 @@ export default function Sidebar({ open, onClose }) {
         </div>
 
         <div className="px-6 py-3 border-t border-border">
-          <p className="text-xs text-muted-foreground font-mono">v{__APP_VERSION__} - Kore-HotSpot</p>
+          <p className="text-xs text-muted-foreground font-mono">v{__APP_VERSION__} - by@SpedyNet</p>
         </div>
       </aside>
     </>
