@@ -48,6 +48,14 @@ test('reparo captive instala tambem as paginas alternativas do RouterOS', async 
   assert.match(source, /"flogin\.html";"error\.html";"status\.html";"logout\.html"/);
 });
 
+test('reparo captive usa diretorio persistente sem duplicar o prefixo flash', async () => {
+  const source = await readFile('server.vps.js', 'utf8');
+  assert.match(source, /fileDirectory "flash\/kore-hotspot"/);
+  assert.match(source, /profileDirectory "kore-hotspot"/);
+  assert.match(source, /html-directory=\$profileDirectory html-directory-override=""/);
+  assert.doesNotMatch(source, /html-directory="\/flash\/hotspot"/);
+});
+
 test('Option 43 UniFi usa o formato minimo por IPv4', () => {
   const result = unifiDhcpOption43('190.8.175.35', '190.8.175.35');
   assert.equal(result.informUrl, 'http://190.8.175.35:8080/inform');
