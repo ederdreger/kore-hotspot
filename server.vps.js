@@ -15,7 +15,7 @@ function resolveAppVersion() {
       if (version) return String(version);
     } catch {}
   }
-  return '1.2.81';
+  return '1.2.82';
 }
 
 const APP_VERSION = resolveAppVersion();
@@ -2454,8 +2454,8 @@ async function repairMikrotikCaptivePortal(payload = {}) {
     `:if ([:len $dnsUdp] = 0) do={ /ip firewall filter add chain=input in-interface=$iface protocol=udp dst-port=53 action=accept comment="${dnsUdpComment}" disabled=no; :set dnsUdp [/ip firewall filter find where comment="${dnsUdpComment}"] } else={ /ip firewall filter set $dnsUdp chain=input in-interface=$iface protocol=udp dst-port=53 action=accept disabled=no }`,
     `:local dnsTcp [/ip firewall filter find where comment="${dnsTcpComment}"]`,
     `:if ([:len $dnsTcp] = 0) do={ /ip firewall filter add chain=input in-interface=$iface protocol=tcp dst-port=53 action=accept comment="${dnsTcpComment}" disabled=no; :set dnsTcp [/ip firewall filter find where comment="${dnsTcpComment}"] } else={ /ip firewall filter set $dnsTcp chain=input in-interface=$iface protocol=tcp dst-port=53 action=accept disabled=no }`,
-    '/ip firewall filter move $dnsTcp destination=0',
-    '/ip firewall filter move $dnsUdp destination=0',
+    ':do { /ip firewall filter move $dnsTcp destination=0 } on-error={}',
+    ':do { /ip firewall filter move $dnsUdp destination=0 } on-error={}',
     `:local portalDns [/ip dns static find where name="${portalHost}"]`,
     `:if ([:len $portalDns] = 0) do={ /ip dns static add name="${portalHost}" type=A address=${portalIp} ttl=5m comment="Kore-HotSpot captive portal" disabled=no } else={ /ip dns static set [:pick $portalDns 0] type=A address=${portalIp} ttl=5m disabled=no }`,
     `:foreach staleDns in=[/ip dns static find where comment="Kore-HotSpot captive portal"] do={ :if ([/ip dns static get $staleDns name] != "${portalHost}") do={ /ip dns static remove $staleDns } }`,
@@ -2489,20 +2489,20 @@ async function repairMikrotikCaptivePortal(payload = {}) {
   const garden = parseKeyValueRows(gardenResult.stdout)[0] || {};
   const normalizedHtmlDirectory = String(profile['html-directory'] || '').replace(/^\//, '');
   const expectedLoginFile = `${normalizedHtmlDirectory || 'hotspot'}/login.html`;
-  const fileResult = await runMikrotikKeyCommand(device, `/file print detail without-paging where name="${expectedLoginFile}"`);
-  const loginFile = parseKeyValueRows(fileResult.stdout).find(row => String(row.name || '') === expectedLoginFile) || {};
+  const fileResult = await runMikrotikKeyCommand(device, `:put ("login-file-count=" . [:len [/file find where name="${expectedLoginFile}"]])`);
+  const loginFileReady = /login-file-count=[1-9]\d*/i.test(fileResult.stdout);
   const dnsProtocols = new Set(parseKeyValueRows(dnsFilterResult.stdout).filter(row => row.action === 'accept' && row['dst-port'] === '53' && row.disabled !== 'true').map(row => row.protocol));
   const dhcpDnsReady = parseKeyValueRows(dhcpNetworkResult.stdout).some(row => String(row['dns-server'] || '').split(',').includes(row.gateway));
   const gardenReady = [portalIp, `${portalIp}/32`].includes(String(garden['dst-address'] || ''));
   const htmlDirectoryReady = ['hotspot', 'kore-hotspot', 'flash/kore-hotspot'].includes(normalizedHtmlDirectory);
-  const ready = hotspot.disabled !== 'true' && hotspot.interface === interfaceName && profile.name === profileName && htmlDirectoryReady && gardenReady && !!loginFile.name && dnsProtocols.has('udp') && dnsProtocols.has('tcp') && dhcpDnsReady;
+  const ready = hotspot.disabled !== 'true' && hotspot.interface === interfaceName && profile.name === profileName && htmlDirectoryReady && gardenReady && loginFileReady && dnsProtocols.has('udp') && dnsProtocols.has('tcp') && dhcpDnsReady;
   if (!ready || !/captive-repair-ready=yes/i.test(applied.stdout)) {
     const missing = [];
     if (hotspot.disabled === 'true' || hotspot.interface !== interfaceName) missing.push('servidor Hotspot');
     if (profile.name !== profileName) missing.push('perfil novo');
     if (!htmlDirectoryReady) missing.push(`diretorio HTML (${profile['html-directory'] || 'ausente'})`);
     if (!gardenReady) missing.push('walled garden');
-    if (!loginFile.name) missing.push('login.html');
+    if (!loginFileReady) missing.push('login.html');
     if (!dnsProtocols.has('udp') || !dnsProtocols.has('tcp')) missing.push('filtro DNS');
     if (!dhcpDnsReady) missing.push('DNS do DHCP');
     if (!/captive-repair-ready=yes/i.test(applied.stdout)) missing.push('confirmacao do script');
@@ -2515,7 +2515,7 @@ async function repairMikrotikCaptivePortal(payload = {}) {
     profile: profileName,
     address_pool: hotspot['address-pool'] || '',
     html_directory: profile['html-directory'] || '',
-    login_file: loginFile.name,
+    login_file: expectedLoginFile,
     portal_url: `${portalBase.replace(/\/$/, '')}/captive-portal`,
     portal_ip: portalIp,
     walled_garden: true,
