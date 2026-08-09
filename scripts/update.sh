@@ -3,7 +3,7 @@ set -Eeuo pipefail
 umask 077
 
 APP_NAME="Kore-HotSpot"
-SCRIPT_VERSION="v1.2.84"
+SCRIPT_VERSION="v1.2.85"
 REPO_SLUG="${REPO_SLUG:-ederdreger/kore-hotspot}"
 RELEASE_CHANNEL="${RELEASE_CHANNEL:-latest}"
 ALLOW_UNSIGNED_RELEASE="${ALLOW_UNSIGNED_RELEASE:-false}"
@@ -314,8 +314,8 @@ download_release() {
     tarball="$(jq -r --arg name "$asset_name" '.assets[]? | select(.name == $name) | .browser_download_url' "$metadata" | head -n1)"
     checksum_url="$(jq -r --arg name "$checksum_name" '.assets[]? | select(.name == $name) | .browser_download_url' "$metadata" | head -n1)"
     if [ -n "$tarball" ] && [ -n "$checksum_url" ]; then
-      curl -fsSL -L "$tarball" -o "$tmp/source.tar.gz"
-      curl -fsSL -L "$checksum_url" -o "$tmp/source.tar.gz.sha256"
+      curl -fsSL -L "${tarball}?kore_release=${tag}" -o "$tmp/source.tar.gz"
+      curl -fsSL -L "${checksum_url}?kore_release=${tag}" -o "$tmp/source.tar.gz.sha256"
       expected_checksum="$(awk 'NR == 1 { print $1 }' "$tmp/source.tar.gz.sha256")"
       actual_checksum="$(sha256sum "$tmp/source.tar.gz" | awk '{ print $1 }')"
       [[ "$expected_checksum" =~ ^[a-fA-F0-9]{64}$ && "$actual_checksum" = "$expected_checksum" ]] || fail "Checksum do pacote invalido"
@@ -640,7 +640,7 @@ main() {
   ensure_supported_node
   prepare_source
   if [ -f "$INSTALL_DIR/package.json" ]; then
-    SCRIPT_VERSION="v$(node -p "require('$INSTALL_DIR/package.json').version" 2>/dev/null || printf '1.2.84')"
+    SCRIPT_VERSION="v$(node -p "require('$INSTALL_DIR/package.json').version" 2>/dev/null || printf '1.2.85')"
     log "Aplicando pacote ${SCRIPT_VERSION}"
   fi
   install_updater_binary
